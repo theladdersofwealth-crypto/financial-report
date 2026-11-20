@@ -30,10 +30,10 @@ npm run build
 
 ## Cloudflare에 별도 사이트로 배포
 
-1. 이 소스를 비공개 GitHub 저장소의 `main` 브랜치에 업로드합니다.
-2. Cloudflare 대시보드의 **Workers & Pages → Create application → Import a repository**에서 해당 저장소를 선택합니다.
-3. 프로젝트 이름은 `global-market-desk`, 루트 디렉터리는 저장소 루트로 지정합니다.
-4. 의존성 설치는 `npm ci`, 배포 명령은 `npm run deploy`를 사용합니다. 정적 자산은 `public/`, Worker는 `src/worker.js`이며 설정은 `wrangler.toml`에 있습니다. 별도 프런트엔드 빌드는 필요하지 않습니다.
+1. 소스 저장소는 [`theladdersofwealth-crypto/financial-report`](https://github.com/theladdersofwealth-crypto/financial-report)의 `main` 브랜치입니다. 저장소 공개 여부와 별개로 실제 회원·시장 API는 서버 로그인이 필요합니다.
+2. Cloudflare 대시보드의 **Workers & Pages → Create application → Import a repository**에서 `financial-report` 저장소를 선택합니다.
+3. 프로젝트 이름은 `financial-report`, 루트 디렉터리는 저장소 루트(`/`)로 지정합니다.
+4. 의존성 설치는 `npm ci`, 빌드 명령은 `npm run check`, 배포 명령은 `npm run deploy`를 사용합니다. 정적 자산은 `public/`, Worker는 `src/worker.js`이며 설정은 `wrangler.toml`에 있습니다. 별도 프런트엔드 빌드는 필요하지 않습니다. **Pages가 아니라 Worker 프로젝트로 연결합니다.**
 5. SQLite Durable Object `DESK`는 `v1` migration으로 생성됩니다. 별도의 D1 데이터베이스를 만들거나 ID를 입력할 필요가 없습니다. 계정에서 Durable Objects 이용을 활성화해야 할 수 있습니다.
 6. 배포 주소에서 **최초 관리자 설정**을 선택하고 별도로 받은 설정 코드와 원하는 관리자 아이디·이름·비밀번호를 입력합니다. 설정 코드는 저장소에 없고 SHA-256 해시만 설정에 포함되어 있습니다. 관리자가 한 번 등록되면 재등록할 수 없습니다.
 7. 관리 화면에서 지인 계정을 발급합니다. 첫 로그인 시 회원이 임시 비밀번호를 변경합니다.
