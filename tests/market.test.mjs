@@ -94,6 +94,8 @@ test('provider failures produce explicit missing values without sample prices or
   assert.ok(failures['api.stlouisfed.org HTTP_429'] > 0);
   assert.ok(failures['finnhub.io fetch_error'] > 0);
   assert.doesNotMatch(JSON.stringify(failures), /secret|Do not log/);
+  assert.match(data.summary.points.at(-1), /api\.stlouisfed\.org HTTP 429/);
+  assert.match(data.summary.points.at(-1), /finnhub\.io 요청 실패/);
 });
 
 test('keyless provider requests and configured Finnhub calls share the connection budget', async t => {

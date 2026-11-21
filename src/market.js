@@ -93,9 +93,12 @@ async function readProvider(url, format, headers, failures) {
   if (parsed.protocol !== 'https:' || !HOSTS.has(parsed.hostname)) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT);
-  function failed(reason) {
+  function recordOutcome(reason) {
     const key = `${parsed.hostname} ${reason}`;
     failures.set(key, (failures.get(key) || 0) + 1);
+  }
+  function failed(reason) {
+    recordOutcome(reason);
     return null;
   }
   try {
@@ -114,6 +117,7 @@ async function readProvider(url, format, headers, failures) {
       try { data = JSON.parse(text); }
       catch { return failed('invalid_json'); }
     }
+    recordOutcome('response_received');
     return { data, retrievedAt: new Date().toISOString() };
   } catch {
     // Keep provider URLs, credentials, and response bodies out of logs.
@@ -351,13 +355,26 @@ async function collectMarket(env) {
   const replacements = new Map([...fx, ...treasury].map((quote) => [quote.id, quote]));
   const quotes = initialQuotes.map((quote) => replacements.get(quote.id) || quote);
   const available = quotes.filter((quote) => quote.value !== null).length;
+  const { summary, outlooks } = buildAnalysis(quotes);
   if (available === 0) {
     console.warn('Market snapshot has no valid observations', Object.fromEntries(failures));
+    const labels = {
+      response_received: '응답 수신 · 유효한 값 없음',
+      invalid_json: '응답 형식 오류',
+      response_too_large: '응답 크기 초과',
+      timeout: '시간 초과',
+      fetch_error: '요청 실패',
+    };
+    const report = [...failures].map(([key, count]) => {
+      const [host, status] = key.split(' ');
+      return `${host} ${labels[status] || status.replace('_', ' ')} ${count}건`;
+    });
+    if (report.length) summary.points.push(`이번 조회 결과 · ${report.join(' / ')}`);
   }
   const mode = available === 0 ? 'unconfigured' : available === quotes.length && quotes.every((quote) => quote.status === 'live') ? 'live' : 'partial';
   return {
     asOf: new Date().toISOString(), mode, quotes, sectors, leaders, events: [],
-    ...buildAnalysis(quotes), sources: sourceList(quotes, sectors, leaders, env),
+    summary, outlooks, sources: sourceList(quotes, sectors, leaders, env),
     analysis: { kind: 'rules', status: 'ready', label: '규칙 기반 · 조건부 점검' },
     cacheSeconds: TTL / 1000,
   };
@@ -384,7 +401,7 @@ async function loadOrRefresh(env, force) {
   if (pending.has(key)) return structuredClone(await pending.get(key));
   const task = (async () => {
     const cache = edgeCache();
-    const cacheRequest = new Request(`https://market-desk-cache.invalid/snapshot/v1/${key}`);
+    const cacheRequest = new Request(`https://market-desk-cache.invalid/snapshot/v2/${key}`);
     if (!force && cache) {
       try {
         const response = await cache.match(cacheRequest);
