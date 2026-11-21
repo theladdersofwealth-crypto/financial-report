@@ -69,6 +69,30 @@ test('the Fed broad dollar index never fills the distinct missing ICE DXY instru
   assert.deepEqual(data.events, [], 'no fabricated economic calendar or news');
 });
 
+test('backup restores missing quotes only while their observations are recent', async t => {
+  const fixture = providerFixture();
+  installFetch(t, async input => {
+    const host = new URL(input).hostname;
+    if (host === 'fred.stlouisfed.org') return fixture(input);
+    throw new Error('Provider unavailable');
+  });
+  const { collectMarket } = await freshModule();
+  const saved = [
+    { id: 'sp500', value: 1, provider: 'fred', observedAt: day(1), retrievedAt: new Date().toISOString(), timestampPrecision: 'day' },
+    { id: 'usdkrw', name: '달러/원', unit: '원/USD', value: 1300, change: null, source: 'ECB / Frankfurter', provider: 'frankfurter', observedAt: day(1), retrievedAt: new Date().toISOString(), timestampPrecision: 'day' },
+    { id: 'btc', value: 60000, provider: 'coinbase', observedAt: day(3), retrievedAt: new Date().toISOString(), timestampPrecision: 'retrieval' },
+  ];
+  const data = await collectMarket({}, saved);
+  const quotes = Object.fromEntries(data.quotes.map(quote => [quote.id, quote]));
+  assert.equal(quotes.sp500.value, 101);
+  assert.equal(quotes.usdkrw.value, 1300);
+  assert.equal(quotes.usdkrw.observedAt, day(1));
+  assert.equal(quotes.usdkrw.status, 'stale');
+  assert.equal(quotes.btc.value, null);
+  assert.equal(data.sources.find(source => source.id === 'frankfurter').status, 'backup');
+  assert.match(data.summary.points[0], /1개 지표/);
+});
+
 test('provider failures produce explicit missing values without sample prices or leaked credentials', async t => {
   const warning = t.mock.method(console, 'warn', () => {});
   installFetch(t, async (input) => {

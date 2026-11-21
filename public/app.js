@@ -436,6 +436,7 @@ function renderSources() {
   return panel;
 }
 function sourceStatus(status) {
+  if (status === 'backup') return {label: '저장된 관측값', type: 'amber'};
   return ({connected: {label: '데이터 수신', type: 'green'}, live: {label: '연결됨', type: 'green'}, standby: {label: '대체 소스 대기', type: ''}, no_data: {label: '설정됨 · 수신 확인 필요', type: 'amber'}, unconfigured: {label: '설정 필요', type: ''}, demo: {label: '예시 · 미연결', type: 'amber'}})[status] || {label: status || '상태 미제공', type: ''};
 }
 function renderUsers() {

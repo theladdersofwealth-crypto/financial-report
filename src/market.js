@@ -4,6 +4,8 @@
  * A public endpoint does not grant redistribution rights: check the source terms
  * before opening the desk beyond the intended private audience.
  */
+import deploymentSnapshot from './market-deploy-snapshot.js';
+
 const TTL = 5 * 60 * 1000;
 const TIMEOUT = 4000;
 const PROVIDER_CONCURRENCY = 4;
@@ -341,11 +343,33 @@ function sourceList(quotes, sectors, leaders, env) {
     ['finnhub', 'Finnhub', 'https://finnhub.io/docs/api/quote', '가입 권한에 따라 시세 지연·이용 범위가 다름. 섹터는 ETF 대용지표', Boolean(env.FINNHUB_API_KEY)],
   ].map(([id, name, url, delay, enabled]) => ({
     id, name, url, delay, enabled,
-    status: all.some((quote) => quote.provider === id && quote.value !== null) ? 'connected' : ['treasury', 'coinbase'].includes(id) ? 'standby' : enabled ? 'no_data' : 'unconfigured',
+    status: all.some((quote) => quote.provider === id && quote.value !== null && !quote.deploymentBackup) ? 'connected'
+      : all.some((quote) => quote.provider === id && quote.deploymentBackup) ? 'backup'
+      : ['treasury', 'coinbase'].includes(id) ? 'standby' : enabled ? 'no_data' : 'unconfigured',
   }));
 }
 
-async function collectMarket(env) {
+function useDeploymentBackup(quotes, backup, now = Date.now()) {
+  const saved = new Map(backup.map(quote => [quote.id, quote]));
+  return quotes.map(quote => {
+    if (quote.value !== null) return quote;
+    const prior = saved.get(quote.id);
+    if (!prior || !Number.isFinite(prior.value)) return quote;
+    const observed = Date.parse(prior.observedAt);
+    const retrieved = Date.parse(prior.retrievedAt);
+    const ageLimit = (prior.timestampPrecision === 'day' ? 7 : 1) * 86400000;
+    if (!Number.isFinite(observed) || !Number.isFinite(retrieved) || observed > now + 60000 || retrieved > now || now - observed > ageLimit || now - retrieved > ageLimit) return quote;
+    return {
+      ...prior,
+      deploymentBackup: true,
+      status: 'stale',
+      reason: '공급자 요청 실패 · 배포 시 저장한 관측값',
+      delay: '배포 시 저장한 관측값 · 현재 시세 아님',
+    };
+  });
+}
+
+export async function collectMarket(env, backup = []) {
   const { readURL, failures } = createMarketReader();
   const [initialQuotes, fx, sectors, leaders] = await Promise.all([
     Promise.all(INSTRUMENTS.map((instrument) => instrument.fred ? fredQuote(instrument, env, readURL) : instrument.crypto ? cryptoQuote(instrument, readURL) : Promise.resolve(missing(instrument)))),
@@ -353,9 +377,14 @@ async function collectMarket(env) {
   ]);
   const treasury = await treasuryFallback(initialQuotes, readURL);
   const replacements = new Map([...fx, ...treasury].map((quote) => [quote.id, quote]));
-  const quotes = initialQuotes.map((quote) => replacements.get(quote.id) || quote);
+  const obtained = initialQuotes.map((quote) => replacements.get(quote.id) || quote);
+  const quotes = useDeploymentBackup(obtained, backup);
   const available = quotes.filter((quote) => quote.value !== null).length;
   const { summary, outlooks } = buildAnalysis(quotes);
+  const restored = quotes.filter(quote => quote.deploymentBackup).length;
+  if (restored) {
+    summary.points.unshift(`실시간 공급자 요청 실패로 ${restored}개 지표에 배포 시 저장한 관측값을 표시합니다. 각 지표의 출처와 관측 시각을 확인하세요.`);
+  }
   if (available === 0) {
     console.warn('Market snapshot has no valid observations', Object.fromEntries(failures));
     const labels = {
@@ -401,7 +430,7 @@ async function loadOrRefresh(env, force) {
   if (pending.has(key)) return structuredClone(await pending.get(key));
   const task = (async () => {
     const cache = edgeCache();
-    const cacheRequest = new Request(`https://market-desk-cache.invalid/snapshot/v2/${key}`);
+    const cacheRequest = new Request(`https://market-desk-cache.invalid/snapshot/v3/${key}`);
     if (!force && cache) {
       try {
         const response = await cache.match(cacheRequest);
@@ -414,7 +443,7 @@ async function loadOrRefresh(env, force) {
         }
       } catch { /* Cache outages must not prevent retrieving actual data. */ }
     }
-    const data = await collectMarket(env);
+    const data = await collectMarket(env, deploymentSnapshot);
     if (snapshots.size > 8) snapshots.clear();
     snapshots.set(key, { data, time: Date.now() });
     if (cache) {

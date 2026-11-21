@@ -3,6 +3,9 @@ main = "src/worker.js"
 compatibility_date = "2026-11-01"
 workers_dev = true
 
+[build]
+command = "node scripts/prepare-market-snapshot.mjs"
+
 [assets]
 directory = "./public"
 binding = "ASSETS"
