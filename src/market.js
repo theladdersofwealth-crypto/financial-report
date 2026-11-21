@@ -6,6 +6,7 @@
  */
 const TTL = 5 * 60 * 1000;
 const TIMEOUT = 4000;
+const PROVIDER_CONCURRENCY = 4;
 const HOSTS = new Set([
   'fred.stlouisfed.org', 'api.stlouisfed.org', 'home.treasury.gov',
   'api.frankfurter.dev', 'www.bitstamp.net', 'api.coinbase.com', 'finnhub.io',
@@ -60,23 +61,63 @@ const rounded = (value) => Number.isFinite(value) ? Math.round(value * 10000) / 
 const daysAgo = (days) => new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
 const pct = (last, previous) => previous !== 0 ? rounded((last - previous) / previous * 100) : null;
 
-async function readURL(url, format = 'json') {
+function createMarketReader() {
+  const failures = new Map();
+  const queue = [];
+  let active = 0;
+
+  function pump() {
+    while (active < PROVIDER_CONCURRENCY && queue.length) {
+      const { url, format, headers, resolve, reject } = queue.shift();
+      active++;
+      readProvider(url, format, headers, failures).then(resolve, reject).finally(() => {
+        active--;
+        pump();
+      });
+    }
+  }
+
+  return {
+    failures,
+    readURL(url, format = 'json', headers = {}) {
+      return new Promise((resolve, reject) => {
+        queue.push({ url, format, headers, resolve, reject });
+        pump();
+      });
+    },
+  };
+}
+
+async function readProvider(url, format, headers, failures) {
   const parsed = new URL(url);
   if (parsed.protocol !== 'https:' || !HOSTS.has(parsed.hostname)) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT);
+  function failed(reason) {
+    const key = `${parsed.hostname} ${reason}`;
+    failures.set(key, (failures.get(key) || 0) + 1);
+    return null;
+  }
   try {
     const response = await fetch(parsed.toString(), {
       method: 'GET', redirect: 'error', signal: controller.signal,
-      headers: { Accept: format === 'json' ? 'application/json' : 'text/csv,application/xml,text/plain' },
+      headers: { Accept: format === 'json' ? 'application/json' : 'text/csv,application/xml,text/plain', ...headers },
     });
-    if (!response.ok || Number(response.headers.get('content-length')) > 2000000) return null;
+    if (!response.ok || Number(response.headers.get('content-length')) > 2000000) {
+      await response.body?.cancel().catch(() => {});
+      return failed(response.ok ? 'response_too_large' : `HTTP_${response.status}`);
+    }
     const text = await response.text();
-    if (text.length > 2000000) return null;
-    return { data: format === 'json' ? JSON.parse(text) : text, retrievedAt: new Date().toISOString() };
+    if (text.length > 2000000) return failed('response_too_large');
+    let data = text;
+    if (format === 'json') {
+      try { data = JSON.parse(text); }
+      catch { return failed('invalid_json'); }
+    }
+    return { data, retrievedAt: new Date().toISOString() };
   } catch {
-    // Never return raw provider errors: authenticated URLs can contain API keys.
-    return null;
+    // Keep provider URLs, credentials, and response bodies out of logs.
+    return failed(controller.signal.aborted ? 'timeout' : 'fetch_error');
   } finally {
     clearTimeout(timer);
   }
@@ -112,7 +153,7 @@ function fromHistory(instrument, entries, metadata) {
   };
 }
 
-async function fredQuote(instrument, env) {
+async function fredQuote(instrument, env, readURL) {
   const start = daysAgo(100);
   let result;
   let entries;
@@ -140,7 +181,7 @@ async function fredQuote(instrument, env) {
   });
 }
 
-async function treasuryFallback(quotes) {
+async function treasuryFallback(quotes, readURL) {
   const needed = quotes.filter((quote) => ['us2y', 'us10y', 'usreal10y'].includes(quote.id) && quote.value === null);
   if (!needed.length) return [];
   const year = new Date().getUTCFullYear();
@@ -166,7 +207,7 @@ async function treasuryFallback(quotes) {
   return results.flat().filter((quote) => quote.value !== null);
 }
 
-async function fxQuotes() {
+async function fxQuotes(readURL) {
   const result = await readURL(`https://api.frankfurter.dev/v2/rates?base=USD&quotes=KRW,JPY,CNY&providers=ECB&from=${daysAgo(100)}`);
   return INSTRUMENTS.filter((item) => item.fx).map((instrument) => {
     if (!Array.isArray(result?.data)) return missing(instrument, 'ECB/Frankfurter 일별 기준환율 응답을 확인할 수 없습니다');
@@ -177,7 +218,7 @@ async function fxQuotes() {
   });
 }
 
-async function cryptoQuote(instrument) {
+async function cryptoQuote(instrument, readURL) {
   const pair = `${instrument.crypto.toLowerCase()}usd`;
   const ticker = await readURL(`https://www.bitstamp.net/api/v2/ticker/${pair}/`);
   const price = numeric(ticker?.data?.last);
@@ -207,39 +248,30 @@ async function cryptoQuote(instrument) {
   return missing(instrument, '거래소 공개 API 접근 제한 또는 응답 오류');
 }
 
-async function finnhubList(entries, group, env) {
+async function finnhubList(entries, group, env, readURL) {
   if (!env.FINNHUB_API_KEY) return [];
   return Promise.all(entries.map(async ([symbol, name]) => {
     const instrument = { id: symbol.toLowerCase(), name, group, unit: 'USD' };
     const query = new URLSearchParams({ symbol });
     // Finnhub accepts an API token header. Keep it out of URLs and logs.
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT);
-    try {
-      const response = await fetch(`https://finnhub.io/api/v1/quote?${query}`, {
-        headers: { 'X-Finnhub-Token': env.FINNHUB_API_KEY, Accept: 'application/json' },
-        redirect: 'error', signal: controller.signal,
-      });
-      if (!response.ok) return { ...missing(instrument, 'Finnhub 이용권한·요청 한도 또는 응답 오류'), symbol };
-      const row = await response.json();
-      const value = numeric(row.c);
-      const epoch = numeric(row.t);
-      if (value === null || value <= 0 || epoch === null || epoch <= 0 || epoch > Date.now() / 1000 + 60) return { ...missing(instrument, '유효한 시세가 없습니다'), symbol };
-      const stale = Date.now() - epoch * 1000 > 7 * 86400000;
-      return {
-        ...missing(instrument), symbol, provider: 'finnhub', value,
-        change: numeric(row.dp), changeUnit: '%', changeBasis: '공급자 전장 종가 대비',
-        source: 'Finnhub', sourceUrl: 'https://finnhub.io/docs/api/quote',
-        observedAt: new Date(epoch * 1000).toISOString(), retrievedAt: new Date().toISOString(),
-        timestampPrecision: 'second', status: stale ? 'stale' : 'delayed', reason: null,
-        basis: group === 'sector' ? '미국 섹터 ETF · 섹터 지수의 대용지표' : '미국 상장 종목',
-        delay: '장중·장마감 여부 및 시세 지연은 Finnhub 가입 권한에 따름 · 최대 5분 캐시',
-      };
-    } catch {
-      return { ...missing(instrument, 'Finnhub 요청 시간 초과 또는 응답 오류'), symbol };
-    } finally {
-      clearTimeout(timer);
-    }
+    const result = await readURL(`https://finnhub.io/api/v1/quote?${query}`, 'json', {
+      'X-Finnhub-Token': env.FINNHUB_API_KEY,
+    });
+    if (!result) return { ...missing(instrument, 'Finnhub 이용권한·요청 한도 또는 응답 오류'), symbol };
+    const row = result.data;
+    const value = numeric(row?.c);
+    const epoch = numeric(row?.t);
+    if (value === null || value <= 0 || epoch === null || epoch <= 0 || epoch > Date.now() / 1000 + 60) return { ...missing(instrument, '유효한 시세가 없습니다'), symbol };
+    const stale = Date.now() - epoch * 1000 > 7 * 86400000;
+    return {
+      ...missing(instrument), symbol, provider: 'finnhub', value,
+      change: numeric(row.dp), changeUnit: '%', changeBasis: '공급자 전장 종가 대비',
+      source: 'Finnhub', sourceUrl: 'https://finnhub.io/docs/api/quote',
+      observedAt: new Date(epoch * 1000).toISOString(), retrievedAt: result.retrievedAt,
+      timestampPrecision: 'second', status: stale ? 'stale' : 'delayed', reason: null,
+      basis: group === 'sector' ? '미국 섹터 ETF · 섹터 지수의 대용지표' : '미국 상장 종목',
+      delay: '장중·장마감 여부 및 시세 지연은 Finnhub 가입 권한에 따름 · 최대 5분 캐시',
+    };
   }));
 }
 
@@ -310,14 +342,18 @@ function sourceList(quotes, sectors, leaders, env) {
 }
 
 async function collectMarket(env) {
+  const { readURL, failures } = createMarketReader();
   const [initialQuotes, fx, sectors, leaders] = await Promise.all([
-    Promise.all(INSTRUMENTS.map((instrument) => instrument.fred ? fredQuote(instrument, env) : instrument.crypto ? cryptoQuote(instrument) : Promise.resolve(missing(instrument)))),
-    fxQuotes(), finnhubList(SECTORS, 'sector', env), finnhubList(LEADERS, 'equity', env),
+    Promise.all(INSTRUMENTS.map((instrument) => instrument.fred ? fredQuote(instrument, env, readURL) : instrument.crypto ? cryptoQuote(instrument, readURL) : Promise.resolve(missing(instrument)))),
+    fxQuotes(readURL), finnhubList(SECTORS, 'sector', env, readURL), finnhubList(LEADERS, 'equity', env, readURL),
   ]);
-  const treasury = await treasuryFallback(initialQuotes);
+  const treasury = await treasuryFallback(initialQuotes, readURL);
   const replacements = new Map([...fx, ...treasury].map((quote) => [quote.id, quote]));
   const quotes = initialQuotes.map((quote) => replacements.get(quote.id) || quote);
   const available = quotes.filter((quote) => quote.value !== null).length;
+  if (available === 0) {
+    console.warn('Market snapshot has no valid observations', Object.fromEntries(failures));
+  }
   const mode = available === 0 ? 'unconfigured' : available === quotes.length && quotes.every((quote) => quote.status === 'live') ? 'live' : 'partial';
   return {
     asOf: new Date().toISOString(), mode, quotes, sectors, leaders, events: [],

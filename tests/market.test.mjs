@@ -70,7 +70,13 @@ test('the Fed broad dollar index never fills the distinct missing ICE DXY instru
 });
 
 test('provider failures produce explicit missing values without sample prices or leaked credentials', async t => {
-  installFetch(t, async () => { throw new Error('Provider unavailable'); });
+  const warning = t.mock.method(console, 'warn', () => {});
+  installFetch(t, async (input) => {
+    if (new URL(input).hostname === 'api.stlouisfed.org') {
+      return new Response('Do not log upstream body', { status: 429 });
+    }
+    throw new Error('Do not log upstream error fixture-finnhub-secret');
+  });
   const { getMarket } = await freshModule();
   const data = await getMarket({ FRED_API_KEY: 'fixture-fred-secret', FINNHUB_API_KEY: 'fixture-finnhub-secret' });
   assert.equal(data.mode, 'unconfigured');
@@ -83,6 +89,39 @@ test('provider failures produce explicit missing values without sample prices or
   }
   assert.ok(data.outlooks.every(outlook => outlook.confidence === '판단 보류'));
   assert.doesNotMatch(JSON.stringify(data), /fixture-(fred|finnhub)-secret/);
+  assert.equal(warning.mock.callCount(), 1);
+  const [, failures] = warning.mock.calls[0].arguments;
+  assert.ok(failures['api.stlouisfed.org HTTP_429'] > 0);
+  assert.ok(failures['finnhub.io fetch_error'] > 0);
+  assert.doesNotMatch(JSON.stringify(failures), /secret|Do not log/);
+});
+
+test('keyless provider requests and configured Finnhub calls share the connection budget', async t => {
+  const fixture = providerFixture();
+  let active = 0;
+  let peak = 0;
+  installFetch(t, async (input, options) => {
+    active++;
+    peak = Math.max(peak, active);
+    try {
+      await new Promise(resolve => setImmediate(resolve));
+      if (new URL(input).hostname === 'finnhub.io') {
+        assert.equal(options.headers['X-Finnhub-Token'], 'test-token');
+        return Response.json({ c: 100, dp: 1, t: Math.floor(Date.now() / 1000) });
+      }
+      return fixture(input);
+    } finally {
+      active--;
+    }
+  });
+
+  const { getMarket } = await freshModule();
+  const data = await getMarket({ FINNHUB_API_KEY: 'test-token' });
+  assert.equal(peak, 4);
+  assert.ok(data.sectors.every(sector => sector.value === 100));
+  for (const id of ['sp500', 'usdkrw', 'btc', 'eth']) {
+    assert.ok(data.quotes.find(quote => quote.id === id)?.value > 0);
+  }
 });
 
 test('concurrent readers share provider requests and cached responses cannot mutate one another', async t => {
