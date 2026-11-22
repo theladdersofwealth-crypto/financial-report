@@ -191,7 +191,10 @@ function renderWelcome(mode = 'pin') {
     : registerMode ? '닉네임, 생년월일 6자리, 성별, 숫자 PIN 4자리로 회원가입합니다. 생년월일과 성별은 다른 회원에게 표시되지 않습니다.'
     : pinMode ? '가입한 닉네임과 숫자 PIN 4자리로 로그인하세요. 신규 회원은 회원가입에서 정보를 등록할 수 있어요.'
     : '기존 아이디와 비밀번호로 로그인하세요.';
-  const content = E('div', {class: 'welcome-form'}, E('p', {class: 'eyebrow'}, setup ? 'FIRST THINGS FIRST' : 'WELCOME TO YOUR DESK'), E('h2', {}, setup ? '첫 번째 관리자 만들기' : '오늘의 흐름을 읽어보세요'), E('p', {class: 'welcome-subtitle'}, subtitle));
+  const modeTabs = !setup ? E('div', {class: 'welcome-mode-tabs', role: 'tablist', 'aria-label': '입장 방식 선택'},
+    [['pin', 'PIN 로그인'], ['register', '회원가입'], ['login', '아이디 로그인']].map(([id, label]) =>
+      E('button', {type: 'button', role: 'tab', 'aria-selected': String(mode === id), class: `welcome-mode-tab ${mode === id ? 'active' : ''}`, onClick: () => renderWelcome(id)}, label))) : null;
+  const content = E('div', {class: 'welcome-form'}, E('p', {class: 'eyebrow'}, setup ? 'FIRST THINGS FIRST' : 'WELCOME TO YOUR DESK'), E('h2', {}, setup ? '첫 번째 관리자 만들기' : '오늘의 흐름을 읽어보세요'), E('p', {class: 'welcome-subtitle'}, subtitle), modeTabs);
   if (state.status?.error) content.append(E('p', {class: 'connection-note'}, '서버 연결을 확인하지 못했습니다. 로그인은 연결 복구 후 가능하며 화면 체험은 지금 이용할 수 있습니다.'));
   if (!setup && state.status && !state.status.initialized) content.append(E('div', {class: 'setup-notice'}, state.status.setupAvailable ? '아직 관리자가 설정되지 않았습니다. 초기 설정 토큰이 있다면 첫 관리자 계정을 만들어 주세요.' : '관리자 초기 설정이 필요합니다. 운영자가 서버의 초기 설정을 완료한 후 로그인할 수 있습니다.'));
   const form = E('form', {onSubmit: async event => {
@@ -491,17 +494,17 @@ function renderImpact() {
     section.append(empty('글로벌 영향 분석 대기', state.demo ? '체험용 예시는 실제 분석을 표시하지 않습니다.' : '연결된 지표를 확인하는 중입니다.', 'chart'));
     return section;
   }
+  const stateTone = text => /우호|긍정|완화/.test(String(text || '')) ? 'green' : /주의|부담|비우호|위험|약세/.test(String(text || '')) ? 'amber' : 'blue';
   const cards = [['KOSPI', impact.kospi], ['KOSDAQ', impact.kosdaq]].map(([name, item]) => {
-    const headline = `${name} · ${item.state}`;
     return E('div', {class: 'source-card'},
       E('div', {class: 'source-body'},
-        E('h3', {class: 'source-name'}, headline),
+        E('h3', {class: 'source-name'}, name, badge(item.state, stateTone(item.state))),
         E('p', {class: 'source-description'}, item.summary),
         E('p', {class: 'tiny muted'}, `반영 근거 ${item.available}/${item.total}개 · 가중치 커버리지 ${Math.round(item.coverage * 100)}% (예측 확률 아님)`),
         E('ul', {class: 'reason-list'}, item.drivers.slice(0, 4).map(driver =>
           E('li', {}, `${driver.text} · ${driver.stance} · ${sourceName(driver.source)}`)))));
   });
-  section.append(E('div', {class: 'source-cards'}, cards));
+  section.append(E('div', {class: 'impact-index-grid'}, cards));
   const domestic = impact.domestic || {};
   const domesticItems = [
     ['코스피 일별 종가', domestic.kospi],
@@ -511,7 +514,7 @@ function renderImpact() {
   ];
   section.append(E('div', {class: 'panel-foot'}, E('strong', {}, '국내 시장 관측 · 실제 종가와 수급'),
     E('span', {}, ' · 일별 확정 자료이며 위 해외 환경 판단의 적중률이 아닙니다.')));
-  section.append(E('div', {class: 'source-cards'}, domesticItems.map(([name, quote]) =>
+  section.append(E('div', {class: 'impact-domestic-grid'}, domesticItems.map(([name, quote]) =>
     E('div', {class: 'source-card'}, E('div', {class: 'source-body'},
       E('h3', {class: 'source-name'}, name),
       quote ? E('p', {class: 'source-description'},
@@ -528,10 +531,10 @@ function renderImpact() {
   const themes = (impact.themes || []).map(theme =>
     E('div', {class: 'source-card'},
       E('div', {class: 'source-body'},
-        E('h3', {class: 'source-name'}, `${theme.title} · ${theme.state}`),
+        E('h3', {class: 'source-name'}, theme.title, badge(theme.state, stateTone(theme.state))),
         E('p', {class: 'source-description'}, theme.reason),
         theme.evidence ? E('p', {class: 'tiny muted'}, theme.evidence) : null)));
-  section.append(E('div', {class: 'source-cards'}, themes));
+  section.append(E('div', {class: 'impact-themes-grid'}, themes));
   section.append(E('div', {class: 'source-disclaimer'},
     `${impact.mixedDates ? '관측 날짜가 다른 지표가 섞여 있습니다. ' : ''}${(impact.cautions || []).join(' ')}`));
   return section;
@@ -578,7 +581,7 @@ function quoteCard(quote) {
       if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openIndexChart(quote); }
     } : null,
     title: `${quote.name} · ${state.demo ? '체험용 예시 데이터' : `${sourceName(quote.source)} · ${observed}${quote.basis ? ` · ${quote.basis}` : ''}${quote.reason ? ` · ${quote.reason}` : ''}`}`},
-    E('div', {class: 'quote-top'}, E('h3', {class: 'quote-name'}, quote.name), E('span', {class: 'quote-group'}, chartable ? '차트 보기' : groupName(quote.group))),
+    E('div', {class: 'quote-top'}, E('h3', {class: 'quote-name'}, quote.name), chartable ? E('span', {class: 'quote-group'}, icon('chart'), '차트') : E('span', {class: 'quote-group'}, groupName(quote.group))),
     E('div', {class: 'quote-value-row'}, E('span', {class: 'quote-value'}, formatValue(quote)), E('span', {class: 'quote-unit'}, quote.unit || '')),
     E('div', {class: 'quote-bottom'}, available ? E('span', {class: `quote-change ${tone}`}, changeText) : E('span', {class: 'quote-missing'}, '데이터 연결 필요'), available && !flow ? sparkline(quote) : null),
     E('div', {class: 'quote-source'}, state.demo ? '체험용 예시' : available ? `${quote.status === 'stale' ? '⚠ 오래된 관측 · ' : quote.status === 'monthly' ? '월간 통계 · ' : ''}${sourceName(quote.source)} · ${observed}` : '— 데이터 연결 필요'));
@@ -765,7 +768,7 @@ function renderOutlook() {
     section.append(E('div', {id: 'outlook-content', role: 'tabpanel', 'aria-labelledby': `tab-${active.id}`}, empty(`${active.label} 전망을 위한 근거가 아직 없습니다.`, '연결된 시황과 경제 일정이 확보되면 근거·반대 증거·판단 변경 조건을 함께 제공합니다.', 'chart')));
     return section;
   }
-  section.append(E('div', {class: 'outlook-body', id: 'outlook-content', role: 'tabpanel', 'aria-labelledby': `tab-${active.id}`}, E('h3', {class: 'outlook-headline'}, outlook.title), E('div', {class: 'outlook-markets'}, E('div', {class: 'outlook-market'}, E('strong', {}, 'KOSPI'), E('p', {}, outlook.kospi || '분석 근거 부족')), E('div', {class: 'outlook-market'}, E('strong', {}, 'KOSDAQ'), E('p', {}, outlook.kosdaq || '분석 근거 부족'))), E('div', {class: 'outlook-reason-grid'}, E('div', {}, E('h3', {class: 'reason-title'}, E('i', {class: 'dot'}), '이 판단을 지지하는 근거'), reasonList(outlook.evidence, '확인된 근거 없음')), E('div', {}, E('h3', {class: 'reason-title risk'}, E('i', {class: 'dot'}), '함께 볼 반대 증거'), reasonList(outlook.counter, '반대 증거 미제공'))), E('div', {class: 'invalidation'}, E('strong', {}, '판단을 바꿀 조건'), E('span', {}, arrayText(outlook.invalidation) || '판단 변경 조건 미제공')), E('div', {class: 'outlook-confidence'}, icon('info'), `판단 확신도: ${outlook.confidence ?? '평가 없음'} · ${state.demo ? '체험용 예시이며 실제 시장 전망이 아닙니다.' : '검증되지 않은 숫자 확률은 표시하지 않습니다.'}`)));
+  section.append(E('div', {class: 'outlook-body', id: 'outlook-content', role: 'tabpanel', 'aria-labelledby': `tab-${active.id}`}, E('h3', {class: 'outlook-headline'}, outlook.title), E('div', {class: 'outlook-markets'}, E('div', {class: 'outlook-market'}, E('strong', {}, 'KOSPI'), E('p', {}, outlook.kospi || '분석 근거 부족')), E('div', {class: 'outlook-market'}, E('strong', {}, 'KOSDAQ'), E('p', {}, outlook.kosdaq || '분석 근거 부족'))), E('div', {class: 'outlook-reason-grid'}, E('div', {class: 'outlook-reason-box'}, E('h3', {class: 'reason-title'}, E('i', {class: 'dot'}), '이 판단을 지지하는 근거'), reasonList(outlook.evidence, '확인된 근거 없음')), E('div', {class: 'outlook-reason-box risk'}, E('h3', {class: 'reason-title risk'}, E('i', {class: 'dot'}), '함께 볼 반대 증거'), reasonList(outlook.counter, '반대 증거 미제공'))), E('div', {class: 'invalidation'}, E('strong', {}, '판단을 바꿀 조건'), E('span', {}, arrayText(outlook.invalidation) || '판단 변경 조건 미제공')), E('div', {class: 'outlook-confidence'}, icon('info'), `판단 확신도: ${outlook.confidence ?? '평가 없음'} · ${state.demo ? '체험용 예시이며 실제 시장 전망이 아닙니다.' : '검증되지 않은 숫자 확률은 표시하지 않습니다.'}`)));
   return section;
 }
 function arrayText(value) { return Array.isArray(value) ? value.map(x => typeof x === 'string' ? x : x.text || x.title || '').join(' · ') : typeof value === 'string' ? value : ''; }
@@ -806,7 +809,7 @@ function renderMarketRows() {
   const rows = normalizedQuotes().filter(q => (state.marketFilter === '전체' || groupName(q.group) === state.marketFilter) && String(q.name || '').toLowerCase().includes(state.marketSearch.toLowerCase()));
   tbody.replaceChildren(...rows.map(q => E('tr', {}, E('td', {}, E('strong', {class: 'data-table-name'},
   hasIndexChart(q) ? E('button', {type:'button',class:'market-table-chart-link',
-    'aria-label':`${q.name} 과거 지수 차트 열기`,onClick:()=>openIndexChart(q)},q.name) : q.name,
+    'aria-label':`${q.name} 과거 지수 차트 열기`,onClick:()=>openIndexChart(q)},q.name, icon('chart')) : q.name,
   E('small', {}, q.basis || groupName(q.group)))), E('td', {class: 'num mono'}, E('strong', {}, formatValue(q)), E('div', {class: 'tiny muted'}, q.unit || '')), E('td', {class: `num mono ${changeClass(q.change)}`}, hasValue(q) ? formatChange(q) : '—'), E('td', {}, E('div', {}, state.demo ? '예시 · 실제 시각 아님' : q.timestampPrecision === 'day' && q.observedAt ? String(q.observedAt).slice(0, 10) : q.observedAt ? `${dateText(q.observedAt)} KST` : '—'), E('div', {class: 'tiny muted'}, q.delay || (state.demo ? '가상 데이터' : ''))), E('td', {}, q.sourceUrl ? link(sourceName(q.source), q.sourceUrl) : E('span', {}, state.demo ? '체험용 예시' : sourceName(q.source)), E('div', {class: 'tiny muted', title: q.reason || ''}, state.demo ? '예시 데이터' : q.status === 'stale' ? '관측 지연 · 최신성 주의' : hasValue(q) ? q.status === 'live' ? '공급자 스냅샷' : '최근 유효 관측' : q.reason || '— 데이터 연결 필요')))));
   if (!rows.length) tbody.append(E('tr', {}, E('td', {colspan: 5}, E('div', {class: 'empty-state'}, '검색 조건에 맞는 지표가 없습니다.'))));
 }
