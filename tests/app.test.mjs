@@ -76,7 +76,7 @@ test('private desk authentication, member management and real-time room',async t
     assert.equal((await register('가입검사','0123','990229','남')).status,400,'invalid leap day');
     assert.equal((await register('가입검사','0123','951332','남')).status,400,'invalid month/day');
     assert.equal((await register('가입검사','0123','950705','X')).status,400,'only selected two gender options');
-    assert.equal((await register('가입검사','0123','950705',undefined)).status,400);
+    assert.equal((await request('/api/pin-register',{method:'POST',body:{nickname:'가입검사',pin:'0123',birth6:'950705'}})).status,400);
     assert.equal((await register('가입검사',1234)).status,400);
     assert.equal((await register('가입검사','0000', '000229','여')).status,200,'2000 leap date allowed');
 
