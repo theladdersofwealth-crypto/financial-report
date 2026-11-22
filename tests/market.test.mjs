@@ -71,9 +71,12 @@ test('the Fed broad dollar index never fills the distinct missing ICE DXY instru
 
 test('backup restores missing quotes only while their observations are recent', async t => {
   const fixture = providerFixture();
+  const warning = t.mock.method(console, 'warn', () => {});
   installFetch(t, async input => {
     const host = new URL(input).hostname;
     if (host === 'fred.stlouisfed.org') return fixture(input);
+    if (host === 'api.frankfurter.dev') throw new Error('DNS resolution failed (sensitive-url)');
+    if (host === 'www.bitstamp.net') return new Response(null, {status: 302, headers: {Location: 'https://example.invalid/sensitive-url'}});
     throw new Error('Provider unavailable');
   });
   const { collectMarket } = await freshModule();
@@ -91,6 +94,11 @@ test('backup restores missing quotes only while their observations are recent', 
   assert.equal(quotes.btc.value, null);
   assert.equal(data.sources.find(source => source.id === 'frankfurter').status, 'backup');
   assert.match(data.summary.points[0], /1개 지표/);
+  assert.match(data.summary.points[1], /api\.frankfurter\.dev DNS 오류/);
+  assert.match(data.summary.points[1], /www\.bitstamp\.net HTTP 302/);
+  assert.equal(warning.mock.callCount(), 1);
+  assert.doesNotMatch(JSON.stringify(warning.mock.calls[0].arguments), /sensitive-url/);
+  assert.doesNotMatch(JSON.stringify(data.summary), /sensitive-url/);
 });
 
 test('provider failures produce explicit missing values without sample prices or leaked credentials', async t => {

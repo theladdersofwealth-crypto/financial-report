@@ -105,7 +105,7 @@ async function readProvider(url, format, headers, failures) {
   }
   try {
     const response = await fetch(parsed.toString(), {
-      method: 'GET', redirect: 'error', signal: controller.signal,
+      method: 'GET', redirect: 'manual', signal: controller.signal,
       headers: { Accept: format === 'json' ? 'application/json' : 'text/csv,application/xml,text/plain', ...headers },
     });
     if (!response.ok || Number(response.headers.get('content-length')) > 2000000) {
@@ -121,9 +121,16 @@ async function readProvider(url, format, headers, failures) {
     }
     recordOutcome('response_received');
     return { data, retrievedAt: new Date().toISOString() };
-  } catch {
-    // Keep provider URLs, credentials, and response bodies out of logs.
-    return failed(controller.signal.aborted ? 'timeout' : 'fetch_error');
+  } catch (error) {
+    if (controller.signal.aborted) return failed('timeout');
+    // Classify locally; never include the exception, request URL, or raw body.
+    const detail = `${error?.cause?.code || ''} ${error?.message || ''}`;
+    if (/I\/O on behalf of a different request|outside of a request context/i.test(detail)) return failed('request_context');
+    if (/ENOTFOUND|EAI_AGAIN|DNS|resolve (host|hostname)/i.test(detail)) return failed('dns_error');
+    if (/TLS|SSL|certificate/i.test(detail)) return failed('tls_error');
+    if (/egress|outbound|not allowed|blocked|forbidden|denied/i.test(detail)) return failed('outbound_denied');
+    if (/ECONNRESET|ECONNREFUSED|network connection lost|connection reset|connection refused/i.test(detail)) return failed('connection_lost');
+    return failed('fetch_error');
   } finally {
     clearTimeout(timer);
   }
@@ -385,20 +392,25 @@ export async function collectMarket(env, backup = []) {
   if (restored) {
     summary.points.unshift(`실시간 공급자 요청 실패로 ${restored}개 지표에 배포 시 저장한 관측값을 표시합니다. 각 지표의 출처와 관측 시각을 확인하세요.`);
   }
-  if (available === 0) {
-    console.warn('Market snapshot has no valid observations', Object.fromEntries(failures));
+  if (available === 0 || restored) {
+    console.warn(available === 0 ? 'Market snapshot has no valid observations' : 'Market snapshot uses deployment backup', Object.fromEntries(failures));
     const labels = {
       response_received: '응답 수신 · 유효한 값 없음',
       invalid_json: '응답 형식 오류',
       response_too_large: '응답 크기 초과',
       timeout: '시간 초과',
+      request_context: 'Worker 요청 범위 오류',
+      dns_error: 'DNS 오류',
+      tls_error: 'TLS 오류',
+      outbound_denied: '외부 연결 거부',
+      connection_lost: '연결 끊김',
       fetch_error: '요청 실패',
     };
     const report = [...failures].map(([key, count]) => {
       const [host, status] = key.split(' ');
       return `${host} ${labels[status] || status.replace('_', ' ')} ${count}건`;
     });
-    if (report.length) summary.points.push(`이번 조회 결과 · ${report.join(' / ')}`);
+    if (report.length) summary.points.splice(restored ? 1 : summary.points.length, 0, `이번 조회 결과 · ${report.join(' / ')}`);
   }
   const mode = available === 0 ? 'unconfigured' : available === quotes.length && quotes.every((quote) => quote.status === 'live') ? 'live' : 'partial';
   return {
@@ -430,7 +442,7 @@ async function loadOrRefresh(env, force) {
   if (pending.has(key)) return structuredClone(await pending.get(key));
   const task = (async () => {
     const cache = edgeCache();
-    const cacheRequest = new Request(`https://market-desk-cache.invalid/snapshot/v3/${key}`);
+    const cacheRequest = new Request(`https://market-desk-cache.invalid/snapshot/v4/${key}`);
     if (!force && cache) {
       try {
         const response = await cache.match(cacheRequest);
