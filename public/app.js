@@ -338,8 +338,21 @@ function renderView() {
 }
 function dataState() {
   if (state.demo) return E('span', {class: 'data-state partial'}, E('i', {class: 'dot'}), 'EXAMPLE');
-  const mode = state.market?.mode;
-  return E('span', {class: `data-state ${mode === 'live' ? 'live' : mode === 'partial' ? 'partial' : ''}`}, E('i', {class: 'dot'}), mode === 'live' ? '데이터 연결' : mode === 'partial' ? '일부 데이터 연결' : '데이터 연결 필요');
+  const quotes = state.market?.quotes || [];
+  const good = quotes.filter(q => Number.isFinite(q.value)
+    && ['daily', 'delayed', 'live', 'monthly'].includes(q.status) && !q.deploymentBackup);
+  const delayed = quotes.filter(q => q.status === 'stale' || q.deploymentBackup);
+  const missing = quotes.filter(q => !Number.isFinite(q.value));
+  const complete = quotes.length > 0 && good.length === quotes.length;
+  const summary = quotes.length ? `지표 ${good.length}/${quotes.length} 정상 수신` : '데이터 연결 필요';
+  const issues = [...missing, ...delayed].map(q => q.name).filter(Boolean);
+  const explanation = issues.length
+    ? `수신 확인 필요: ${issues.slice(0, 4).join(', ')}${issues.length > 4 ? ` 외 ${issues.length - 4}개` : ''}`
+    : '모든 지표의 최신 유효 관측값을 수신했습니다.';
+  return E('button', {type: 'button', class: `data-state data-state-action ${complete ? 'live' : good.length ? 'partial' : ''}`,
+    title: `${summary} · ${explanation} · 클릭하면 공급원별 수신 현황으로 이동합니다.`,
+    'aria-label': `${summary}. 데이터 연결 현황 보기`,
+    onClick: () => navigate('sources')}, E('i', {class: 'dot'}), summary);
 }
 async function refreshCurrent() {
   if (state.demo) { renderView(); toast('체험용 예시 화면을 다시 표시했습니다. 실제 시세를 조회하지 않았습니다.'); return; }

@@ -558,7 +558,11 @@ export async function collectMarket(env, backup = []) {
     });
     if (report.length) summary.points.splice(restored ? 1 : summary.points.length, 0, `이번 조회 결과 · ${report.join(' / ')}`);
   }
-  const mode = available === 0 ? 'unconfigured' : available === quotes.length && quotes.every((quote) => quote.status === 'live') ? 'live' : 'partial';
+  // "Connected" measures valid received observations, not intraday streaming.
+  // Legitimate KIS/FRED daily closes and IMF monthly averages count as received.
+  const healthy = quotes.filter(quote => Number.isFinite(quote.value)
+    && ['live', 'delayed', 'daily', 'monthly'].includes(quote.status) && !quote.deploymentBackup).length;
+  const mode = healthy === 0 ? 'unconfigured' : healthy === quotes.length ? 'live' : 'partial';
   return {
     asOf: new Date().toISOString(), mode, quotes, sectors, leaders, impact, events: [],
     summary, outlooks, sources: sourceList(quotes, sectors, leaders, env, failures),
