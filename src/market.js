@@ -31,9 +31,25 @@ const INSTRUMENTS = [
   { id: 'us2y', name: '미 국채 2년', group: 'rates', unit: '%', fred: 'DGS2', origin: 'Federal Reserve H.15', basis: '일별 고정만기 수익률' },
   { id: 'us10y', name: '미 국채 10년', group: 'rates', unit: '%', fred: 'DGS10', origin: 'Federal Reserve H.15', basis: '일별 고정만기 수익률' },
   { id: 'usreal10y', name: '미 실질금리 10년', group: 'rates', unit: '%', fred: 'DFII10', origin: 'Federal Reserve H.15', basis: '일별 물가연동채 고정만기 수익률' },
-  { id: 'usdkrw', name: '달러/원', group: 'fx', unit: '원/USD', fx: 'KRW', basis: 'ECB 일별 기준환율 · 서울 현물환 종가 아님' },
-  { id: 'usdjpy', name: '달러/엔', group: 'fx', unit: 'JPY/USD', fx: 'JPY', basis: 'ECB 일별 기준환율' },
-  { id: 'usdcny', name: '달러/위안', group: 'fx', unit: 'CNY/USD', fx: 'CNY', basis: 'ECB 일별 기준환율 · 역외 CNH 아님' },
+  { id: 'usdkrw', name: '달러/원', group: 'fx', unit: '원/USD', fx: 'KRW', basis: '일별 기준환율 · 1달러당 원화' },
+  { id: 'usdjpy', name: '달러/엔', group: 'fx', unit: 'JPY/USD', fx: 'JPY', basis: '일별 기준환율 · 1달러당 엔' },
+  { id: 'jpykrw', name: '엔/원', group: 'fx', unit: '원/JPY', fxCross: 'JPY', basis: '동일 날짜 달러 기준환율에서 산출 · 1엔당 원화' },
+  { id: 'usdcny', name: '달러/위안', group: 'fx', unit: 'CNY/USD', fx: 'CNY', basis: '일별 기준환율 · 1달러당 위안' },
+  { id: 'cnykrw', name: '위안/원', group: 'fx', unit: '원/CNY', fxCross: 'CNY', basis: '동일 날짜 달러 기준환율에서 산출 · 1위안당 원화' },
+  { id: 'usdeur', name: '달러/유로', group: 'fx', unit: 'EUR/USD', fx: 'EUR', basis: '일별 기준환율 · 1달러당 유로' },
+  { id: 'eurkrw', name: '유로/원', group: 'fx', unit: '원/EUR', fxCross: 'EUR', basis: '동일 날짜 달러 기준환율에서 산출 · 1유로당 원화' },
+  { id: 'usdgbp', name: '달러/파운드', group: 'fx', unit: 'GBP/USD', fx: 'GBP', basis: '일별 기준환율 · 1달러당 파운드' },
+  { id: 'gbpkrw', name: '파운드/원', group: 'fx', unit: '원/GBP', fxCross: 'GBP', basis: '동일 날짜 달러 기준환율에서 산출 · 1파운드당 원화' },
+  { id: 'usdchf', name: '달러/스위스프랑', group: 'fx', unit: 'CHF/USD', fx: 'CHF', basis: '일별 기준환율 · 1달러당 스위스프랑' },
+  { id: 'chfkrw', name: '스위스프랑/원', group: 'fx', unit: '원/CHF', fxCross: 'CHF', basis: '동일 날짜 달러 기준환율에서 산출 · 1스위스프랑당 원화' },
+  { id: 'usdaud', name: '달러/호주달러', group: 'fx', unit: 'AUD/USD', fx: 'AUD', basis: '일별 기준환율 · 1달러당 호주달러' },
+  { id: 'audkrw', name: '호주달러/원', group: 'fx', unit: '원/AUD', fxCross: 'AUD', basis: '동일 날짜 달러 기준환율에서 산출 · 1호주달러당 원화' },
+  { id: 'usdcad', name: '달러/캐나다달러', group: 'fx', unit: 'CAD/USD', fx: 'CAD', basis: '일별 기준환율 · 1달러당 캐나다달러' },
+  { id: 'cadkrw', name: '캐나다달러/원', group: 'fx', unit: '원/CAD', fxCross: 'CAD', basis: '동일 날짜 달러 기준환율에서 산출 · 1캐나다달러당 원화' },
+  { id: 'usdsgd', name: '달러/싱가포르달러', group: 'fx', unit: 'SGD/USD', fx: 'SGD', basis: '일별 기준환율 · 1달러당 싱가포르달러' },
+  { id: 'sgdkrw', name: '싱가포르달러/원', group: 'fx', unit: '원/SGD', fxCross: 'SGD', basis: '동일 날짜 달러 기준환율에서 산출 · 1싱가포르달러당 원화' },
+  { id: 'usdhkd', name: '달러/홍콩달러', group: 'fx', unit: 'HKD/USD', fx: 'HKD', basis: '일별 기준환율 · 1달러당 홍콩달러' },
+  { id: 'hkdkrw', name: '홍콩달러/원', group: 'fx', unit: '원/HKD', fxCross: 'HKD', basis: '동일 날짜 달러 기준환율에서 산출 · 1홍콩달러당 원화' },
   { id: 'dxy', name: '달러인덱스 DXY', group: 'fx', unit: 'pt', required: 'ICE DXY 시세 공급자 연결 필요' },
   { id: 'broadusd', name: '연준 광의달러지수', group: 'fx', unit: 'pt', fred: 'DTWEXBGS', origin: 'Federal Reserve', basis: '일별 무역가중 광의달러지수 · ICE DXY와 다른 지수' },
   { id: 'wti', name: 'WTI 현물', group: 'energy', unit: 'USD/bbl', fred: 'DCOILWTICO', origin: 'U.S. EIA', basis: '쿠싱 현물 일별 가격 · 선물 아님' },
@@ -261,29 +277,48 @@ async function ecosQuote(instrument, env, readURL) {
 }
 
 async function fxQuotes(readURL) {
-  const base = `https://api.frankfurter.dev/v2/rates?base=USD&quotes=KRW,JPY,CNY&from=${daysAgo(100)}`;
+  // Query USD-base daily reference rates once; derive KRW crosses only from
+  // same-date observations. Never mix mismatched days or invent spot quotes.
+  const direct = INSTRUMENTS.filter(item => item.fx);
+  const cross = INSTRUMENTS.filter(item => item.fxCross);
+  const symbols = [...new Set(direct.map(item => item.fx))];
+  const base = `https://api.frankfurter.dev/v2/rates?base=USD&quotes=${symbols.join(',')}&from=${daysAgo(100)}`;
   const pinned = await readURL(`${base}&providers=ECB`);
   const primary = Array.isArray(pinned?.data) ? pinned.data : [];
-  const quotes = INSTRUMENTS.filter((item) => item.fx);
-  const validRows = (rows, quote) => rows.filter((row) => row.base === 'USD' && row.quote === quote && isoDay(row.date) && numeric(row.rate) !== null);
-  // If a pinned provider omits a pair, fall back to the documented blended
-  // central-bank series, with clear attribution rather than claiming ECB.
-  const absent = quotes.some((instrument) => !validRows(primary, instrument.fx).length);
+  const validRows = (rows, quote) => rows.filter(row => row.base === 'USD' && row.quote === quote
+    && isoDay(row.date) && numeric(row.rate) !== null && Number(row.rate) > 0);
+  const absent = symbols.some(symbol => !validRows(primary, symbol).length);
   const fallback = absent ? await readURL(base) : null;
   const blended = Array.isArray(fallback?.data) ? fallback.data : [];
-  return quotes.map((instrument) => {
-    const ecbRows = validRows(primary, instrument.fx);
-    const useEcb = ecbRows.length > 0;
-    const rows = useEcb ? ecbRows : validRows(blended, instrument.fx);
-    if (!rows.length) return missing(instrument, 'Frankfurter 일별 기준환율 응답에 해당 통화가 없습니다');
-    return fromHistory(instrument, rows.map((row) => ({ date: row.date, value: row.rate })), {
-      provider: 'frankfurter',
-      source: useEcb ? 'ECB / Frankfurter' : '중앙은행 혼합 / Frankfurter',
-      sourceUrl: 'https://frankfurter.dev/',
-      retrievedAt: useEcb ? pinned.retrievedAt : fallback.retrievedAt,
-      basis: useEcb ? instrument.basis : '여러 중앙은행의 혼합 일별 기준환율 · ECB 단독 기준 아님',
+  const chosen = new Map(symbols.map(symbol => {
+    const ecbRows = validRows(primary, symbol);
+    return [symbol, {rows: ecbRows.length ? ecbRows : validRows(blended, symbol), ecb: ecbRows.length > 0}];
+  }));
+  const directQuotes = direct.map(instrument => {
+    const {rows,ecb} = chosen.get(instrument.fx);
+    if (!rows.length) return missing(instrument, '일별 기준환율 응답에 해당 통화가 없습니다');
+    return fromHistory(instrument, rows.map(row => ({date:row.date,value:row.rate})), {
+      provider:'frankfurter',source:ecb?'ECB / Frankfurter':'중앙은행 혼합 / Frankfurter',
+      sourceUrl:'https://frankfurter.dev/',retrievedAt:ecb?pinned.retrievedAt:fallback?.retrievedAt,
+      basis:instrument.basis + (ecb?' · ECB 기준':' · 중앙은행 혼합 기준'),
     });
   });
+  const krw = chosen.get('KRW')?.rows || [];
+  const krwByDate = new Map(krw.map(row => [row.date,Number(row.rate)]));
+  const crossQuotes = cross.map(instrument => {
+    const target = chosen.get(instrument.fxCross);
+    const matched = (target?.rows || []).filter(row => krwByDate.has(row.date))
+      .map(row => ({date:row.date,value:krwByDate.get(row.date)/Number(row.rate)}));
+    if (!matched.length) return missing(instrument, '동일 날짜의 원화·외화 기준환율이 없습니다');
+    return fromHistory(instrument, matched, {
+      provider:'frankfurter',
+      source:chosen.get('KRW')?.ecb && target.ecb ? 'ECB / Frankfurter (교차환율)' : '중앙은행 혼합 / Frankfurter (교차환율)',
+      sourceUrl:'https://frankfurter.dev/',
+      retrievedAt:chosen.get('KRW')?.ecb && target.ecb ? pinned.retrievedAt : fallback?.retrievedAt || pinned.retrievedAt,
+      basis:instrument.basis + ' · 동일 날짜 USD/KRW ÷ USD/외화',
+    });
+  });
+  return [...directQuotes,...crossQuotes];
 }
 
 async function metalSpotQuote(instrument, readURL) {
