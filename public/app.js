@@ -665,10 +665,10 @@ function quoteCard(quote) {
   const observation=!available?'데이터 미수신'
     :quote.status==='stale'?`⚠ 오래된 값 · ${observed}`:`${observed} 기준`;
   return E('article', {class:`quote-card${chartable?' quote-card-clickable':''}${flow?' quote-card-flow':''}`,
-    role:chartable?'button':null,
-    tabindex:chartable?0:null,
+    role: chartable ? 'button' : null,
+    tabindex: chartable ? 0 : null,
     'aria-label':chartable?`${quote.name} 과거 지수 차트 열기`:null,
-    onClick:chartable?()=>openIndexChart(quote):null,
+    onClick: chartable ? () => openIndexChart(quote) : null,
     onKeydown:chartable?event=>{
       if(event.key==='Enter'||event.key===' '){event.preventDefault();openIndexChart(quote);}
     }:null,
