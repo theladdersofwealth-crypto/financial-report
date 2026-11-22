@@ -7,7 +7,7 @@
 import deploymentSnapshot from './market-deploy-snapshot.js';
 import { buildImpact } from './impact.js';
 import { validateHistoricalImpact } from './validation.js';
-import { collectKis, collectKisOverseas, kisConfigured } from './kis.js';
+import { collectKis, collectKisOverseas, collectKisMacro, kisConfigured } from './kis.js';
 
 const TTL = 5 * 60 * 1000;
 const TIMEOUT = 4000;
@@ -438,7 +438,7 @@ function sourceList(quotes, sectors, leaders, env, failures = new Map()) {
     finnhub: SECTORS.length + LEADERS.length,
     goldapi: INSTRUMENTS.filter(x => x.metalSpot).length,
     ecos: INSTRUMENTS.filter(x => x.ecos).length,
-    kis: 4 + SECTORS.length + LEADERS.length + 4,
+    kis: 4 + SECTORS.length + LEADERS.length + 4 + 3,
   };
   return definitions.map(([id, name, url, note, enabled, hosts]) => {
     const records = all.filter(quote => quote.provider === id);
@@ -509,9 +509,9 @@ function selectKisFirst(previous,kisItems) {
 
 export async function collectMarket(env, backup = []) {
   const { readURL, failures } = createMarketReader();
-  const [initialQuotes, fx, kis, overseas] = await Promise.all([
+  const [initialQuotes, fx, kis, overseas, macro] = await Promise.all([
     Promise.all(INSTRUMENTS.map((instrument) => instrument.fred ? fredQuote(instrument, env, readURL) : instrument.metalSpot ? metalSpotQuote(instrument, readURL) : instrument.ecos ? ecosQuote(instrument, env, readURL) : instrument.crypto ? cryptoQuote(instrument, readURL) : Promise.resolve(missing(instrument)))),
-    fxQuotes(readURL), collectKis(env), collectKisOverseas(env),
+    fxQuotes(readURL), collectKis(env), collectKisOverseas(env), collectKisMacro(env),
   ]);
   // Actual request priority: KIS FIRST. Ask paid Finnhub only for
   // securities that KIS did not return as valid observations.
@@ -524,7 +524,7 @@ export async function collectMarket(env, backup = []) {
   const treasury = await treasuryFallback(initialQuotes, readURL);
   const base = new Map(initialQuotes.map(q=>[q.id,q]));
   const verifiedUSIndices = overseas.indices.filter(q=>sameIndex(q,base.get(q.id)));
-  const replacements = new Map([...fx, ...treasury, ...kis, ...verifiedUSIndices]
+  const replacements = new Map([...fx, ...treasury, ...kis, ...verifiedUSIndices, ...macro]
     .filter(q => validQuote(q)).map(quote => [quote.id,quote]));
   const obtained = initialQuotes.map(quote => replacements.get(quote.id) || quote);
   const quotes = useDeploymentBackup(obtained, backup);
