@@ -144,8 +144,9 @@ function missing(instrument, reason = instrument.required || '공급자 응답�
   return {
     id: instrument.id, name: instrument.name, group: instrument.group, value: null,
     unit: instrument.unit, change: null, changeUnit: instrument.flow ? '억원' : instrument.group === 'rates' || instrument.id === 'hyspread' || (instrument.ecos && !instrument.ecosTable) ? 'bp' : '%',
-    source: instrument.fred ? `${instrument.origin} / FRED` : '미연결',
-    sourceUrl: instrument.fred ? `https://fred.stlouisfed.org/series/${instrument.fred}` : null,
+    provider: instrument.fred ? 'fred' : instrument.ecos ? 'ecos' : instrument.fx ? 'frankfurter' : instrument.crypto ? 'bitstamp' : instrument.provider || null,
+    source: instrument.fred ? `${instrument.origin} / FRED` : instrument.ecos ? '한국은행 ECOS' : instrument.fx ? 'ECB / Frankfurter' : instrument.crypto ? 'Bitstamp' : '미연결',
+    sourceUrl: instrument.fred ? `https://fred.stlouisfed.org/series/${instrument.fred}` : instrument.ecos ? 'https://ecos.bok.or.kr/' : instrument.fx ? 'https://frankfurter.dev/' : null,
     observedAt: null, retrievedAt: null, status: 'missing', reason,
     basis: instrument.basis || '', history: [],
   };
@@ -179,15 +180,19 @@ async function fredQuote(instrument, env, readURL) {
       file_type: 'json', observation_start: start, sort_order: 'asc' });
     result = await readURL(`https://api.stlouisfed.org/fred/series/observations?${query}`);
     entries = result?.data?.observations?.map((row) => ({ date: row.date, value: row.value }));
-  } else {
-    // One series per request. FRED may return a ZIP for a multi-series CSV URL.
-    result = await readURL(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=${instrument.fred}&cosd=${start}`, 'text');
-    const rows = result?.data?.trim().split(/\r?\n/);
-    if (rows?.[0]?.replace(/^\uFEFF/, '') === `observation_date,${instrument.fred}` || rows?.[0] === `DATE,${instrument.fred}`) {
+  }
+  // The graph download is a keyless fallback if the authenticated endpoint fails.
+  // Never interpret HTML, ZIP, or provider errors as a successful price.
+  if (!Array.isArray(entries) || !entries.some((row) => isoDay(row.date) && numeric(row.value) !== null)) {
+    const csv = await readURL(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=${instrument.fred}&cosd=${start}`, 'text');
+    const rows = csv?.data?.trim().split(/\r?\n/);
+    const header = rows?.[0]?.replace(/^\uFEFF/, '');
+    if (header === `observation_date,${instrument.fred}` || header === `DATE,${instrument.fred}`) {
       entries = rows.slice(1).map((line) => {
         const [date, value] = line.split(',');
         return { date, value };
       });
+      result = csv;
     }
   }
   if (!Array.isArray(entries)) return missing(instrument, env.FRED_API_KEY ? 'FRED 인증·이용권한 또는 공급자 응답을 확인해 주세요' : 'FRED 공개 일별 자료 응답을 확인할 수 없습니다');
@@ -247,12 +252,27 @@ async function ecosQuote(instrument, env, readURL) {
 }
 
 async function fxQuotes(readURL) {
-  const result = await readURL(`https://api.frankfurter.dev/v2/rates?base=USD&quotes=KRW,JPY,CNY&providers=ECB&from=${daysAgo(100)}`);
-  return INSTRUMENTS.filter((item) => item.fx).map((instrument) => {
-    if (!Array.isArray(result?.data)) return missing(instrument, 'ECB/Frankfurter 일별 기준환율 응답을 확인할 수 없습니다');
-    return fromHistory(instrument, result.data.filter((row) => row.base === 'USD' && row.quote === instrument.fx)
-      .map((row) => ({ date: row.date, value: row.rate })), {
-      provider: 'frankfurter', source: 'ECB / Frankfurter', sourceUrl: 'https://frankfurter.dev/', retrievedAt: result.retrievedAt,
+  const base = `https://api.frankfurter.dev/v2/rates?base=USD&quotes=KRW,JPY,CNY&from=${daysAgo(100)}`;
+  const pinned = await readURL(`${base}&providers=ECB`);
+  const primary = Array.isArray(pinned?.data) ? pinned.data : [];
+  const quotes = INSTRUMENTS.filter((item) => item.fx);
+  const validRows = (rows, quote) => rows.filter((row) => row.base === 'USD' && row.quote === quote && isoDay(row.date) && numeric(row.rate) !== null);
+  // If a pinned provider omits a pair, fall back to the documented blended
+  // central-bank series, with clear attribution rather than claiming ECB.
+  const absent = quotes.some((instrument) => !validRows(primary, instrument.fx).length);
+  const fallback = absent ? await readURL(base) : null;
+  const blended = Array.isArray(fallback?.data) ? fallback.data : [];
+  return quotes.map((instrument) => {
+    const ecbRows = validRows(primary, instrument.fx);
+    const useEcb = ecbRows.length > 0;
+    const rows = useEcb ? ecbRows : validRows(blended, instrument.fx);
+    if (!rows.length) return missing(instrument, 'Frankfurter 일별 기준환율 응답에 해당 통화가 없습니다');
+    return fromHistory(instrument, rows.map((row) => ({ date: row.date, value: row.rate })), {
+      provider: 'frankfurter',
+      source: useEcb ? 'ECB / Frankfurter' : '중앙은행 혼합 / Frankfurter',
+      sourceUrl: 'https://frankfurter.dev/',
+      retrievedAt: useEcb ? pinned.retrievedAt : fallback.retrievedAt,
+      basis: useEcb ? instrument.basis : '여러 중앙은행의 혼합 일별 기준환율 · ECB 단독 기준 아님',
     });
   });
 }
@@ -290,7 +310,7 @@ async function cryptoQuote(instrument, readURL) {
 async function finnhubList(entries, group, env, readURL) {
   if (!env.FINNHUB_API_KEY) return [];
   return Promise.all(entries.map(async ([symbol, name]) => {
-    const instrument = { id: symbol.toLowerCase(), name, group, unit: 'USD' };
+    const instrument = { id: symbol.toLowerCase(), name, group, unit: 'USD', provider: 'finnhub' };
     const query = new URLSearchParams({ symbol });
     // Finnhub accepts an API token header. Keep it out of URLs and logs.
     const result = await readURL(`https://finnhub.io/api/v1/quote?${query}`, 'json', {
