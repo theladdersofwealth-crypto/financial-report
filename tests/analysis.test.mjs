@@ -48,11 +48,13 @@ test('changed snapshots and simultaneous readers share a 30-minute provider cool
     const [first,second]=await Promise.all([enrichAnalysis(original,env),enrichAnalysis(changed,env)]);
     assert.equal(count,1);assert.equal(first.analysis.kind,'ai');assert.deepEqual(first.summary,second.summary);
     assert.equal(second.quotes[0].value,4.2);
-    assert.equal(second.analysis.dataAsOf,original.asOf);
+    const analysisAsOf=first.analysis.dataAsOf;
+    assert.ok([original.asOf,changed.asOf].includes(analysisAsOf),'one of the concurrent snapshots generated the shared analysis');
+    assert.equal(second.analysis.dataAsOf,analysisAsOf);
     const later=await enrichAnalysis({...changed,asOf:'2026-11-19T23:10:00.000Z',quotes:[{...changed.quotes[0],value:4.3,change:17}]},env);
     assert.equal(count,1);assert.equal(later.analysis.kind,'ai');
     assert.equal(later.quotes[0].value,4.3);
-    assert.equal(later.analysis.dataAsOf,original.asOf);
+    assert.equal(later.analysis.dataAsOf,analysisAsOf);
     assert.equal(requestBody.store,false);assert.equal(requestBody.response_format.json_schema.strict,true);
     assert.equal(requestBody.messages[1].content.includes('test-secret-shared'),false);
     assert.equal(JSON.stringify(later).includes('test-secret-shared'),false);
