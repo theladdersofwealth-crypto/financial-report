@@ -329,9 +329,10 @@ test('ECB partial coverage falls back to separately attributed central bank blen
 
 test('stale FRED observations are no longer reported as a healthy provider', async t => {
   const old=[[day(20),'100'],[day(18),'101']];
+  const oldMonth = n => {const d = new Date();return new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()-n,1)).toISOString().slice(0,10);};
   installFetch(t, providerFixture(Object.fromEntries(
     ['SP500','NASDAQ100','NASDAQSOX','NASDAQCOM','DGS2','DGS10','DFII10','DTWEXBGS','DCOILWTICO','DCOILBRENTEU','VIXCLS','BAMLH0A0HYM2','PNICKUSDM']
-      .map(x=>[x,old]))));
+      .map(x=>[x,x==='PNICKUSDM'?[[oldMonth(7),'100'],[oldMonth(6),'101']]:old]))));
   const {collectMarket}=await freshModule();
   const data=await collectMarket({});
   const fred=data.sources.find(x=>x.id==='fred');
