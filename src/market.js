@@ -12,6 +12,7 @@ const PROVIDER_CONCURRENCY = 4;
 const HOSTS = new Set([
   'fred.stlouisfed.org', 'api.stlouisfed.org', 'home.treasury.gov',
   'api.frankfurter.dev', 'www.bitstamp.net', 'api.coinbase.com', 'finnhub.io',
+  'www.bls.gov', 'www.federalreserve.gov',
 ]);
 const snapshots = new Map();
 const pending = new Map();
@@ -63,7 +64,7 @@ const rounded = (value) => Number.isFinite(value) ? Math.round(value * 10000) / 
 const daysAgo = (days) => new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
 const pct = (last, previous) => previous !== 0 ? rounded((last - previous) / previous * 100) : null;
 
-function createMarketReader() {
+export function createMarketReader() {
   const failures = new Map();
   const queue = [];
   let active = 0;
@@ -317,7 +318,7 @@ function buildAnalysis(quotes) {
   const ruleSets = [
     ['day', '당일 · 최근 관측에 따른 개장 여건', kospiDay.text, kosdaqDay.text, ['미국 종가·ECB 기준환율은 서로 관측일이 다를 수 있고 한국 장중 움직임을 반영하지 않습니다.', '외국인 수급·국내 거래대금·개별 실적이 외부 여건과 다르게 움직일 수 있습니다.'], ['한국 장중 환율·반도체 흐름이 관측 조합과 반대로 전환하면 해석을 철회합니다.', '외국인 수급·거래대금이 동반 확인될 때에만 국내 방향 판단을 갱신합니다.']],
     ['short', '2~3거래일 · 흐름 지속 여부', '반도체 상대강도·환율·외국인 수급의 2~3일 지속 여부를 확인합니다. 현재 방향 판단 보류.', '거래대금 확산과 성장주 상대강도가 함께 지속되는지 확인합니다. 현재 방향 판단 보류.', ['하루의 반등은 추세 전환 근거로 부족합니다.'], ['미국 금리 재상승·원화 약세 전환 시 우호적 조건을 철회합니다.']],
-    ['week', '1주 · 이벤트와 업종 순환', '확정된 경제 일정·실적 발표·주간 수급을 함께 확인해야 합니다. 일정·수급 미연동으로 판단 보류.', '성장주 실적과 업종 내 상승 종목 확산을 확인해야 합니다. 실적 자료 미연동으로 판단 보류.', ['발표 전 전망과 발표 후 반응은 다를 수 있습니다.'], ['경제지표·실적 발표 후 금리와 이익 전망이 달라지면 다시 검토합니다.']],
+    ['week', '1주 · 이벤트와 업종 순환', '경제 일정, 실적 발표와 주간 수급을 함께 확인해야 합니다. 실적·수급 자료가 부족해 방향 판단을 보류합니다.', '성장주 실적과 업종 내 상승 종목 확산을 확인해야 합니다. 실적 자료 미연동으로 판단 보류.', ['발표 전 전망과 발표 후 반응은 다를 수 있습니다.'], ['경제지표·실적 발표 후 금리와 이익 전망이 달라지면 다시 검토합니다.']],
     ['month', '1개월 · 거시와 이익 추세', '수출·이익 추정치·원화·글로벌 경기의 동반 개선 여부를 확인합니다. 해당 자료 미연동으로 판단 보류.', '실질금리·유동성·이익 추정치 개선이 함께 나타나는지 확인합니다. 해당 자료 미연동으로 판단 보류.', ['지수 상승과 이익 개선은 같은 의미가 아닙니다.'], ['실적 하향과 실질금리 상승이 지속되면 우호적 조건을 철회합니다.']],
     ['quarter', '분기 · 구조적 추세', '정책·수출 사이클·이익·밸류에이션으로 검토해야 합니다. 현재 자료만으로 분기 방향 판단 보류.', '정책·자금조달·기업 실적의 구조적 변화를 확인해야 합니다. 현재 자료만으로 분기 방향 판단 보류.', ['일별 시세만으로 분기 전망을 만들 수 없습니다.'], ['정책·이익 사이클의 변화가 확인되면 분석 전제를 갱신합니다.']],
   ];
@@ -326,7 +327,7 @@ function buildAnalysis(quotes) {
       headline: available ? `최근 관측 기준 개장 여건: 코스피 ${kospiDay.state} · 코스닥 ${kosdaqDay.state}` : '공급자 연결 확인 필요 · 실제 시세를 가져오지 못했습니다',
       points: [
         ...evidence.slice(0, 3),
-        `실제 자료 ${available}/${quotes.length}개 확인. 규칙 기반 외부 여건 해석이며 한국 지수 방향 예측은 아닙니다. AI 시황 의견·뉴스·국내 수급·확정 경제일정은 아직 연결하지 않았습니다.`,
+        `실제 자료 ${available}/${quotes.length}개 확인. 관측 지표로 개장 전 외부 여건을 해석합니다.`,
         '일별 통계와 거래소 스냅샷의 기준시각이 다릅니다. 각 지표의 관측일·시세 기준을 확인하세요.',
       ],
       method: 'rules', label: '규칙 기반 · 조건부 점검',

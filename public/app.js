@@ -179,6 +179,7 @@ function demoMarket() {
 
 function renderWelcome(mode = 'pin') {
   state.user = null;
+  state.calendar = null;
   const story = E('section', {class: 'welcome-story'}, brand(), E('div', {class: 'story-copy'}, E('p', {class: 'eyebrow'}, 'A WIDER VIEW. A CLEARER DECISION.'), E('h1', {}, '세계의 움직임을,', E('br'), E('span', {}, '투자의 시선으로.')), E('p', {class: 'story-description'}, '밤사이의 미국 증시부터 오늘의 한국시장까지.', E('br'), '흩어진 숫자와 흐름을 연결하는 당신의 금융 데스크.'), E('div', {class: 'story-visual'}, E('div', {class: 'story-line'}, E('span', {}, 'GLOBAL → KOREA'), E('span', {}, 'CONTEXT MATTERS')), storyIllustration(), E('div', {class: 'story-tags'}, ['글로벌 시장', '한국시장 영향', '기간별 시나리오'].map(x => E('span', {}, x))))), E('div', {class: 'story-foot'}, E('span', {}, 'A DESK FOR THE THOUGHTFUL INVESTOR'), E('span', {}, 'SEOUL · GLOBAL')), E('div', {class: 'story-decoration', 'aria-hidden': 'true'}));
   const setup = mode === 'setup';
   const pinMode = mode === 'pin';
@@ -340,8 +341,11 @@ function dataState() {
 }
 async function refreshCurrent() {
   if (state.demo) { renderView(); toast('체험용 예시 화면을 다시 표시했습니다. 실제 시세를 조회하지 않았습니다.'); return; }
-  if (['users', 'activity'].includes(state.view)) await loadAdmin(state.view);
-  else { await loadMarket(); renderView(); }
+  if (['users', 'activity'].includes(state.view)) { await loadAdmin(state.view); return; }
+  if (state.view === 'calendar') await loadCalendar();
+  else if (state.view === 'overview') await Promise.all([loadMarket(), loadCalendar()]);
+  else await loadMarket();
+  renderView();
 }
 function renderBrief() {
   const summary = state.market?.summary || defaultMarket().summary;
@@ -400,16 +404,20 @@ function methodologyPanel() {
   return E('section', {class: 'panel'}, panelHead('전망을 읽는 방법', '기간이 달라지면 확인해야 할 근거도 달라집니다.', null, 'info'), E('div', {class: 'source-cards'}, [['오늘 · 2~3일', '해외 장 마감, 원화, 외국인 수급과 주도 업종의 지속성을 확인합니다.'], ['주간 · 월간', '경제지표·통화정책·기업실적이 금리와 이익 기대를 어떻게 바꾸는지 봅니다.'], ['3~6개월', '경기와 정책, 기업 이익의 조합을 평가합니다. 단기 등락으로 중기 방향을 단정하지 않습니다.']].map(([title, text]) => E('div', {class: 'source-card'}, E('div', {class: 'source-body'}, E('h3', {class: 'source-name'}, title), E('p', {class: 'source-description'}, text))))), E('div', {class: 'source-disclaimer'}, '전망은 관측 시점의 조건부 시나리오입니다. 새 정보가 들어오거나 명시한 판단 변경 조건이 충족되면 해석이 달라질 수 있습니다.'));
 }
 function renderEvents(compact = false) {
-  const events = state.market?.events || [];
-  const section = E('section', {class: 'panel'}, panelHead(compact ? '다음으로 볼 이벤트' : '주요 경제 일정', state.demo ? '실제 일정과 무관한 화면 체험용 예시' : '각 이벤트의 발표 시각과 기준 시간대를 확인하세요', compact ? E('button', {type: 'button', class: 'text-button', onClick: () => navigate('calendar')}, '전체 일정', icon('chevron')) : badge('한국 시간 KST')));
-  if (!events.length) section.append(empty('— 경제 일정 데이터 연결 필요', '공식 발표 일정이 확인되면 중요도와 한국시장 연결 맥락을 표시합니다.', 'calendar'));
+  const calendar = state.calendar;
+  const events = (state.demo ? state.market?.events : calendar?.events) || [];
+  const section = E('section', {class: 'panel'}, panelHead(compact ? '다음으로 볼 이벤트' : '주요 경제 일정', state.demo ? '화면 체험용 예시' : compact ? '한국시간 · 가까운 발표 일정' : '앞으로 35일간 예정된 주요 미국 지표와 FOMC', compact ? E('button', {type: 'button', class: 'text-button', onClick: () => navigate('calendar')}, '전체 일정', icon('chevron')) : badge('한국 시간 KST')));
+  if (!events.length) {
+    const message = !calendar ? '공식 일정을 불러오는 중입니다.' : calendar.status === 'ready' ? '확인된 예정 일정이 없습니다.' : '공식 일정을 불러오지 못했습니다.';
+    section.append(empty(message, '', 'calendar'));
+  }
   else section.append(E('div', {class: 'event-list'}, (compact ? events.slice(0, 3) : events).map(item => {
     const rawTime = item.at || item.dateTime || item.datetime || item.startsAt || item.date;
     const actualTime = item.time || (rawTime ? shortTime(rawTime) : '미정');
     const importance = Number(item.importance) || (item.impact === 'high' ? 3 : 1);
-    return E('div', {class: 'event-row'}, E('div', {class: 'event-time'}, actualTime, E('small', {}, state.demo ? '가상 일정' : rawTime ? dateText(rawTime, {hour: undefined, minute: undefined}) : 'KST')), E('div', {class: 'event-country'}, item.country || item.region || 'GL'), E('div', {class: 'event-info'}, E('div', {class: 'event-name'}, item.name || item.title), E('p', {class: 'event-description'}, item.description || item.note || '')), E('div', {class: 'event-importance', 'aria-label': `중요도 ${Math.min(3, importance)}/3`}, [1, 2, 3].map(x => E('i', {class: x <= importance ? '' : 'dim'}))));
+    return E('div', {class: 'event-row'}, E('div', {class: 'event-time'}, actualTime, E('small', {}, state.demo ? '가상 일정' : rawTime ? dateText(rawTime, {hour: undefined, minute: undefined}) : 'KST')), E('div', {class: 'event-country'}, item.country || item.region || 'GL'), E('div', {class: 'event-info'}, E('div', {class: 'event-name'}, item.name || item.title), E('p', {class: 'event-description'}, item.description || item.note || ''), !state.demo && item.sourceUrl ? link(item.source, item.sourceUrl) : null), E('div', {class: 'event-importance', 'aria-label': `중요도 ${Math.min(3, importance)}/3`}, [1, 2, 3].map(x => E('i', {class: x <= importance ? '' : 'dim'}))));
   })));
-  section.append(E('div', {class: 'panel-foot'}, state.demo ? '예시 일정은 실제 발표 예정일·시각·중요도를 나타내지 않습니다.' : '발표 일정은 변경될 수 있습니다. 시각 미확인 항목은 임의의 발표 시간을 표시하지 않습니다.'));
+  section.append(E('div', {class: 'panel-foot'}, state.demo ? '예시 일정은 실제 발표 예정일·시각·중요도를 나타내지 않습니다.' : calendar?.status === 'partial' ? '일부 공식 일정을 불러오지 못했습니다.' : '발표 일정은 변경될 수 있습니다.'));
   return section;
 }
 
@@ -665,15 +673,21 @@ async function loadMarket() {
   if (generation !== state.sessionGeneration || !state.user || state.demo) return;
   state.market = {...defaultMarket(), ...data};
 }
+async function loadCalendar() {
+  const generation = state.sessionGeneration;
+  const data = await api('/api/calendar');
+  if (generation === state.sessionGeneration && state.user && !state.demo) state.calendar = data;
+}
 async function loadDashboard() {
   const generation = state.sessionGeneration;
-  const requests = [api('/api/market')];
+  const requests = [api('/api/market'), api('/api/calendar')];
   if (!state.user?.pinLogin) requests.push(api('/api/chat/history'), api('/api/settings'));
   const results = await Promise.allSettled(requests);
   if (generation !== state.sessionGeneration || !state.user || state.demo) return;
-  const [market, history, settings] = results;
+  const [market, calendar, history, settings] = results;
   if (market.status === 'fulfilled') state.market = {...defaultMarket(), ...market.value};
   else { state.market = defaultMarket(); toast(`시황 조회: ${errorText(market.reason)}`, true); }
+  state.calendar = calendar.status === 'fulfilled' ? calendar.value : {status: 'unavailable', events: []};
   if (history?.status === 'fulfilled') state.messages = history.value.messages || [];
   if (settings?.status === 'fulfilled' && Number.isInteger(settings.value.chatThreshold)) state.threshold = settings.value.chatThreshold;
   if (results.some(result => result.status === 'rejected' && result.reason.status === 401)) { await expireSession(); return; }

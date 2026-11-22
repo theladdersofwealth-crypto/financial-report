@@ -1,5 +1,6 @@
 import { DeskRoom } from './room.js';
 import { getMarket, refreshMarket } from './market.js';
+import { getCalendar } from './calendar.js';
 import { enrichAnalysis } from './analysis.js';
 
 export { DeskRoom };
@@ -32,7 +33,7 @@ export default {
       if (isApi) {
         if (!env.DESK) return protect(Response.json({ error: '서버 저장소가 아직 연결되지 않았습니다.' }, { status: 503 }), true);
         const room = env.DESK.get(env.DESK.idFromName('global-market-desk'));
-        if (url.pathname === '/api/market') {
+        if (url.pathname === '/api/market' || url.pathname === '/api/calendar') {
           const authUrl = new URL(request.url);
           authUrl.pathname = '/api/me';
           const authResponse = await room.fetch(new Request(authUrl, { headers: request.headers }));
@@ -40,6 +41,7 @@ export default {
           const { user } = await authResponse.json();
           if (user.mustChangePassword) return protect(Response.json({ error: '임시 비밀번호를 먼저 변경해 주세요.' }, { status: 403 }), true);
           if (request.method !== 'GET') return protect(Response.json({ error: '허용되지 않은 요청입니다.' }, { status: 405 }), true);
+          if (url.pathname === '/api/calendar') return protect(Response.json(await getCalendar()), true);
           return protect(Response.json(await enrichAnalysis(await getMarket(env), env)), true);
         }
         return protect(await room.fetch(request), true);
