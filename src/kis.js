@@ -197,7 +197,7 @@ async function investorQuote(env,token,id,iscd,market) {
   const previous=lastConfirmedFlow.get(id);
   if(previous?.appKey===env.KIS_APP_KEY && previous.observed
       && Date.now()-Date.parse(previous.observed.observedAt+'T23:59:59+09:00')<=7*86400000) {
-    return {...previous.observed,status:'stale',reason:'KIS 수급 재조회 실패 · 동일 Worker에 보관된 최근 확인 관측값'};
+    return {...previous.observed,status:'delayed',reason:'KIS 수급 재조회 실패 · 동일 Worker에 보관된 최근 확인 관측값',delay:'마지막 확인된 실제 거래일 수급 · 재조회 실패, 현재 시세로 간주 금지'};
   }
   return null;
 }
