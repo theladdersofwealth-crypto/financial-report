@@ -7,7 +7,7 @@
 import deploymentSnapshot from './market-deploy-snapshot.js';
 import { buildImpact } from './impact.js';
 import { validateHistoricalImpact } from './validation.js';
-import { collectKis, kisConfigured } from './kis.js';
+import { collectKis, collectKisOverseas, kisConfigured } from './kis.js';
 
 const TTL = 5 * 60 * 1000;
 const TIMEOUT = 4000;
@@ -429,7 +429,7 @@ function sourceList(quotes, sectors, leaders, env, failures = new Map()) {
     ['goldapi', 'Gold API', 'https://gold-api.com/docs', '금·은·구리 참고 현물가격 · 구리는 USD/파운드 · 키 불필요', true, ['api.gold-api.com']],
     ['finnhub', 'Finnhub', 'https://finnhub.io/docs/api/quote', '미국 섹터 ETF·대표 종목 · API 키 필요 · 등락 시각과 가입 권한 확인', Boolean(env.FINNHUB_API_KEY), ['finnhub.io']],
     ['ecos', '한국은행 ECOS', 'https://ecos.bok.or.kr/', 'KIS 수신 실패 시 일부 지수·수급 대체 · 국고채 금리 일별 자료', Boolean(env.ECOS_API_KEY), ['ecos.bok.or.kr']],
-    ['kis', '한국투자증권 KIS', 'https://apiportal.koreainvestment.com/', '코스피·코스닥 종가와 시장별 외국인 순매수 일별 시세 · 조회 전용', kisConfigured(env), ['openapi.koreainvestment.com']],
+    ['kis', '한국투자증권 KIS', 'https://apiportal.koreainvestment.com/', '국내 지수·외국인 수급 및 미국 지수·주식·섹터 ETF 우선 공급원 (권한 또는 종목 확인 실패 시 기존 자료 유지)', kisConfigured(env), ['openapi.koreainvestment.com']],
   ];
   const expected = {
     fred: INSTRUMENTS.filter(x => x.fred).length,
@@ -438,7 +438,7 @@ function sourceList(quotes, sectors, leaders, env, failures = new Map()) {
     finnhub: SECTORS.length + LEADERS.length,
     goldapi: INSTRUMENTS.filter(x => x.metalSpot).length,
     ecos: INSTRUMENTS.filter(x => x.ecos).length,
-    kis: 4,
+    kis: 4 + SECTORS.length + LEADERS.length + 4,
   };
   return definitions.map(([id, name, url, note, enabled, hosts]) => {
     const records = all.filter(quote => quote.provider === id);
@@ -453,7 +453,7 @@ function sourceList(quotes, sectors, leaders, env, failures = new Map()) {
       return { code, count };
     });
     const state = !enabled ? 'unconfigured'
-      : valid.length ? ((stale.length || backups.length || records.some(q => q.value === null)) ? 'partial' : 'connected')
+      : valid.length ? ((stale.length || backups.length || records.some(q => q.value === null) || (expected[id] && valid.length < expected[id])) ? 'partial' : 'connected')
       : backups.length ? 'backup'
       : stale.length ? 'stale'
       : ['treasury', 'coinbase'].includes(id) ? 'standby' : 'no_data';
@@ -487,16 +487,41 @@ function useDeploymentBackup(quotes, backup, now = Date.now()) {
   });
 }
 
+// A different KIS index ticker must never silently replace an official FRED index.
+// Require independent recent FRED cross-check and matching close within 1.5%.
+function sameIndex(kis,fred) {
+  if(!kis || !fred || !Number.isFinite(kis.value) || !Number.isFinite(fred.value)
+    || kis.value<=0 || fred.value<=0 || fred.status==='stale'
+    || fred.deploymentBackup || kis.status==='stale') return false;
+  const a=Date.parse(String(kis.observedAt).slice(0,10)+'T00:00:00Z');
+  const b=Date.parse(String(fred.observedAt).slice(0,10)+'T00:00:00Z');
+  return Number.isFinite(a) && Number.isFinite(b) && Math.abs(a-b)<=4*86400000
+    && Math.abs(kis.value-fred.value)/fred.value <= 0.015;
+}
+function validQuote(q) {
+  return q && Number.isFinite(q.value) && q.value>0 && ['daily','delayed','live'].includes(q.status) && !q.deploymentBackup;
+}
+function selectKisFirst(previous,kisItems) {
+  const map=new Map(previous.map(q=>[q.id,q]));
+  for(const candidate of kisItems)if(validQuote(candidate))map.set(candidate.id,candidate);
+  return [...map.values()];
+}
+
 export async function collectMarket(env, backup = []) {
   const { readURL, failures } = createMarketReader();
-  const [initialQuotes, fx, sectors, leaders, kis] = await Promise.all([
+  const [initialQuotes, fx, finnhubSectors, finnhubLeaders, kis, overseas] = await Promise.all([
     Promise.all(INSTRUMENTS.map((instrument) => instrument.fred ? fredQuote(instrument, env, readURL) : instrument.metalSpot ? metalSpotQuote(instrument, readURL) : instrument.ecos ? ecosQuote(instrument, env, readURL) : instrument.crypto ? cryptoQuote(instrument, readURL) : Promise.resolve(missing(instrument)))),
-    fxQuotes(readURL), finnhubList(SECTORS, 'sector', env, readURL), finnhubList(LEADERS, 'equity', env, readURL), collectKis(env),
+    fxQuotes(readURL), finnhubList(SECTORS, 'sector', env, readURL), finnhubList(LEADERS, 'equity', env, readURL), collectKis(env), collectKisOverseas(env),
   ]);
   const treasury = await treasuryFallback(initialQuotes, readURL);
-  const replacements = new Map([...fx, ...treasury, ...kis].filter(q => q.value !== null && q.status !== 'stale').map((quote) => [quote.id, quote]));
-  const obtained = initialQuotes.map((quote) => replacements.get(quote.id) || quote);
+  const base = new Map(initialQuotes.map(q=>[q.id,q]));
+  const verifiedUSIndices = overseas.indices.filter(q=>sameIndex(q,base.get(q.id)));
+  const replacements = new Map([...fx, ...treasury, ...kis, ...verifiedUSIndices]
+    .filter(q => validQuote(q)).map(quote => [quote.id,quote]));
+  const obtained = initialQuotes.map(quote => replacements.get(quote.id) || quote);
   const quotes = useDeploymentBackup(obtained, backup);
+  const sectors = selectKisFirst(finnhubSectors, overseas.sectors);
+  const leaders = selectKisFirst(finnhubLeaders, overseas.leaders);
   const available = quotes.filter((quote) => quote.value !== null).length;
   const { summary, outlooks } = buildAnalysis(quotes);
   const impact = buildImpact({ quotes });
