@@ -373,6 +373,24 @@ function renderImpact() {
           E('li', {}, `${driver.text} · ${driver.stance} · ${sourceName(driver.source)}`)))));
   });
   section.append(E('div', {class: 'source-cards'}, cards));
+  const domestic = impact.domestic || {};
+  const domesticItems = [
+    ['코스피 일별 종가', domestic.kospi],
+    ['코스닥 일별 종가', domestic.kosdaq],
+    ['코스피 외국인 순매수', domestic.foreignKospi],
+  ];
+  section.append(E('div', {class: 'panel-foot'}, E('strong', {}, '국내 시장 관측 · 실제 종가와 수급'),
+    E('span', {}, ' · 일별 확정 자료이며 위 해외 환경 판단의 적중률이 아닙니다.')));
+  section.append(E('div', {class: 'source-cards'}, domesticItems.map(([name, quote]) =>
+    E('div', {class: 'source-card'}, E('div', {class: 'source-body'},
+      E('h3', {class: 'source-name'}, name),
+      quote ? E('p', {class: 'source-description'},
+        `${Number(quote.value).toLocaleString('ko-KR', {maximumFractionDigits: 2})} ${quote.unit || ''} · ${String(quote.observedAt).slice(0, 10)} 기준`) :
+        E('p', {class: 'source-description'}, '데이터 미연결 또는 최신 관측값 부족'),
+      quote?.change !== null && quote?.change !== undefined
+        ? E('p', {class: 'tiny muted'}, `직전 관측 대비 ${quote.change > 0 ? '+' : ''}${quote.change}${quote.changeUnit || ''} · ${quote.changeBasis || '전일 대비'}`) : null,
+      quote?.source ? E('p', {class: 'tiny muted'}, sourceName(quote.source)) : null)))));
+
   const themes = (impact.themes || []).map(theme =>
     E('div', {class: 'source-card'},
       E('div', {class: 'source-body'},
