@@ -15,6 +15,7 @@ const HOSTS = new Set([
   'fred.stlouisfed.org', 'api.stlouisfed.org', 'home.treasury.gov',
   'api.frankfurter.dev', 'www.bitstamp.net', 'api.coinbase.com', 'finnhub.io',
   'www.bls.gov', 'www.federalreserve.gov', 'ecos.bok.or.kr',
+  'api.gold-api.com',
 ]);
 const snapshots = new Map();
 const pending = new Map();
@@ -35,10 +36,10 @@ const INSTRUMENTS = [
   { id: 'broadusd', name: '연준 광의달러지수', group: 'fx', unit: 'pt', fred: 'DTWEXBGS', origin: 'Federal Reserve', basis: '일별 무역가중 광의달러지수 · ICE DXY와 다른 지수' },
   { id: 'wti', name: 'WTI 현물', group: 'energy', unit: 'USD/bbl', fred: 'DCOILWTICO', origin: 'U.S. EIA', basis: '쿠싱 현물 일별 가격 · 선물 아님' },
   { id: 'brent', name: '브렌트 현물', group: 'energy', unit: 'USD/bbl', fred: 'DCOILBRENTEU', origin: 'U.S. EIA', basis: '유럽 브렌트 현물 일별 가격 · 선물 아님' },
-  { id: 'gold', name: '금', group: 'metals', unit: 'USD/oz', required: '금 현물 또는 월물이 확인되는 선물 시세 공급자 연결 필요' },
-  { id: 'silver', name: '은', group: 'metals', unit: 'USD/oz', required: '은 현물 또는 월물이 확인되는 선물 시세 공급자 연결 필요' },
-  { id: 'copper', name: '구리', group: 'metals', unit: 'USD/t', required: 'LME 등 거래소·현물/선물 기준이 확인되는 공급자 연결 필요' },
-  { id: 'nickel', name: '니켈', group: 'metals', unit: 'USD/t', required: 'LME 등 거래소·현물/선물 기준이 확인되는 공급자 연결 필요' },
+  { id: 'gold', name: '금 현물', group: 'metals', unit: 'USD/oz', metalSpot: 'XAU', basis: '금 1트로이온스당 USD 참고 현물가격 · 거래소 결제가격 아님' },
+  { id: 'silver', name: '은 현물', group: 'metals', unit: 'USD/oz', metalSpot: 'XAG', basis: '은 1트로이온스당 USD 참고 현물가격 · 거래소 결제가격 아님' },
+  { id: 'copper', name: '구리 참고 현물', group: 'metals', unit: 'USD/lb', metalSpot: 'HG', basis: '구리 1파운드당 USD 참고 가격 · COMEX 선물 또는 LME 공식 가격과 다름' },
+  { id: 'nickel', name: '니켈 (월간 평균)', group: 'metals', unit: 'USD/t', fred: 'PNICKUSDM', monthly: true, origin: 'IMF Primary Commodity Prices', basis: 'IMF 세계 니켈 월간 평균 가격(USD/톤) · 실시간 시세가 아님' },
   { id: 'vix', name: 'VIX 기대변동성', group: 'risk', unit: 'pt', fred: 'VIXCLS', origin: 'Cboe', basis: '일별 종가 · SPX 옵션 기반 30일 기대변동성의 연율화 수치' },
   { id: 'hyspread', name: '미 하이일드 스프레드', group: 'risk', unit: '%', fred: 'BAMLH0A0HYM2', origin: 'ICE Data Indices', basis: '일별 옵션조정 신용스프레드' },
   { id: 'btc', name: '비트코인', group: 'crypto', unit: 'USD', crypto: 'BTC', basis: '거래소 BTC/USD 현물' },
@@ -144,9 +145,9 @@ function missing(instrument, reason = instrument.required || '공급자 응답�
   return {
     id: instrument.id, name: instrument.name, group: instrument.group, value: null,
     unit: instrument.unit, change: null, changeUnit: instrument.flow ? '억원' : instrument.group === 'rates' || instrument.id === 'hyspread' || (instrument.ecos && !instrument.ecosTable) ? 'bp' : '%',
-    provider: instrument.fred ? 'fred' : instrument.ecos ? 'ecos' : instrument.fx ? 'frankfurter' : instrument.crypto ? 'bitstamp' : instrument.provider || null,
-    source: instrument.fred ? `${instrument.origin} / FRED` : instrument.ecos ? '한국은행 ECOS' : instrument.fx ? 'ECB / Frankfurter' : instrument.crypto ? 'Bitstamp' : '미연결',
-    sourceUrl: instrument.fred ? `https://fred.stlouisfed.org/series/${instrument.fred}` : instrument.ecos ? 'https://ecos.bok.or.kr/' : instrument.fx ? 'https://frankfurter.dev/' : null,
+    provider: instrument.fred ? 'fred' : instrument.metalSpot ? 'goldapi' : instrument.ecos ? 'ecos' : instrument.fx ? 'frankfurter' : instrument.crypto ? 'bitstamp' : instrument.provider || null,
+    source: instrument.fred ? `${instrument.origin} / FRED` : instrument.metalSpot ? 'Gold API' : instrument.ecos ? '한국은행 ECOS' : instrument.fx ? 'ECB / Frankfurter' : instrument.crypto ? 'Bitstamp' : '미연결',
+    sourceUrl: instrument.fred ? `https://fred.stlouisfed.org/series/${instrument.fred}` : instrument.metalSpot ? 'https://gold-api.com/docs' : instrument.ecos ? 'https://ecos.bok.or.kr/' : instrument.fx ? 'https://frankfurter.dev/' : null,
     observedAt: null, retrievedAt: null, status: 'missing', reason,
     basis: instrument.basis || '', history: [],
   };
@@ -161,18 +162,21 @@ function fromHistory(instrument, entries, metadata) {
   const previous = history.at(-2);
   const isRate = instrument.group === 'rates' || instrument.id === 'hyspread' || Boolean(instrument.ecos && !instrument.ecosTable);
   const change = previous ? (instrument.flow ? rounded(last.value - previous.value) : isRate ? rounded((last.value - previous.value) * 100) : pct(last.value, previous.value)) : null;
-  const stale = Date.now() - Date.parse(`${last.date}T23:59:59Z`) > 7 * 86400000;
+  const monthlyEnd = Date.UTC(Number(last.date.slice(0, 4)), Number(last.date.slice(5, 7)), 0, 23, 59, 59);
+  const stale = instrument.monthly ? Date.now() - monthlyEnd > 100 * 86400000
+    : Date.now() - Date.parse(`${last.date}T23:59:59Z`) > 7 * 86400000;
   return {
     ...missing(instrument), ...metadata, value: last.value, change,
-    changeUnit: instrument.flow ? '억원' : isRate ? 'bp' : '%', observedAt: last.date, timestampPrecision: 'day',
+    changeUnit: instrument.flow ? '억원' : isRate ? 'bp' : '%', observedAt: last.date, timestampPrecision: instrument.monthly ? 'month' : 'day',
     comparisonAt: previous?.date || null, changeBasis: instrument.flow ? '직전 관측일 순매수금액 대비 증감(당일 순매수액 자체와 다름)' : '직전 유효 관측일 대비',
-    status: stale ? 'stale' : 'daily', reason: stale ? '관측일이 7일 이상 지났습니다' : null,
-    history: history.slice(-65), delay: '일별 자료 · 장중 실시간 시세 아님',
+    status: stale ? 'stale' : instrument.monthly ? 'monthly' : 'daily',
+    reason: stale ? (instrument.monthly ? '월간 기준일이 오래되었습니다' : '관측일이 7일 이상 지났습니다') : null,
+    history: history.slice(-65), delay: instrument.monthly ? '월간 평균값 · 장중 가격 아님 · 발표 시차 존재' : '일별 자료 · 장중 실시간 시세 아님',
   };
 }
 
 async function fredQuote(instrument, env, readURL) {
-  const start = daysAgo(100);
+  const start = daysAgo(instrument.monthly ? 460 : 100);
   let result;
   let entries;
   if (env.FRED_API_KEY) {
@@ -275,6 +279,33 @@ async function fxQuotes(readURL) {
       basis: useEcb ? instrument.basis : '여러 중앙은행의 혼합 일별 기준환율 · ECB 단독 기준 아님',
     });
   });
+}
+
+async function metalSpotQuote(instrument, readURL) {
+  // Gold API keyless indicative spot endpoints. Validate original timestamps;
+  // a successful HTTP response must never count as a new market observation.
+  const result = await readURL(`https://api.gold-api.com/price/${instrument.metalSpot}`);
+  const row = result?.data;
+  const value = numeric(row?.price);
+  const observedMs = Date.parse(row?.updatedAt);
+  const age = Date.now() - observedMs;
+  if (!row || row.symbol !== instrument.metalSpot || row.currency !== 'USD'
+      || value === null || value <= 0
+      || !Number.isFinite(observedMs) || age < -5 * 60000) {
+    return missing(instrument, '금속 가격 API 응답·통화·기준시각을 검증하지 못했습니다');
+  }
+  const stale = age > 3 * 86400000;
+  return {
+    ...missing(instrument), provider: 'goldapi',
+    value, change: null, changeUnit: '%',
+    changeBasis: '비교 종가 미제공 · 전일 대비 등락 산출 안 함',
+    source: 'Gold API', sourceUrl: 'https://gold-api.com/docs',
+    observedAt: new Date(observedMs).toISOString(),
+    retrievedAt: result.retrievedAt, timestampPrecision: 'second',
+    status: stale ? 'stale' : 'delayed',
+    reason: stale ? '가격 제공자의 관측시각이 3일을 초과했습니다' : null,
+    delay: '가격 API 참고 현물 시세 · 공급자 시각 기준 · 거래소 공식 결제시세 아님',
+  };
 }
 
 async function cryptoQuote(instrument, readURL) {
@@ -393,6 +424,7 @@ function sourceList(quotes, sectors, leaders, env, failures = new Map()) {
     ['frankfurter', 'ECB / Frankfurter', 'https://frankfurter.dev/', 'ECB 일별 기준환율 우선 · 누락 통화는 혼합 기준환율로 대체', true, ['api.frankfurter.dev']],
     ['bitstamp', 'Bitstamp', 'https://www.bitstamp.net/api/', '거래소 현물 스냅샷 · 실패 시 Coinbase 시도', true, ['www.bitstamp.net']],
     ['coinbase', 'Coinbase Spot', 'https://docs.cdp.coinbase.com/coinbase-app/docs/api-prices', 'Bitstamp 실패 시 현물 대체 (24시간 등락 미제공)', true, ['api.coinbase.com']],
+    ['goldapi', 'Gold API', 'https://gold-api.com/docs', '금·은·구리 참고 현물가격 · 구리는 USD/파운드 · 키 불필요', true, ['api.gold-api.com']],
     ['finnhub', 'Finnhub', 'https://finnhub.io/docs/api/quote', '미국 섹터 ETF·대표 종목 · API 키 필요 · 등락 시각과 가입 권한 확인', Boolean(env.FINNHUB_API_KEY), ['finnhub.io']],
     ['ecos', '한국은행 ECOS', 'https://ecos.bok.or.kr/', '한국 주가지수·외국인 순매수·국채금리 일별 자료 · API 키 필요', Boolean(env.ECOS_API_KEY), ['ecos.bok.or.kr']],
   ];
@@ -401,11 +433,12 @@ function sourceList(quotes, sectors, leaders, env, failures = new Map()) {
     frankfurter: INSTRUMENTS.filter(x => x.fx).length,
     bitstamp: INSTRUMENTS.filter(x => x.crypto).length,
     finnhub: SECTORS.length + LEADERS.length,
+    goldapi: INSTRUMENTS.filter(x => x.metalSpot).length,
     ecos: INSTRUMENTS.filter(x => x.ecos).length,
   };
   return definitions.map(([id, name, url, note, enabled, hosts]) => {
     const records = all.filter(quote => quote.provider === id);
-    const valid = records.filter(quote => Number.isFinite(quote.value) && ['live', 'delayed', 'daily'].includes(quote.status) && !quote.deploymentBackup);
+    const valid = records.filter(quote => Number.isFinite(quote.value) && ['live', 'delayed', 'daily', 'monthly'].includes(quote.status) && !quote.deploymentBackup);
     const backups = records.filter(quote => quote.deploymentBackup === true);
     const stale = records.filter(quote => quote.status === 'stale' && !quote.deploymentBackup);
     const errors = [...failures].filter(([key]) => {
@@ -423,6 +456,7 @@ function sourceList(quotes, sectors, leaders, env, failures = new Map()) {
     return {
       id, name, url, note, enabled, status: state,
       received: valid.length, expected: expected[id] || null,
+      monthly: valid.filter(quote => quote.status === 'monthly').length,
       stale: stale.length, backup: backups.length, missing: records.filter(q => q.value === null).length,
       failures: errors.slice(0, 8),
     };
@@ -452,7 +486,7 @@ function useDeploymentBackup(quotes, backup, now = Date.now()) {
 export async function collectMarket(env, backup = []) {
   const { readURL, failures } = createMarketReader();
   const [initialQuotes, fx, sectors, leaders] = await Promise.all([
-    Promise.all(INSTRUMENTS.map((instrument) => instrument.fred ? fredQuote(instrument, env, readURL) : instrument.ecos ? ecosQuote(instrument, env, readURL) : instrument.crypto ? cryptoQuote(instrument, readURL) : Promise.resolve(missing(instrument)))),
+    Promise.all(INSTRUMENTS.map((instrument) => instrument.fred ? fredQuote(instrument, env, readURL) : instrument.metalSpot ? metalSpotQuote(instrument, readURL) : instrument.ecos ? ecosQuote(instrument, env, readURL) : instrument.crypto ? cryptoQuote(instrument, readURL) : Promise.resolve(missing(instrument)))),
     fxQuotes(readURL), finnhubList(SECTORS, 'sector', env, readURL), finnhubList(LEADERS, 'equity', env, readURL),
   ]);
   const treasury = await treasuryFallback(initialQuotes, readURL);
