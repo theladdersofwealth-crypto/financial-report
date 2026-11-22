@@ -42,7 +42,7 @@ test('standalone demo renders every destination without accessing member APIs',a
   // Registration is a separate four-field flow; existing member and
   // administrator login modes retain their original credential formats.
   vm.runInContext('renderWelcome("register")',ctx);
-  assert.ok(document.querySelector('#nickname'));
+  assert.ok(document.querySelector('#nickname'), 'registration inputs: '+[...document.querySelectorAll('input')].map(x=>x.id).join(',')+' form: '+(document.querySelector('.welcome-form')?.textContent||'none').slice(0,500));
   assert.ok(document.querySelector('#birth6'));
   assert.equal(document.querySelector('#birth6').getAttribute('maxlength'),'6');
   assert.ok(document.querySelector('#registerGender'));
