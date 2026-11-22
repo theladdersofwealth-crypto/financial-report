@@ -203,7 +203,7 @@ test('optional ECOS feeds return official Korean daily yields and basis-point ch
   const data = await collectMarket({ECOS_API_KEY:secret});
   const kr3y = data.quotes.find(q => q.id === 'kr3y');
   const kr10y = data.quotes.find(q => q.id === 'kr10y');
-  assert.equal(ecosCalls, 2);
+  assert.equal(ecosCalls, 5, 'two yields, two index series, one foreign-flow series');
   for (const quote of [kr3y, kr10y]) {
     assert.equal(quote.value, 3.20);
     assert.equal(quote.change, 10);
@@ -229,4 +229,49 @@ test('without an ECOS key, Korean yields remain missing without fetching ECOS', 
   assert.equal(count, 0);
   assert.equal(data.quotes.find(q => q.id === 'kr3y').value, null);
   assert.equal(data.sources.find(source => source.id === 'ecos')?.status, 'unconfigured');
+  for (const id of ['kospi', 'kosdaq', 'kr_foreign_kospi']) {
+    assert.equal(data.quotes.find(q => q.id === id)?.value, null);
+  }
+});
+
+test('ECOS daily stock indices and KOSPI foreign flow distinguish levels from absolute net flows', async t => {
+  const fixture = providerFixture();
+  const calls = [];
+  installFetch(t, async (input, options) => {
+    const url = new URL(String(input));
+    if (url.hostname !== 'ecos.bok.or.kr') return fixture(input, options);
+    const parts = url.pathname.split('/');
+    const table = parts.at(-5), item = parts.at(-1);
+    calls.push({table,item});
+    const yesterday = day(1).replace(/-/g,'');
+    const previous = day(2).replace(/-/g,'');
+    const isFlow = item === '0030000';
+    if (table !== '802Y001') return Response.json({StatisticSearch:{row:[]}});
+    return Response.json({StatisticSearch:{row:[
+      {STAT_CODE:table,ITEM_CODE1:item,TIME:previous,DATA_VALUE:isFlow ? '-2000' : '2000'},
+      {STAT_CODE:table,ITEM_CODE1:item,TIME:yesterday,DATA_VALUE:isFlow ? '-800' : '2100'},
+      {STAT_CODE:table,ITEM_CODE1:'UNRELATED',TIME:yesterday,DATA_VALUE:'999999'},
+      {STAT_CODE:'WRONG',ITEM_CODE1:item,TIME:yesterday,DATA_VALUE:'999999'},
+    ]}});
+  });
+  const {collectMarket} = await freshModule();
+  const data = await collectMarket({ECOS_API_KEY:'testECOS98765'});
+  assert.deepEqual(calls.filter(call=>call.table==='802Y001').map(call=>call.item).sort(),['0001000','0030000','0089000']);
+  for(const id of ['kospi','kosdaq']) {
+    const quote=data.quotes.find(q=>q.id===id);
+    assert.equal(quote.value,2100);
+    assert.equal(quote.change,5);
+    assert.equal(quote.changeUnit,'%');
+    assert.equal(quote.observedAt,day(1));
+    assert.equal(quote.source,'한국은행 ECOS / 한국거래소');
+  }
+  const net=data.quotes.find(q=>q.id==='kr_foreign_kospi');
+  assert.equal(net.value,-800,'negative is a net sell, not missing');
+  assert.equal(net.unit,'억원');
+  assert.equal(net.change,1200,'difference in 100 million KRW, not percentage return');
+  assert.equal(net.changeUnit,'억원');
+  assert.equal(data.impact.domestic.foreignKospi.value,-800);
+  assert.equal(data.impact.domestic.kospi.value,2100);
+  assert.equal(data.impact.domestic.kosdaq.value,2100);
+  assert.ok(data.impact.cautions.some(c=>c.includes('코스닥 수급')));
 });
