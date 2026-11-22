@@ -7,6 +7,7 @@
 import deploymentSnapshot from './market-deploy-snapshot.js';
 import { buildImpact } from './impact.js';
 import { validateHistoricalImpact } from './validation.js';
+import { collectKis, kisConfigured } from './kis.js';
 
 const TTL = 5 * 60 * 1000;
 const TIMEOUT = 4000;
@@ -47,7 +48,8 @@ const INSTRUMENTS = [
   { id: 'sol', name: '솔라나', group: 'crypto', unit: 'USD', crypto: 'SOL', basis: '거래소 SOL/USD 현물' },
   { id: 'kospi', name: '코스피', group: 'korea', unit: 'pt', ecos: '0001000', ecosTable: '802Y001', required: '한국은행 ECOS API 인증키 연결 필요', basis: '한국거래소 작성 · 한국은행 ECOS 주식시장(일) · 일별 종가' },
   { id: 'kosdaq', name: '코스닥', group: 'korea', unit: 'pt', ecos: '0089000', ecosTable: '802Y001', required: '한국은행 ECOS API 인증키 연결 필요', basis: '한국거래소 작성 · 한국은행 ECOS 주식시장(일) · 일별 종가' },
-  { id: 'kr_foreign_kospi', name: '외국인 순매수 (코스피)', group: 'korea', unit: '억원', flow: true, ecos: '0030000', ecosTable: '802Y001', required: '한국은행 ECOS API 인증키 연결 필요', basis: '유가증권시장 외국인 당일 순매수금액 · 실제 매매자료 · 일별, 단위 억원' },
+  { id: 'kr_foreign_kospi', name: '외국인 순매수 (코스피)', group: 'korea', unit: '억원', flow: true, ecos: '0030000', ecosTable: '802Y001', required: '한국투자증권 KIS 또는 ECOS 인증키 연결 필요', basis: '유가증권시장 외국인 당일 순매수금액 · 일별, 단위 억원' },
+  { id: 'kr_foreign_kosdaq', name: '외국인 순매수 (코스닥)', group: 'korea', unit: '억원', flow: true, required: '한국투자증권 KIS API 인증키 연결 필요', basis: '코스닥시장 외국인 당일 순매수금액 · 일별, 단위 억원' },
   { id: 'kr3y', name: '한국 국채 3년', group: 'korea', unit: '%', ecos: '010200000', required: 'ECOS_API_KEY 연결 필요', basis: '한국은행 ECOS 시장금리(일별) · 국고채 3년' },
   { id: 'kr10y', name: '한국 국채 10년', group: 'korea', unit: '%', ecos: '010210000', required: 'ECOS_API_KEY 연결 필요', basis: '한국은행 ECOS 시장금리(일별) · 국고채 10년' },
 ];
@@ -426,7 +428,8 @@ function sourceList(quotes, sectors, leaders, env, failures = new Map()) {
     ['coinbase', 'Coinbase Spot', 'https://docs.cdp.coinbase.com/coinbase-app/docs/api-prices', 'Bitstamp 실패 시 현물 대체 (24시간 등락 미제공)', true, ['api.coinbase.com']],
     ['goldapi', 'Gold API', 'https://gold-api.com/docs', '금·은·구리 참고 현물가격 · 구리는 USD/파운드 · 키 불필요', true, ['api.gold-api.com']],
     ['finnhub', 'Finnhub', 'https://finnhub.io/docs/api/quote', '미국 섹터 ETF·대표 종목 · API 키 필요 · 등락 시각과 가입 권한 확인', Boolean(env.FINNHUB_API_KEY), ['finnhub.io']],
-    ['ecos', '한국은행 ECOS', 'https://ecos.bok.or.kr/', '한국 주가지수·외국인 순매수·국채금리 일별 자료 · API 키 필요', Boolean(env.ECOS_API_KEY), ['ecos.bok.or.kr']],
+    ['ecos', '한국은행 ECOS', 'https://ecos.bok.or.kr/', 'KIS 수신 실패 시 일부 지수·수급 대체 · 국고채 금리 일별 자료', Boolean(env.ECOS_API_KEY), ['ecos.bok.or.kr']],
+    ['kis', '한국투자증권 KIS', 'https://apiportal.koreainvestment.com/', '코스피·코스닥 종가와 시장별 외국인 순매수 일별 시세 · 조회 전용', kisConfigured(env), ['openapi.koreainvestment.com']],
   ];
   const expected = {
     fred: INSTRUMENTS.filter(x => x.fred).length,
@@ -435,6 +438,7 @@ function sourceList(quotes, sectors, leaders, env, failures = new Map()) {
     finnhub: SECTORS.length + LEADERS.length,
     goldapi: INSTRUMENTS.filter(x => x.metalSpot).length,
     ecos: INSTRUMENTS.filter(x => x.ecos).length,
+    kis: 4,
   };
   return definitions.map(([id, name, url, note, enabled, hosts]) => {
     const records = all.filter(quote => quote.provider === id);
@@ -485,12 +489,12 @@ function useDeploymentBackup(quotes, backup, now = Date.now()) {
 
 export async function collectMarket(env, backup = []) {
   const { readURL, failures } = createMarketReader();
-  const [initialQuotes, fx, sectors, leaders] = await Promise.all([
+  const [initialQuotes, fx, sectors, leaders, kis] = await Promise.all([
     Promise.all(INSTRUMENTS.map((instrument) => instrument.fred ? fredQuote(instrument, env, readURL) : instrument.metalSpot ? metalSpotQuote(instrument, readURL) : instrument.ecos ? ecosQuote(instrument, env, readURL) : instrument.crypto ? cryptoQuote(instrument, readURL) : Promise.resolve(missing(instrument)))),
-    fxQuotes(readURL), finnhubList(SECTORS, 'sector', env, readURL), finnhubList(LEADERS, 'equity', env, readURL),
+    fxQuotes(readURL), finnhubList(SECTORS, 'sector', env, readURL), finnhubList(LEADERS, 'equity', env, readURL), collectKis(env),
   ]);
   const treasury = await treasuryFallback(initialQuotes, readURL);
-  const replacements = new Map([...fx, ...treasury].map((quote) => [quote.id, quote]));
+  const replacements = new Map([...fx, ...treasury, ...kis].filter(q => q.value !== null && q.status !== 'stale').map((quote) => [quote.id, quote]));
   const obtained = initialQuotes.map((quote) => replacements.get(quote.id) || quote);
   const quotes = useDeploymentBackup(obtained, backup);
   const available = quotes.filter((quote) => quote.value !== null).length;
@@ -531,7 +535,7 @@ export async function collectMarket(env, backup = []) {
 }
 
 async function configKey(env) {
-  const identity = JSON.stringify([env.FRED_API_KEY || '', env.FINNHUB_API_KEY || '', env.ECOS_API_KEY || '']);
+  const identity = JSON.stringify([env.FRED_API_KEY || '', env.FINNHUB_API_KEY || '', env.ECOS_API_KEY || '', env.KIS_APP_KEY || '', env.KIS_APP_SECRET || '']);
   if (!configHashes.has(identity)) {
     if (configHashes.size > 8) configHashes.clear();
     configHashes.set(identity, crypto.subtle.digest('SHA-256', new TextEncoder().encode(identity)).then((digest) =>
