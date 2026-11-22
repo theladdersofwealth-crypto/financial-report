@@ -571,7 +571,7 @@ function metricSection(number, id, title, subtitle, theme, quotes) {
       E('span', {class:'metric-section-number','aria-hidden':'true'},number),
       E('div', {class:'metric-section-copy'},
         E('h3', {class:'metric-section-title'},title),
-        E('p', {class:'metric-section-description'},subtitle)),
+        subtitle ? E('p', {class:'metric-section-description'},subtitle) : null),
       E('span', {class:'metric-section-coverage'},
         state.demo ? `예시 ${quotes.length}개` : `수신 ${observed}/${quotes.length}`)),
     E('div', {class:'market-grid'},quotes.map(quoteCard)));
@@ -605,7 +605,7 @@ function renderQuotes() {
   const crypto=take(q=>groupName(q.group)==='디지털자산');
   const other=take(()=>true);
   const groups=[
-    ['01','metrics-korea','한국 증시 · 외국인·연기금 수급','코스피·코스닥의 방향과 외국인·연기금 자금 흐름을 확인합니다.','korea',[...domestic,...domesticPlus]],
+    ['01','metrics-korea','한국 증시 · 외국인·연기금 수급','','korea',[...domestic,...domesticPlus]],
     ['02','metrics-global','미국 증시 · 위험 심리','미국 대표 지수와 변동성 지표로 밤사이 시장 분위기를 확인합니다.','global',equities],
     ['03','metrics-macro','금리 · 환율','미국·한국 채권금리와 달러 움직임을 살펴봅니다.','macro',ratesFx],
     ['04','metrics-commodities','원자재','금·에너지·산업금속 가격을 주식시장과 구분해 비교합니다.','commodities',commodities],
@@ -642,7 +642,7 @@ function quoteCard(quote) {
   const investor = pension ? '연기금' : '외국인';
   const changeText = flow ? Number(quote.value) < 0 ? `${investor} 순매도` : Number(quote.value) > 0 ? `${investor} 순매수` : `${investor} 순매수 0` : formatChange(quote);
   const tone = flow ? changeClass(quote.value) : changeClass(quote.change);
-  const shortName = quote.id === 'kr_foreign_kospi' ? '외국인 수급 · 코스피' : quote.id === 'kr_foreign_kosdaq' ? '외국인 수급 · 코스닥' : quote.id === 'kr_pension_kospi' ? '연기금 수급 · 코스피' : quote.id === 'kr_pension_kosdaq' ? '연기금 수급 · 코스닥' : quote.name;
+  const shortName = quote.id === 'kospi' ? '코스피' : quote.id === 'kosdaq' ? '코스닥' : quote.id === 'kr_foreign_kospi' ? '외국인 수급 · 코스피' : quote.id === 'kr_foreign_kosdaq' ? '외국인 수급 · 코스닥' : quote.id === 'kr_pension_kospi' ? '연기금 수급 · 코스피' : quote.id === 'kr_pension_kosdaq' ? '연기금 수급 · 코스닥' : quote.name;
   return E('article', {class: `quote-card${chartable ? ' quote-card-clickable' : ''}${flow ? ' quote-card-flow' : ''}`,
     role: chartable ? 'button' : null,
     tabindex: chartable ? 0 : null,
