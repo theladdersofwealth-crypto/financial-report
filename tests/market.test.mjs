@@ -16,8 +16,13 @@ function providerFixture(overrides = {}) {
     const url = new URL(String(input));
     if (url.hostname === 'fred.stlouisfed.org') {
       const series = url.searchParams.get('id');
-      const rows = overrides[series] || [[day(1), '100'], [day(), '101']];
+      const firstOfMonth = (monthsAgo) => { const now = new Date(); return new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth()-monthsAgo,1)).toISOString().slice(0,10); };
+      const rows = overrides[series] || (series === 'PNICKUSDM' ? [[firstOfMonth(2),'15000'],[firstOfMonth(1),'15400']] : [[day(1), '100'], [day(), '101']]);
       return new Response(`observation_date,${series}\n${rows.map(row => row.join(',')).join('\n')}\n`);
+    }
+    if (url.hostname === 'api.gold-api.com') {
+      const symbol = url.pathname.split('/').at(-1);
+      return Response.json({symbol,currency:'USD',price:({XAU:3500,XAG:40,HG:5.5})[symbol] ?? null,updatedAt:new Date().toISOString()});
     }
     if (url.hostname === 'api.frankfurter.dev') {
       return Response.json(['KRW', 'JPY', 'CNY'].flatMap(quote => [
@@ -290,10 +295,10 @@ test('an invalid FRED key does not suppress otherwise usable public CSV series',
   });
   const {collectMarket}=await freshModule();
   const data=await collectMarket({FRED_API_KEY:'bad-fixture-key'});
-  assert.equal(authCalls,12);
-  assert.equal(csvCalls,12);
+  assert.equal(authCalls,13);
+  assert.equal(csvCalls,13);
   assert.equal(data.quotes.find(q=>q.id==='sp500')?.value,101);
-  assert.equal(data.sources.find(x=>x.id==='fred')?.received,12);
+  assert.equal(data.sources.find(x=>x.id==='fred')?.received,13);
   assert.equal(data.sources.find(x=>x.id==='fred')?.status,'connected');
   assert.ok(data.sources.find(x=>x.id==='fred')?.failures.some(e=>e.code==='HTTP_401'));
   assert.equal(JSON.stringify(data).includes('bad-fixture-key'),false);
@@ -325,14 +330,14 @@ test('ECB partial coverage falls back to separately attributed central bank blen
 test('stale FRED observations are no longer reported as a healthy provider', async t => {
   const old=[[day(20),'100'],[day(18),'101']];
   installFetch(t, providerFixture(Object.fromEntries(
-    ['SP500','NASDAQ100','NASDAQSOX','NASDAQCOM','DGS2','DGS10','DFII10','DTWEXBGS','DCOILWTICO','DCOILBRENTEU','VIXCLS','BAMLH0A0HYM2']
+    ['SP500','NASDAQ100','NASDAQSOX','NASDAQCOM','DGS2','DGS10','DFII10','DTWEXBGS','DCOILWTICO','DCOILBRENTEU','VIXCLS','BAMLH0A0HYM2','PNICKUSDM']
       .map(x=>[x,old]))));
   const {collectMarket}=await freshModule();
   const data=await collectMarket({});
   const fred=data.sources.find(x=>x.id==='fred');
   assert.equal(fred.status,'stale');
   assert.equal(fred.received,0);
-  assert.equal(fred.stale,12);
+  assert.equal(fred.stale,13);
   assert.equal(data.quotes.find(q=>q.id==='sp500')?.status,'stale');
   assert.ok(!data.summary.points.some(p=>String(p).includes('S&P 500 101')));
 });
