@@ -13,7 +13,7 @@ const PROVIDER_CONCURRENCY = 4;
 const HOSTS = new Set([
   'fred.stlouisfed.org', 'api.stlouisfed.org', 'home.treasury.gov',
   'api.frankfurter.dev', 'www.bitstamp.net', 'api.coinbase.com', 'finnhub.io',
-  'www.bls.gov', 'www.federalreserve.gov',
+  'www.bls.gov', 'www.federalreserve.gov', 'ecos.bok.or.kr',
 ]);
 const snapshots = new Map();
 const pending = new Map();
@@ -45,8 +45,8 @@ const INSTRUMENTS = [
   { id: 'sol', name: '솔라나', group: 'crypto', unit: 'USD', crypto: 'SOL', basis: '거래소 SOL/USD 현물' },
   { id: 'kospi', name: '코스피', group: 'korea', unit: 'pt', required: 'KRX 또는 증권사 시세 공급자 연결 필요' },
   { id: 'kosdaq', name: '코스닥', group: 'korea', unit: 'pt', required: 'KRX 또는 증권사 시세 공급자 연결 필요' },
-  { id: 'kr3y', name: '한국 국채 3년', group: 'korea', unit: '%', required: '한국 국채 수익률 공급자 연결 필요' },
-  { id: 'kr10y', name: '한국 국채 10년', group: 'korea', unit: '%', required: '한국 국채 수익률 공급자 연결 필요' },
+  { id: 'kr3y', name: '한국 국채 3년', group: 'korea', unit: '%', ecos: '010200000', required: 'ECOS_API_KEY 연결 필요', basis: '한국은행 ECOS 시장금리(일별) · 국고채 3년' },
+  { id: 'kr10y', name: '한국 국채 10년', group: 'korea', unit: '%', ecos: '010210000', required: 'ECOS_API_KEY 연결 필요', basis: '한국은행 ECOS 시장금리(일별) · 국고채 10년' },
 ];
 
 const SECTORS = [
@@ -141,7 +141,7 @@ async function readProvider(url, format, headers, failures) {
 function missing(instrument, reason = instrument.required || '공급자 응답을 확인할 수 없습니다') {
   return {
     id: instrument.id, name: instrument.name, group: instrument.group, value: null,
-    unit: instrument.unit, change: null, changeUnit: instrument.group === 'rates' || instrument.id === 'hyspread' ? 'bp' : '%',
+    unit: instrument.unit, change: null, changeUnit: instrument.group === 'rates' || instrument.id === 'hyspread' || instrument.ecos ? 'bp' : '%',
     source: instrument.fred ? `${instrument.origin} / FRED` : '미연결',
     sourceUrl: instrument.fred ? `https://fred.stlouisfed.org/series/${instrument.fred}` : null,
     observedAt: null, retrievedAt: null, status: 'missing', reason,
@@ -156,7 +156,7 @@ function fromHistory(instrument, entries, metadata) {
   if (!history.length) return missing(instrument, '유효한 최신 관측값이 없습니다');
   const last = history.at(-1);
   const previous = history.at(-2);
-  const isRate = instrument.group === 'rates' || instrument.id === 'hyspread';
+  const isRate = instrument.group === 'rates' || instrument.id === 'hyspread' || Boolean(instrument.ecos);
   const change = previous ? (isRate ? rounded((last.value - previous.value) * 100) : pct(last.value, previous.value)) : null;
   const stale = Date.now() - Date.parse(`${last.date}T23:59:59Z`) > 7 * 86400000;
   return {
@@ -220,6 +220,27 @@ async function treasuryFallback(quotes, readURL) {
     });
   }));
   return results.flat().filter((quote) => quote.value !== null);
+}
+
+async function ecosQuote(instrument, env, readURL) {
+  // ECOS 817Y002: daily market yields. No network call without an API key.
+  const token = env.ECOS_API_KEY;
+  if (typeof token !== 'string' || !/^[A-Za-z0-9]{8,128}$/.test(token)) {
+    return missing(instrument, '한국은행 ECOS 인증키가 연결되지 않았습니다');
+  }
+  const ymd = (date) => date.replace(/-/g, '');
+  const from = ymd(daysAgo(100)), until = ymd(daysAgo(0));
+  // ECOS requires the API key in the path; never log the URL or response body.
+  const url = `https://ecos.bok.or.kr/api/StatisticSearch/${token}/json/kr/1/100/817Y002/D/${from}/${until}/${instrument.ecos}`;
+  const result = await readURL(url);
+  const entries = result?.data?.StatisticSearch?.row;
+  if (!Array.isArray(entries)) return missing(instrument, '한국은행 ECOS 응답 또는 이용권한을 확인할 수 없습니다');
+  const history = entries.filter(row => row?.STAT_CODE === '817Y002' && row?.ITEM_CODE1 === instrument.ecos && /^\d{8}$/.test(String(row?.TIME || '')))
+    .map(row => ({ date: `${row.TIME.slice(0, 4)}-${row.TIME.slice(4, 6)}-${row.TIME.slice(6, 8)}`, value: row.DATA_VALUE }));
+  return fromHistory(instrument, history, {
+    provider: 'ecos', source: '한국은행 ECOS',
+    sourceUrl: 'https://ecos.bok.or.kr/', retrievedAt: result.retrievedAt,
+  });
 }
 
 async function fxQuotes(readURL) {
@@ -350,6 +371,7 @@ function sourceList(quotes, sectors, leaders, env) {
     ['bitstamp', 'Bitstamp', 'https://www.bitstamp.net/api/', '거래소 현물 스냅샷 및 24시간 등락', true],
     ['coinbase', 'Coinbase Spot', 'https://docs.cdp.coinbase.com/coinbase-app/docs/api-prices', 'Bitstamp 실패 시 대체. 수집시각 표시, 24시간 등락 미제공', true],
     ['finnhub', 'Finnhub', 'https://finnhub.io/docs/api/quote', '가입 권한에 따라 시세 지연·이용 범위가 다름. 섹터는 ETF 대용지표', Boolean(env.FINNHUB_API_KEY)],
+    ['ecos', '한국은행 ECOS', 'https://ecos.bok.or.kr/', '국고채 3년·10년 금리(일별). 키 발급 및 이용조건 확인 필요', Boolean(env.ECOS_API_KEY)],
   ].map(([id, name, url, delay, enabled]) => ({
     id, name, url, delay, enabled,
     status: all.some((quote) => quote.provider === id && quote.value !== null && !quote.deploymentBackup) ? 'connected'
@@ -381,7 +403,7 @@ function useDeploymentBackup(quotes, backup, now = Date.now()) {
 export async function collectMarket(env, backup = []) {
   const { readURL, failures } = createMarketReader();
   const [initialQuotes, fx, sectors, leaders] = await Promise.all([
-    Promise.all(INSTRUMENTS.map((instrument) => instrument.fred ? fredQuote(instrument, env, readURL) : instrument.crypto ? cryptoQuote(instrument, readURL) : Promise.resolve(missing(instrument)))),
+    Promise.all(INSTRUMENTS.map((instrument) => instrument.fred ? fredQuote(instrument, env, readURL) : instrument.ecos ? ecosQuote(instrument, env, readURL) : instrument.crypto ? cryptoQuote(instrument, readURL) : Promise.resolve(missing(instrument)))),
     fxQuotes(readURL), finnhubList(SECTORS, 'sector', env, readURL), finnhubList(LEADERS, 'equity', env, readURL),
   ]);
   const treasury = await treasuryFallback(initialQuotes, readURL);
@@ -425,7 +447,7 @@ export async function collectMarket(env, backup = []) {
 }
 
 async function configKey(env) {
-  const identity = JSON.stringify([env.FRED_API_KEY || '', env.FINNHUB_API_KEY || '']);
+  const identity = JSON.stringify([env.FRED_API_KEY || '', env.FINNHUB_API_KEY || '', env.ECOS_API_KEY || '']);
   if (!configHashes.has(identity)) {
     if (configHashes.size > 8) configHashes.clear();
     configHashes.set(identity, crypto.subtle.digest('SHA-256', new TextEncoder().encode(identity)).then((digest) =>
