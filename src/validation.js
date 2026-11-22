@@ -11,7 +11,9 @@ const MIN_CLASSIFIED = 20;
 function historyRows(quote) {
   return (Array.isArray(quote?.history) ? quote.history : [])
     .filter(row => row && /^\d{4}-\d{2}-\d{2}$/.test(row.date)
-      && Number.isFinite(row.value) && row.date === new Date(`${row.date}T00:00:00Z`).toISOString().slice(0,10))
+      && typeof row.value === 'number' && Number.isFinite(row.value)
+      && Number.isFinite(Date.parse(`${row.date}T00:00:00Z`))
+      && row.date === new Date(`${row.date}T00:00:00Z`).toISOString().slice(0,10))
     .map(row => ({date:row.date,value:row.value}))
     .sort((a,b) => a.date.localeCompare(b.date));
 }
