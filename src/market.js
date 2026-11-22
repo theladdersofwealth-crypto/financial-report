@@ -6,6 +6,7 @@
  */
 import deploymentSnapshot from './market-deploy-snapshot.js';
 import { buildImpact } from './impact.js';
+import { validateHistoricalImpact } from './validation.js';
 
 const TTL = 5 * 60 * 1000;
 const TIMEOUT = 4000;
@@ -415,6 +416,7 @@ export async function collectMarket(env, backup = []) {
   const available = quotes.filter((quote) => quote.value !== null).length;
   const { summary, outlooks } = buildAnalysis(quotes);
   const impact = buildImpact({ quotes });
+  impact.validation = validateHistoricalImpact({ quotes });
   const restored = quotes.filter(quote => quote.deploymentBackup).length;
   if (restored) {
     summary.points.unshift(`실시간 공급자 요청 실패로 ${restored}개 지표에 배포 시 저장한 관측값을 표시합니다. 각 지표의 출처와 관측 시각을 확인하세요.`);
