@@ -154,32 +154,68 @@ async function indexQuote(env,token,id,iscd) {
     chartBasis: 'KIS 공식 일봉·주봉·월봉별 시가·고가·저가·종가',
   };
 }
+// Keep only previously confirmed observations in this Worker isolate.
+// A cached observation is explicitly marked stale if a fresh KIS request fails.
+const lastConfirmedFlow = new Map();
+function previousWeekday(ymd) {
+  const date=new Date(`${ymd.slice(0,4)}-${ymd.slice(4,6)}-${ymd.slice(6,8)}T00:00:00Z`);
+  if(!Number.isFinite(date.getTime()))return null;
+  do { date.setUTCDate(date.getUTCDate()-1); }
+  while(date.getUTCDay()===0 || date.getUTCDay()===6);
+  return date.toISOString().slice(0,10).replace(/-/g,'');
+}
+function mostRecentWeekday() {
+  const today=todayKst();
+  const day=new Date(`${today.slice(0,4)}-${today.slice(4,6)}-${today.slice(6,8)}T00:00:00Z`).getUTCDay();
+  return day===0 ? fromKstDaysAgo(2) : day===6 ? fromKstDaysAgo(1) : today;
+}
 async function investorQuote(env,token,id,iscd,market) {
-  // KIS reference requires FID_INPUT_DATE_1 and _2 to be the SAME date.
-  // Weekends use the previous business weekday; official holidays may yield
-  // no rows, which must remain missing rather than inventing a flow.
-  const ymd = todayKst();
-  const weekday = new Date(`${ymd.slice(0,4)}-${ymd.slice(4,6)}-${ymd.slice(6,8)}T00:00:00Z`).getUTCDay();
-  const date = fromKstDaysAgo(weekday === 0 ? 2 : weekday === 6 ? 1 : 0);
-  const data=await kisGet(env,token,'/uapi/domestic-stock/v1/quotations/inquire-investor-daily-by-market',
-    'FHPTJ04040000',{
-      FID_COND_MRKT_DIV_CODE:'U',FID_INPUT_ISCD:iscd,FID_INPUT_DATE_1:date,
-      FID_INPUT_DATE_2:date,FID_INPUT_ISCD_1:market,FID_INPUT_ISCD_2:iscd,
-    });
-  // API may refuse a market/plan. Never replace actual flow with synthetic data.
-  return canonicalQuote(id,data?.output,'frgn_ntby_tr_pbmn',100);
+  // Same date in both query fields, per KIS FHPTJ04040000 documentation.
+  // Retry the same observation once with backoff to tolerate temporary
+  // provider throttling. Then try the previous weekday for holidays or
+  // delayed publication. Never manufacture a net-flow value or trading date.
+  const initial=mostRecentWeekday();
+  const fallback=previousWeekday(initial);
+  const dates=[initial,initial,fallback].filter(Boolean);
+  for(let index=0;index<dates.length;index++) {
+    if(index>0)await new Promise(resolve=>setTimeout(resolve,index===1?700:350));
+    const date=dates[index];
+    const data=await kisGet(env,token,'/uapi/domestic-stock/v1/quotations/inquire-investor-daily-by-market',
+      'FHPTJ04040000',{
+        FID_COND_MRKT_DIV_CODE:'U',FID_INPUT_ISCD:iscd,FID_INPUT_DATE_1:date,
+        FID_INPUT_DATE_2:date,FID_INPUT_ISCD_1:market,FID_INPUT_ISCD_2:iscd,
+      });
+    const quote=canonicalQuote(id,data?.output,'frgn_ntby_tr_pbmn',100);
+    if(quote && quote.status!=='stale') {
+      const result=index===0?quote:{
+        ...quote,reason:index===2?'전 거래일 관측값으로 대체 · 원래 조회일 시세 미확인':'KIS 수급 조회 일시 실패 후 재조회 성공',
+      };
+      lastConfirmedFlow.set(id,{appKey:env.KIS_APP_KEY,observed:result});
+      return result;
+    }
+  }
+  const previous=lastConfirmedFlow.get(id);
+  if(previous?.appKey===env.KIS_APP_KEY && previous.observed
+      && Date.now()-Date.parse(previous.observed.observedAt+'T23:59:59+09:00')<=7*86400000) {
+    return {...previous.observed,status:'delayed',reason:'KIS 수급 재조회 실패 · 동일 Worker에 보관된 최근 확인 관측값',delay:'마지막 확인된 실제 거래일 수급 · 재조회 실패, 현재 시세로 간주 금지'};
+  }
+  return null;
 }
 export async function collectKis(env) {
   if(!kisConfigured(env)) return [];
   const token=await tokenFor(env);
   if(!token) return [];
-  const fetched=await Promise.all([
-    indexQuote(env,token,'kospi','0001'),
-    indexQuote(env,token,'kosdaq','1001'),
+  // Domestic market net flows are critical and fragile. Query them BEFORE
+  // the six index-chart calls or overseas/macroeconomic probe requests.
+  const flows=await Promise.all([
     investorQuote(env,token,'kr_foreign_kospi','0001','KSP'),
     investorQuote(env,token,'kr_foreign_kosdaq','1001','KSQ'),
   ]);
-  return fetched.filter(Boolean);
+  const indices=await Promise.all([
+    indexQuote(env,token,'kospi','0001'),
+    indexQuote(env,token,'kosdaq','1001'),
+  ]);
+  return [...flows,...indices].filter(Boolean);
 }
 
 /**
