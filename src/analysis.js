@@ -127,6 +127,7 @@ function snapshotInput(market) {
         kospi: domesticInput(market.impact.domestic?.kospi),
         kosdaq: domesticInput(market.impact.domestic?.kosdaq),
         foreignKospi: domesticInput(market.impact.domestic?.foreignKospi),
+        foreignKosdaq: domesticInput(market.impact.domestic?.foreignKosdaq),
       },
       themes: (Array.isArray(market.impact.themes) ? market.impact.themes : []).slice(0, 6).map(theme => ({
         title: field(theme?.title, 60), state: field(theme?.state, 30),
