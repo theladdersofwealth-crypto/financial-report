@@ -180,3 +180,53 @@ test('concurrent readers share provider requests and cached responses cannot mut
   assert.equal(cached.quotes[0].value, second.quotes[0].value);
   assert.notEqual(cached.quotes[0].value, -999);
 });
+
+test('optional ECOS feeds return official Korean daily yields and basis-point changes', async t => {
+  const base = providerFixture();
+  let ecosCalls = 0;
+  installFetch(t, async (input, options) => {
+    const url = new URL(String(input));
+    if (url.hostname !== 'ecos.bok.or.kr') return base(input, options);
+    ecosCalls++;
+    const item = url.pathname.split('/').at(-1);
+    const prior = day(2).replace(/-/g, '');
+    const current = day(1).replace(/-/g, '');
+    return Response.json({StatisticSearch:{row:[
+      {STAT_CODE:'817Y002',ITEM_CODE1:item,TIME:prior,DATA_VALUE:'3.10'},
+      {STAT_CODE:'817Y002',ITEM_CODE1:item,TIME:current,DATA_VALUE:'3.20'},
+      // A different item must never contaminate the target series.
+      {STAT_CODE:'817Y002',ITEM_CODE1:'bad-item',TIME:current,DATA_VALUE:'9999'},
+    ]}});
+  });
+  const { collectMarket } = await freshModule();
+  const secret = 'fixtureECOS2026';
+  const data = await collectMarket({ECOS_API_KEY:secret});
+  const kr3y = data.quotes.find(q => q.id === 'kr3y');
+  const kr10y = data.quotes.find(q => q.id === 'kr10y');
+  assert.equal(ecosCalls, 2);
+  for (const quote of [kr3y, kr10y]) {
+    assert.equal(quote.value, 3.20);
+    assert.equal(quote.change, 10);
+    assert.equal(quote.changeUnit, 'bp');
+    assert.equal(quote.provider, 'ecos');
+    assert.equal(quote.observedAt, day(1));
+    assert.equal(quote.source, '한국은행 ECOS');
+  }
+  assert.equal(data.sources.find(source => source.id === 'ecos')?.status, 'connected');
+  assert.equal(JSON.stringify(data).includes(secret), false, 'credentials must not enter responses');
+  assert.equal(data.impact.method, 'weighted_directional_checklist_v1');
+});
+
+test('without an ECOS key, Korean yields remain missing without fetching ECOS', async t => {
+  const base = providerFixture();
+  let count = 0;
+  installFetch(t, (input, options) => {
+    if (new URL(String(input)).hostname === 'ecos.bok.or.kr') count++;
+    return base(input, options);
+  });
+  const { collectMarket } = await freshModule();
+  const data = await collectMarket({});
+  assert.equal(count, 0);
+  assert.equal(data.quotes.find(q => q.id === 'kr3y').value, null);
+  assert.equal(data.sources.find(source => source.id === 'ecos')?.status, 'unconfigured');
+});
