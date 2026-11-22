@@ -585,6 +585,8 @@ function renderQuotes() {
     ['kospi','코스피','pt'],['kosdaq','코스닥','pt'],
     ['kr_foreign_kospi','코스피 외국인 순매수','억원'],
     ['kr_foreign_kosdaq','코스닥 외국인 순매수','억원'],
+    ['kr_pension_kospi','코스피 연기금 등 순매수','억원'],
+    ['kr_pension_kosdaq','코스닥 연기금 등 순매수','억원'],
   ].map(([id,name,unit])=>{
     seen.add(id);
     return allQuotes.find(q=>q.id===id)||
@@ -603,7 +605,7 @@ function renderQuotes() {
   const crypto=take(q=>groupName(q.group)==='디지털자산');
   const other=take(()=>true);
   const groups=[
-    ['01','metrics-korea','한국 증시 · 외국인 수급','코스피·코스닥의 방향과 외국인 자금 흐름을 구분해서 확인합니다.','korea',[...domestic,...domesticPlus]],
+    ['01','metrics-korea','한국 증시 · 외국인·연기금 수급','코스피·코스닥의 방향과 외국인·연기금 자금 흐름을 확인합니다.','korea',[...domestic,...domesticPlus]],
     ['02','metrics-global','미국 증시 · 위험 심리','미국 대표 지수와 변동성 지표로 밤사이 시장 분위기를 확인합니다.','global',equities],
     ['03','metrics-macro','금리 · 환율','미국·한국 채권금리와 달러 움직임을 살펴봅니다.','macro',ratesFx],
     ['04','metrics-commodities','원자재','금·에너지·산업금속 가격을 주식시장과 구분해 비교합니다.','commodities',commodities],
@@ -633,11 +635,15 @@ function hasIndexChart(quote) { return CHART_INDEX_IDS.has(quote?.id) && !state.
 function quoteCard(quote) {
   const available = hasValue(quote);
   const chartable = hasIndexChart(quote);
-  const flow = quote.id === 'kr_foreign_kospi' || quote.id === 'kr_foreign_kosdaq';
+  const foreign = quote.id === 'kr_foreign_kospi' || quote.id === 'kr_foreign_kosdaq';
+  const pension = quote.id === 'kr_pension_kospi' || quote.id === 'kr_pension_kosdaq';
+  const flow = foreign || pension;
   const observed = quote.timestampPrecision === 'month' && quote.observedAt ? `${String(quote.observedAt).slice(0, 7)} 월간 평균` : quote.timestampPrecision === 'day' && quote.observedAt ? String(quote.observedAt).slice(0, 10) : dateText(quote.observedAt);
-  const changeText = flow ? Number(quote.value) < 0 ? '외국인 순매도' : Number(quote.value) > 0 ? '외국인 순매수' : '외국인 순매수 0' : formatChange(quote);
+  const investor = pension ? '연기금' : '외국인';
+  const changeText = flow ? Number(quote.value) < 0 ? `${investor} 순매도` : Number(quote.value) > 0 ? `${investor} 순매수` : `${investor} 순매수 0` : formatChange(quote);
   const tone = flow ? changeClass(quote.value) : changeClass(quote.change);
-  return E('article', {class: `quote-card${chartable ? ' quote-card-clickable' : ''}`,
+  const shortName = quote.id === 'kr_foreign_kospi' ? '외국인 수급 · 코스피' : quote.id === 'kr_foreign_kosdaq' ? '외국인 수급 · 코스닥' : quote.id === 'kr_pension_kospi' ? '연기금 수급 · 코스피' : quote.id === 'kr_pension_kosdaq' ? '연기금 수급 · 코스닥' : quote.name;
+  return E('article', {class: `quote-card${chartable ? ' quote-card-clickable' : ''}${flow ? ' quote-card-flow' : ''}`,
     role: chartable ? 'button' : null,
     tabindex: chartable ? 0 : null,
     'aria-label': chartable ? `${quote.name} 과거 지수 차트 열기` : null,
@@ -646,10 +652,10 @@ function quoteCard(quote) {
       if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openIndexChart(quote); }
     } : null,
     title: `${quote.name} · ${state.demo ? '체험용 예시 데이터' : `${sourceName(quote.source)} · ${observed}${quote.basis ? ` · ${quote.basis}` : ''}${quote.reason ? ` · ${quote.reason}` : ''}`}`},
-    E('div', {class: 'quote-top'}, E('h3', {class: 'quote-name'}, quote.name), chartable ? E('span', {class: 'quote-group'}, icon('chart'), '차트') : E('span', {class: 'quote-group'}, groupName(quote.group))),
+    E('div', {class: 'quote-top'}, E('h3', {class: 'quote-name'}, shortName),
+      chartable ? E('span', {class:'quote-drilldown','aria-hidden':'true'}, icon('chevron')) : null),
     E('div', {class: 'quote-value-row'}, E('span', {class: 'quote-value'}, formatValue(quote)), E('span', {class: 'quote-unit'}, quote.unit || '')),
-    E('div', {class: 'quote-bottom'}, available ? E('span', {class: `quote-change ${tone}`}, changeText) : E('span', {class: 'quote-missing'}, '데이터 연결 필요'), available && !flow ? sparkline(quote) : null),
-    E('div', {class: 'quote-source'}, state.demo ? '체험용 예시' : available ? `${quote.status === 'stale' ? '⚠ 오래된 관측 · ' : quote.status === 'monthly' ? '월간 통계 · ' : ''}${sourceName(quote.source)} · ${observed}` : '— 데이터 연결 필요'));
+    E('div', {class: 'quote-bottom'}, available ? E('span', {class: `quote-change ${tone}`}, changeText) : E('span', {class: 'quote-missing'}, '데이터 연결 필요')));
 }
 
 // Observed index history only: daily closes are not intraday or candlestick data.

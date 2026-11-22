@@ -447,6 +447,7 @@ test('verified KIS overseas candidates win over FRED and missing Finnhub; mismat
       return Response.json({rt_cd:'0',output:[{
         stck_bsop_date:day(1).replace(/-/g,''),
         frgn_ntby_tr_pbmn:market==='KSP'?'-1095596':'0',
+        fund_ntby_tr_pbmn:market==='KSP'?'-20000':'3000',
       }]});
     }
     if(u.pathname.endsWith('inquire-daily-chartprice')){

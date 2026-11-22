@@ -57,14 +57,14 @@ test('KIS index and market foreign flow are parsed, with a shared cached bearer 
     assert.equal(url.searchParams.get('FID_INPUT_DATE_1'),url.searchParams.get('FID_INPUT_DATE_2'),'KIS daily investor inquiry requires a single same-day date');
     const kospi=url.searchParams.get('FID_INPUT_ISCD_1')==='KSP';
     return Response.json({rt_cd:'0',output:[
-      {stck_bsop_date:iso(3),frgn_ntby_tr_pbmn:kospi?'-5000':'2000'},
-      {stck_bsop_date:iso(1),frgn_ntby_tr_pbmn:kospi?'7000':'-1000'},
+      {stck_bsop_date:iso(3),frgn_ntby_tr_pbmn:kospi?'-5000':'2000',fund_ntby_tr_pbmn:kospi?'1500':'-500'},
+      {stck_bsop_date:iso(1),frgn_ntby_tr_pbmn:kospi?'7000':'-1000',fund_ntby_tr_pbmn:kospi?'-2300':'0'},
     ]});
   });
   const {collectKis}=await fresh();
   const env={KIS_APP_KEY:'mock-app-key',KIS_APP_SECRET:'mock-app-secret'};
   const quotes=await collectKis(env);
-  assert.equal(quotes.length,4);
+  assert.equal(quotes.length,6);
   const byId=Object.fromEntries(quotes.map(q=>[q.id,q]));
   assert.equal(byId.kospi.value,3030);
   assert.equal(byId.kosdaq.value,930);
@@ -75,6 +75,8 @@ test('KIS index and market foreign flow are parsed, with a shared cached bearer 
   assert.equal(byId.kr_foreign_kosdaq.change,-30);
   assert.equal(byId.kr_foreign_kosdaq.unit,'억원');
   assert.equal(byId.kr_foreign_kosdaq.source,'한국투자증권 KIS Open API');
+  assert.equal(byId.kr_pension_kospi.value,-23);
+  assert.equal(byId.kr_pension_kosdaq.value,0);
   assert.equal(byId.kospi.status,'daily');
   assert.equal(calls.filter(c=>c.path==='/oauth2/tokenP').length,1);
   assert.equal(calls.filter(c=>c.method==='GET').length,8);
