@@ -76,7 +76,7 @@ function domesticQuote(quote, now) {
   if (typeof quote.value !== 'number' || !Number.isFinite(quote.value)) return null;
   const age = now - Date.parse(quote.observedAt);
   if (!Number.isFinite(age) || age < -5 * 60000 || age > MAX_AGE_MS) return null;
-  const expectedUnit = quote.id === 'kr_foreign_kospi' ? '억원' : '%';
+  const expectedUnit = quote.id?.startsWith('kr_foreign_') ? '억원' : '%';
   if (quote.change !== null && quote.change !== undefined &&
       (typeof quote.change !== 'number' || !Number.isFinite(quote.change) || quote.changeUnit !== expectedUnit)) return null;
   return {
@@ -94,6 +94,7 @@ export function buildImpact(market, now = Date.now()) {
     kospi: domesticQuote(indexed.get('kospi'), now),
     kosdaq: domesticQuote(indexed.get('kosdaq'), now),
     foreignKospi: domesticQuote(indexed.get('kr_foreign_kospi'), now),
+    foreignKosdaq: domesticQuote(indexed.get('kr_foreign_kosdaq'), now),
   };
   const kospi = marketImpact('코스피', FACTORS.kospi, indexed, now);
   const kosdaq = marketImpact('코스닥', FACTORS.kosdaq, indexed, now);
@@ -117,7 +118,7 @@ export function buildImpact(market, now = Date.now()) {
     method: 'weighted_directional_checklist_v1', asOf: new Date(now).toISOString(),
     kospi, kosdaq, domestic, themes, mixedDates: new Set(dated).size > 1,
     cautions: [
-      domestic.foreignKospi ? '국내 코스피 외국인 순매수는 확인된 일별 관측값이며, 코스닥 수급·실적은 별도 확인이 필요합니다.' : '국내 외국인 수급·거래대금·기업 실적을 확인하지 못한 조건부 해외 환경 점검입니다.',
+      domestic.foreignKospi || domestic.foreignKosdaq ? '국내 외국인 순매수는 확인된 시장별 일별 관측값만 사용합니다. 장중 거래대금과 기업 실적은 별도 확인이 필요합니다.' : '국내 외국인 수급·거래대금·기업 실적을 확인하지 못한 조건부 해외 환경 점검입니다.',
       '일별 종가와 환율·금리의 관측일 및 비교 기준이 다르며, 지수 상승·하락 확률이 아닙니다.',
       '규칙 기반 가중치는 과거 성과로 보정된 예측모형이 아닙니다.',
     ],
