@@ -23,3 +23,6 @@
 @media(max-width:390px){.quote-card{padding-left:10px;padding-right:10px}.quote-value{font-size:19px}.quote-spark{width:30px}.quote-name{font-size:8px}.section-pair{grid-template-columns:1fr}.sector-list{grid-template-columns:1fr 1fr}.sector-tile:nth-child(n+5){display:flex}.leader-value{display:block}.outlook-reason-grid{grid-template-columns:1fr}.quote-change{font-size:8px}.topbar{padding:0 16px}.workspace{padding-left:13px;padding-right:13px}.story-copy h1{font-size:29px}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
 @media print{.sidebar,.topbar,.demo-banner .text-button,.desk-rail,.chat-toggle,.header-actions,.nav-backdrop{display:none!important}.app-shell,.content-layout{display:block}.shell-body{grid-column:1}.workspace{padding:0}.panel{break-inside:avoid;box-shadow:none}.main-column{gap:15px}.page-footer{padding:0}.demo-banner{background:white;color:#333;border:1px solid #999}}
+
+/* Domestic and global indicator groups are separated without changing the site theme. */
+.market-section-label{padding:11px 22px;font-size:10px;font-weight:650;letter-spacing:.3px;color:#59718a;background:#f8fafc;border-top:1px solid var(--line)}
