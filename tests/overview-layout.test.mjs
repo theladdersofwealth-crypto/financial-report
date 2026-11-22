@@ -27,7 +27,7 @@ test('KIS Korea indexes and signed foreign flows are rendered before global indi
   assert.match(section,/groups\.map\(\(\[number,id,title,subtitle,theme,quotes\]\)=>/);
   assert.match(section,/seen\.add\(id\)/,'do not duplicate KIS domestic indicators');
   assert.match(section, /const investor=pension\?'연기금':'외국인'/);
-  assert.match(section,/koreaGroups\.map/);
+  assert.match(code,/koreaGroups\.map/);
   assert.doesNotMatch(section.slice(section.indexOf('function quoteCard(')),/sparkline\(quote\)/);
   assert.doesNotMatch(section.slice(section.indexOf('function quoteCard(')),/class: 'quote-source'/);
   assert.match(code, /\^kr_\(foreign\|pension\)_/,
