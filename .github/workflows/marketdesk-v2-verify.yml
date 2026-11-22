@@ -29,3 +29,7 @@ jobs:
         run: npm test
       - name: Cloudflare Worker dry-run build
         run: npm run build
+      - name: Public API connectivity (GitHub runner, diagnostic only)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        run: node scripts/probe-public-feeds.mjs
