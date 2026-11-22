@@ -275,3 +275,79 @@ test('ECOS daily stock indices and KOSPI foreign flow distinguish levels from ab
   assert.equal(data.impact.domestic.kosdaq.value,2100);
   assert.ok(data.impact.cautions.some(c=>c.includes('코스닥 수급')));
 });
+
+
+test('an invalid FRED key does not suppress otherwise usable public CSV series', async t => {
+  const publicFeed = providerFixture();
+  let authCalls=0,csvCalls=0;
+  installFetch(t, async (input, options) => {
+    const host = new URL(String(input)).hostname;
+    if (host === 'api.stlouisfed.org') { authCalls++; return new Response('rejected', {status: 401}); }
+    if (host === 'fred.stlouisfed.org') { csvCalls++; return publicFeed(input, options); }
+    return publicFeed(input, options);
+  });
+  const {collectMarket}=await freshModule();
+  const data=await collectMarket({FRED_API_KEY:'bad-fixture-key'});
+  assert.equal(authCalls,12);
+  assert.equal(csvCalls,12);
+  assert.equal(data.quotes.find(q=>q.id==='sp500')?.value,101);
+  assert.equal(data.sources.find(x=>x.id==='fred')?.received,12);
+  assert.equal(data.sources.find(x=>x.id==='fred')?.status,'connected');
+  assert.ok(data.sources.find(x=>x.id==='fred')?.failures.some(e=>e.code==='HTTP_401'));
+  assert.equal(JSON.stringify(data).includes('bad-fixture-key'),false);
+});
+
+test('ECB partial coverage falls back to separately attributed central bank blends', async t => {
+  const fixture = providerFixture();
+  let mixedCalls=0,ecbCalls=0;
+  installFetch(t, async (input, options) => {
+    const url=new URL(String(input));
+    if (url.hostname !== 'api.frankfurter.dev') return fixture(input,options);
+    const rows=await (await fixture(input)).json();
+    if (url.searchParams.get('providers') === 'ECB') {
+      ecbCalls++;
+      return Response.json(rows.filter(r=>r.quote==='JPY'));
+    }
+    mixedCalls++;
+    return Response.json(rows);
+  });
+  const {collectMarket}=await freshModule();
+  const data=await collectMarket({});
+  assert.equal(ecbCalls,1);
+  assert.equal(mixedCalls,1);
+  assert.equal(data.quotes.find(q=>q.id==='usdjpy')?.source,'ECB / Frankfurter');
+  assert.equal(data.quotes.find(q=>q.id==='usdkrw')?.source,'중앙은행 혼합 / Frankfurter');
+  assert.equal(data.quotes.find(q=>q.id==='usdcny')?.value,101);
+});
+
+test('stale FRED observations are no longer reported as a healthy provider', async t => {
+  const old=[[day(20),'100'],[day(18),'101']];
+  installFetch(t, providerFixture(Object.fromEntries(
+    ['SP500','NASDAQ100','NASDAQSOX','NASDAQCOM','DGS2','DGS10','DFII10','DTWEXBGS','DCOILWTICO','DCOILBRENTEU','VIXCLS','BAMLH0A0HYM2']
+      .map(x=>[x,old]))));
+  const {collectMarket}=await freshModule();
+  const data=await collectMarket({});
+  const fred=data.sources.find(x=>x.id==='fred');
+  assert.equal(fred.status,'stale');
+  assert.equal(fred.received,0);
+  assert.equal(fred.stale,12);
+  assert.equal(data.quotes.find(q=>q.id==='sp500')?.status,'stale');
+  assert.ok(!data.summary.points.some(p=>String(p).includes('S&P 500 101')));
+});
+
+test('failed Finnhub quotes expose safe provider diagnostic counts, not secrets', async t=>{
+  const fixture=providerFixture();
+  installFetch(t, async(input,options)=>{
+    if(new URL(String(input)).hostname==='finnhub.io')return new Response('no permission',{status:403});
+    return fixture(input,options);
+  });
+  const {collectMarket}=await freshModule();
+  const data=await collectMarket({FINNHUB_API_KEY:'test-private-token'});
+  const finnhub=data.sources.find(x=>x.id==='finnhub');
+  assert.equal(finnhub.status,'no_data');
+  assert.equal(finnhub.received,0);
+  assert.equal(finnhub.expected,18);
+  assert.equal(finnhub.missing,18);
+  assert.ok(finnhub.failures.some(x=>x.code==='HTTP_403'));
+  assert.equal(JSON.stringify(data).includes('test-private-token'),false);
+});
