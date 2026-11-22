@@ -76,7 +76,7 @@ function domesticQuote(quote, now) {
   if (typeof quote.value !== 'number' || !Number.isFinite(quote.value)) return null;
   const age = now - Date.parse(quote.observedAt);
   if (!Number.isFinite(age) || age < -5 * 60000 || age > MAX_AGE_MS) return null;
-  const expectedUnit = quote.id?.startsWith('kr_foreign_') ? '억원' : '%';
+  const expectedUnit = /^kr_(foreign|pension)_/.test(quote.id) ? '억원' : '%';
   if (quote.change !== null && quote.change !== undefined &&
       (typeof quote.change !== 'number' || !Number.isFinite(quote.change) || quote.changeUnit !== expectedUnit)) return null;
   return {
@@ -95,6 +95,8 @@ export function buildImpact(market, now = Date.now()) {
     kosdaq: domesticQuote(indexed.get('kosdaq'), now),
     foreignKospi: domesticQuote(indexed.get('kr_foreign_kospi'), now),
     foreignKosdaq: domesticQuote(indexed.get('kr_foreign_kosdaq'), now),
+    pensionKospi: domesticQuote(indexed.get('kr_pension_kospi'), now),
+    pensionKosdaq: domesticQuote(indexed.get('kr_pension_kosdaq'), now),
   };
   const kospi = marketImpact('코스피', FACTORS.kospi, indexed, now);
   const kosdaq = marketImpact('코스닥', FACTORS.kosdaq, indexed, now);

@@ -96,7 +96,8 @@ function canonicalQuote(id, rows, field, div=1) {
     .sort((a,b)=>a.date.localeCompare(b.date));
   if (!history.length) return null;
   const last=history.at(-1), prev=history.at(-2);
-  const flow=id.startsWith('kr_foreign_');
+  const flow=/^kr_(foreign|pension)_/.test(id);
+  const investor=id.startsWith('kr_pension_')?'연기금 등(기금)':'외국인';
   const age=Date.now()-Date.parse(last.date+'T23:59:59+09:00');
   return {
     id,provider:'kis',source:'한국투자증권 KIS Open API',
@@ -107,11 +108,11 @@ function canonicalQuote(id, rows, field, div=1) {
       prev.value?Number(((last.value-prev.value)/prev.value*100).toFixed(4)):null):null,
     changeUnit:flow?'억원':'%',unit:flow?'억원':'pt',
     comparisonAt:prev?.date||null,
-    changeBasis:flow?'직전 관측일 외국인 순매수액과의 차이 · 당일 순매수 실측값과 구분':'직전 관측 종가 대비',
+    changeBasis:flow?`직전 관측일 ${investor} 순매수액과의 차이 · 당일 순매수 실측값과 구분`:'직전 관측 종가 대비',
     history:history.slice(-65),
     delay:'일별 조회 · 장중 실시간 시세 아님',
     reason:age>7*86400000?'최근 지수/수급 관측일이 7일을 초과했습니다':null,
-    basis:flow?'시장별 외국인 순매수 거래대금 · 백만원 단위 응답을 억원으로 변환':'국내 주가지수 일별 종가',
+    basis:flow?`시장별 ${investor} 순매수 거래대금 · 백만원 단위 응답을 억원으로 변환`:'국내 주가지수 일별 종가',
   };
 }
 // Use actual KIS OHLC rows. Never derive high/low/open from closing values.
@@ -154,20 +155,21 @@ async function indexQuote(env,token,id,iscd) {
     chartBasis: 'KIS 공식 일봉·주봉·월봉별 시가·고가·저가·종가',
   };
 }
-async function investorQuote(env,token,id,iscd,market) {
-  // KIS reference requires FID_INPUT_DATE_1 and _2 to be the SAME date.
-  // Weekends use the previous business weekday; official holidays may yield
-  // no rows, which must remain missing rather than inventing a flow.
-  const ymd = todayKst();
-  const weekday = new Date(`${ymd.slice(0,4)}-${ymd.slice(4,6)}-${ymd.slice(6,8)}T00:00:00Z`).getUTCDay();
-  const date = fromKstDaysAgo(weekday === 0 ? 2 : weekday === 6 ? 1 : 0);
+async function investorQuotes(env,token,iscd,market,suffix) {
+  // Read distinct foreign and fund flows from the same market API response.
+  // Never infer missing fund figures from all institutions or from zero.
+  const ymd=todayKst();
+  const weekday=new Date(`${ymd.slice(0,4)}-${ymd.slice(4,6)}-${ymd.slice(6,8)}T00:00:00Z`).getUTCDay();
+  const date=fromKstDaysAgo(weekday===0?2:weekday===6?1:0);
   const data=await kisGet(env,token,'/uapi/domestic-stock/v1/quotations/inquire-investor-daily-by-market',
     'FHPTJ04040000',{
       FID_COND_MRKT_DIV_CODE:'U',FID_INPUT_ISCD:iscd,FID_INPUT_DATE_1:date,
       FID_INPUT_DATE_2:date,FID_INPUT_ISCD_1:market,FID_INPUT_ISCD_2:iscd,
     });
-  // API may refuse a market/plan. Never replace actual flow with synthetic data.
-  return canonicalQuote(id,data?.output,'frgn_ntby_tr_pbmn',100);
+  return [
+    canonicalQuote(`kr_foreign_${suffix}`,data?.output,'frgn_ntby_tr_pbmn',100),
+    canonicalQuote(`kr_pension_${suffix}`,data?.output,'fund_ntby_tr_pbmn',100),
+  ].filter(Boolean);
 }
 export async function collectKis(env) {
   if(!kisConfigured(env)) return [];
@@ -176,10 +178,10 @@ export async function collectKis(env) {
   const fetched=await Promise.all([
     indexQuote(env,token,'kospi','0001'),
     indexQuote(env,token,'kosdaq','1001'),
-    investorQuote(env,token,'kr_foreign_kospi','0001','KSP'),
-    investorQuote(env,token,'kr_foreign_kosdaq','1001','KSQ'),
+    investorQuotes(env,token,'0001','KSP','kospi'),
+    investorQuotes(env,token,'1001','KSQ','kosdaq'),
   ]);
-  return fetched.filter(Boolean);
+  return fetched.flat().filter(Boolean);
 }
 
 /**

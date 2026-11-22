@@ -51,6 +51,8 @@ const INSTRUMENTS = [
   { id: 'kosdaq', name: '코스닥', group: 'korea', unit: 'pt', ecos: '0089000', ecosTable: '802Y001', required: '한국은행 ECOS API 인증키 연결 필요', basis: '한국거래소 작성 · 한국은행 ECOS 주식시장(일) · 일별 종가' },
   { id: 'kr_foreign_kospi', name: '외국인 순매수 (코스피)', group: 'korea', unit: '억원', flow: true, ecos: '0030000', ecosTable: '802Y001', required: '한국투자증권 KIS 또는 ECOS 인증키 연결 필요', basis: '유가증권시장 외국인 당일 순매수금액 · 일별, 단위 억원' },
   { id: 'kr_foreign_kosdaq', name: '외국인 순매수 (코스닥)', group: 'korea', unit: '억원', flow: true, required: '한국투자증권 KIS API 인증키 연결 필요', basis: '코스닥시장 외국인 당일 순매수금액 · 일별, 단위 억원' },
+  { id: 'kr_pension_kospi', name: '연기금 등 순매수 (코스피)', group: 'korea', unit: '억원', flow: true, required: 'KIS 기금 순매수 거래대금 제공 필요', basis: '유가증권시장 연기금 등(기금) 순매수금액 · 억원 · 국민연금 단독 아님' },
+  { id: 'kr_pension_kosdaq', name: '연기금 등 순매수 (코스닥)', group: 'korea', unit: '억원', flow: true, required: 'KIS 기금 순매수 거래대금 제공 필요', basis: '코스닥시장 연기금 등(기금) 순매수금액 · 억원 · 국민연금 단독 아님' },
   { id: 'kr3y', name: '한국 국채 3년', group: 'korea', unit: '%', ecos: '010200000', required: 'ECOS_API_KEY 연결 필요', basis: '한국은행 ECOS 시장금리(일별) · 국고채 3년' },
   { id: 'kr10y', name: '한국 국채 10년', group: 'korea', unit: '%', ecos: '010210000', required: 'ECOS_API_KEY 연결 필요', basis: '한국은행 ECOS 시장금리(일별) · 국고채 10년' },
 ];
@@ -464,7 +466,7 @@ function sourceList(quotes, sectors, leaders, env, failures = new Map()) {
     ['goldapi', 'Gold API', 'https://gold-api.com/docs', '금·은·구리 참고 현물가격 · 구리는 USD/파운드 · 키 불필요', true, ['api.gold-api.com']],
     ['finnhub', 'Finnhub', 'https://finnhub.io/docs/api/quote', '미국 섹터 ETF·대표 종목 · API 키 필요 · 등락 시각과 가입 권한 확인', Boolean(env.FINNHUB_API_KEY), ['finnhub.io']],
     ['ecos', '한국은행 ECOS', 'https://ecos.bok.or.kr/', 'KIS 수신 실패 시 일부 지수·수급 대체 · 국고채 금리 일별 자료', Boolean(env.ECOS_API_KEY), ['ecos.bok.or.kr']],
-    ['kis', '한국투자증권 KIS', 'https://apiportal.koreainvestment.com/', '국내 지수·외국인 수급 및 미국 지수·주식·섹터 ETF 우선 공급원 (권한 또는 종목 확인 실패 시 기존 자료 유지)', kisConfigured(env), ['openapi.koreainvestment.com']],
+    ['kis', '한국투자증권 KIS', 'https://apiportal.koreainvestment.com/', '국내 지수·외국인/연기금 수급 및 미국 지수·주식·섹터 ETF 우선 공급원 (권한 또는 종목 확인 실패 시 기존 자료 유지)', kisConfigured(env), ['openapi.koreainvestment.com']],
   ];
   const expected = {
     fred: INSTRUMENTS.filter(x => x.fred).length,
@@ -474,7 +476,7 @@ function sourceList(quotes, sectors, leaders, env, failures = new Map()) {
     finnhub: SECTORS.length + LEADERS.length,
     goldapi: INSTRUMENTS.filter(x => x.metalSpot).length,
     ecos: INSTRUMENTS.filter(x => x.ecos).length,
-    kis: 4 + SECTORS.length + LEADERS.length + 4 + 3,
+    kis: 6 + SECTORS.length + LEADERS.length + 4 + 3,
   };
   return definitions.map(([id, name, url, note, enabled, hosts]) => {
     const records = all.filter(quote => quote.provider === id);
@@ -540,8 +542,8 @@ function validQuote(q) {
   // signed amount. Negative = net selling; zero = exactly balanced flow.
   // Both are valid KIS observations and must not be discarded by the
   // positive-price validator used for foreign-market instruments.
-  const signedForeignFlow=q.provider==='kis' && ['kr_foreign_kospi','kr_foreign_kosdaq'].includes(q.id);
-  return signedForeignFlow || q.value>0;
+  const signedInvestorFlow=q.provider==='kis' && /^kr_(foreign|pension)_(kospi|kosdaq)$/.test(q.id);
+  return signedInvestorFlow || q.value>0;
 }
 function selectKisFirst(previous,kisItems) {
   const map=new Map(previous.map(q=>[q.id,q]));

@@ -3617,3 +3617,36 @@ td strong {
   .market-table-section-inner strong{font-size:13px}
   .market-table-section-inner small{margin-left:0}
 }
+
+/* Compact, readable investor-flow cards; detail charts still open on tap. */
+.korea-metric-groups{display:grid;gap:0;background:#f9fbfd}
+.korea-metric-block{border-top:1px solid #dce6ef}
+.korea-metric-block:first-child{border-top:0}
+.korea-metric-label{padding:12px 16px 8px;font-size:13px;letter-spacing:-.1px;font-weight:800;color:#285071;background:#edf4fb}
+.metric-korea .korea-quote-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:10px 13px 14px}
+.metric-section .quote-card,.metric-section .quote-card:nth-child(4n),.metric-section .quote-card:nth-last-child(-n+4){min-height:120px;padding:17px 17px 14px;justify-content:flex-start;gap:10px}
+.metric-section .quote-name{font-size:14px;font-weight:800;letter-spacing:-.2px}
+.metric-section .quote-value{font-size:clamp(22px,2.25vw,29px);line-height:1.17}
+.metric-section .quote-value-row{margin-top:0;flex-wrap:wrap;gap:5px}
+.metric-section .quote-bottom{margin-top:auto;flex-wrap:wrap;gap:4px 10px;align-items:center}
+.metric-section .quote-change{font-size:12.5px}
+.quote-observed{font-size:11px;color:#64778a;white-space:nowrap;font-variant-numeric:tabular-nums}
+.quote-drilldown{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;flex:none;border-radius:50%;color:#33668e;background:#ebf3fb}
+.quote-drilldown .icon{width:14px;height:14px}
+.quote-group.quote-investor{color:#315f86;background:#eaf3fc;border-radius:6px;padding:4px 7px;font-size:10.5px;font-weight:700}
+.metric-section .quote-card-flow .quote-value{font-size:clamp(24px,2.4vw,30px)}
+.metric-section .quote-card .quote-spark,.metric-section .quote-card .quote-source{display:none}
+@media(max-width:760px){
+  .metric-korea .korea-quote-grid{grid-template-columns:repeat(2,minmax(0,1fr));padding:9px;gap:9px}
+  .metric-section .quote-card,.metric-section .quote-card:nth-child(4n),.metric-section .quote-card:nth-last-child(-n+4){min-height:119px;padding:14px 12px 12px;gap:8px}
+  .metric-section .quote-value,.metric-section .quote-card-flow .quote-value{font-size:clamp(19px,5vw,25px)}
+  .metric-section .quote-name{font-size:13px}
+  .metric-section .quote-bottom{align-items:flex-start;flex-direction:column;gap:3px}
+  .quote-observed{font-size:10px}
+  .quote-group.quote-investor{padding:3px 5px;font-size:10px}
+}
+@media(max-width:420px){
+  .metric-korea .korea-quote-grid{gap:7px}
+  .metric-section .quote-card,.metric-section .quote-card:nth-child(4n),.metric-section .quote-card:nth-last-child(-n+4){padding:12px 10px}
+  .metric-section .quote-value,.metric-section .quote-card-flow .quote-value{font-size:19px;letter-spacing:-.7px}
+}

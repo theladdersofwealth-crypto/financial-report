@@ -76,11 +76,13 @@ test('domestic actual closes and signed foreign flow are displayed as factual ob
     {...quote('kosdaq', 1.6, 'korea'), value: 900, unit: 'pt', name: '코스닥'},
     {...quote('kr_foreign_kospi', 400, 'korea', '억원'), value: -800, unit: '억원',
       name: '코스피 외국인 순매수'},
+    {...quote('kr_pension_kospi', -50, 'korea', '억원'), value: -75, unit: '억원',name:'코스피 연기금 등 순매수'},
   ];
   const impact = buildImpact({quotes}, now);
   assert.equal(impact.domestic.kospi.value, 5000);
   assert.equal(impact.domestic.kosdaq.value, 900);
   assert.equal(impact.domestic.foreignKospi.value, -800);
+  assert.equal(impact.domestic.pensionKospi.value, -75);
   assert.equal(impact.kospi.state, '판단 보류', 'actual domestic closes do not leak into the overseas checklist');
   assert.ok(impact.cautions.some(s => s.includes('시장별 일별 관측값')));
 });

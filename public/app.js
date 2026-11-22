@@ -135,7 +135,7 @@ function formatValue(quote) {
   if (!hasValue(quote)) return '—';
   const value = Number(quote.value);
   let decimals = quote.decimals;
-  if (!Number.isInteger(decimals)) decimals = quote.id?.startsWith('kr_foreign_') ? 2 : ['금리', 'rates', 'yields'].includes(quote.group) || quote.unit === '%' ? 2 : Math.abs(value) >= 10000 ? 0 : 2;
+  if (!Number.isInteger(decimals)) decimals = /^kr_(foreign|pension)_/.test(quote.id) ? 2 : ['금리', 'rates', 'yields'].includes(quote.group) || quote.unit === '%' ? 2 : Math.abs(value) >= 10000 ? 0 : 2;
   return value.toLocaleString('en-US', {minimumFractionDigits: decimals, maximumFractionDigits: decimals});
 }
 function formatChange(quote) {
@@ -534,6 +534,8 @@ function renderImpact() {
     ['코스닥 일별 종가', domestic.kosdaq],
     ['코스피 외국인 순매수', domestic.foreignKospi],
     ['코스닥 외국인 순매수', domestic.foreignKosdaq],
+    ['코스피 연기금 등 순매수', domestic.pensionKospi],
+    ['코스닥 연기금 등 순매수', domestic.pensionKosdaq],
   ];
   section.append(E('div', {class: 'panel-foot'}, E('strong', {}, '국내 시장 관측 · 실제 종가와 수급'),
     E('span', {}, ' · 일별 확정 자료이며 위 해외 환경 판단의 적중률이 아닙니다.')));
@@ -565,17 +567,28 @@ function renderImpact() {
 function metricSection(number, id, title, subtitle, theme, quotes) {
   if (!quotes.length) return null;
   const observed=quotes.filter(quote=>hasValue(quote)).length;
-  return E('section', {class:`metric-section metric-${theme}`, id,
-    'aria-label':title},
-    E('div', {class:'metric-section-heading'},
-      E('span', {class:'metric-section-number','aria-hidden':'true'},number),
-      E('div', {class:'metric-section-copy'},
-        E('h3', {class:'metric-section-title'},title),
-        E('p', {class:'metric-section-description'},subtitle)),
-      E('span', {class:'metric-section-coverage'},
-        state.demo ? `예시 ${quotes.length}개` : `수신 ${observed}/${quotes.length}`)),
-    E('div', {class:'market-grid'},quotes.map(quoteCard)));
+  const koreaGroups=[
+    ['국내 지수',quotes.filter(q=>['kospi','kosdaq'].includes(q.id))],
+    ['외국인 수급',quotes.filter(q=>q.id?.startsWith('kr_foreign_'))],
+    ['연기금 수급',quotes.filter(q=>q.id?.startsWith('kr_pension_'))],
+    ['기타 국내 지표',quotes.filter(q=>!['kospi','kosdaq'].includes(q.id) && !/^kr_(foreign|pension)_/.test(q.id))],
+  ].filter(([,items])=>items.length);
+  return E('section',{class:`metric-section metric-${theme}`,id,'aria-label':title},
+    E('div',{class:'metric-section-heading'},
+      E('span',{class:'metric-section-number','aria-hidden':'true'},number),
+      E('div',{class:'metric-section-copy'},
+        E('h3',{class:'metric-section-title'},title),
+        E('p',{class:'metric-section-description'},subtitle)),
+      E('span',{class:'metric-section-coverage'},
+        state.demo?`예시 ${quotes.length}개`:`수신 ${observed}/${quotes.length}`)),
+    theme==='korea'
+      ? E('div',{class:'korea-metric-groups'},koreaGroups.map(([name,items])=>
+          E('div',{class:'korea-metric-block'},
+            E('h4',{class:'korea-metric-label'},name),
+            E('div',{class:'market-grid korea-quote-grid'},items.map(quoteCard)))))
+      : E('div',{class:'market-grid'},quotes.map(quoteCard)));
 }
+
 function renderQuotes() {
   const allQuotes=normalizedQuotes();
   const seen=new Set();
@@ -585,6 +598,8 @@ function renderQuotes() {
     ['kospi','코스피','pt'],['kosdaq','코스닥','pt'],
     ['kr_foreign_kospi','코스피 외국인 순매수','억원'],
     ['kr_foreign_kosdaq','코스닥 외국인 순매수','억원'],
+    ['kr_pension_kospi','코스피 연기금 등 순매수','억원'],
+    ['kr_pension_kosdaq','코스닥 연기금 등 순매수','억원'],
   ].map(([id,name,unit])=>{
     seen.add(id);
     return allQuotes.find(q=>q.id===id)||
@@ -594,7 +609,7 @@ function renderQuotes() {
     if(seen.has(q.id)||!predicate(q))return false;
     seen.add(q.id);return true;
   });
-  const domesticPlus=take(q=>groupName(q.group)==='한국시장');
+  const domesticPlus=take(q=>groupName(q.group)==='한국시장' && !['kr3y','kr10y'].includes(q.id));
   const equities=take(q=>['sp500','nasdaq','nasdaqcom','sox','vix'].includes(q.id)
     ||groupName(q.group)==='주식'||groupName(q.group)==='변동성');
   const ratesFx=take(q=>['금리','외환'].includes(groupName(q.group))
@@ -603,7 +618,7 @@ function renderQuotes() {
   const crypto=take(q=>groupName(q.group)==='디지털자산');
   const other=take(()=>true);
   const groups=[
-    ['01','metrics-korea','한국 증시 · 외국인 수급','코스피·코스닥의 방향과 외국인 자금 흐름을 구분해서 확인합니다.','korea',[...domestic,...domesticPlus]],
+    ['01','metrics-korea','한국 증시 · 외국인·연기금 수급','코스피·코스닥 지수와 외국인·연기금 순매수금액을 구분해 확인합니다.','korea',[...domestic,...domesticPlus]],
     ['02','metrics-global','미국 증시 · 위험 심리','미국 대표 지수와 변동성 지표로 밤사이 시장 분위기를 확인합니다.','global',equities],
     ['03','metrics-macro','금리 · 환율','미국·한국 채권금리와 달러 움직임을 살펴봅니다.','macro',ratesFx],
     ['04','metrics-commodities','원자재','금·에너지·산업금속 가격을 주식시장과 구분해 비교합니다.','commodities',commodities],
@@ -626,30 +641,49 @@ function renderQuotes() {
     E('div',{class:'panel-foot'},
       E('span',{class:'gain'},'● 상승·순매수'),'　',
       E('span',{class:'loss'},'● 하락·순매도'),
-      '　외국인 수급은 등락률이 아닌 순매수액입니다. 서로 다른 지표의 관측일과 출처를 함께 확인하세요.'));
+      '　수급은 등락률이 아닌 당일 순매수금액입니다. 연기금 등은 국민연금 단독 거래가 아닙니다.'));
 }
 const CHART_INDEX_IDS = new Set(['kospi','kosdaq','sp500','nasdaq','nasdaqcom','sox','dxy','broadusd','vix']);
 function hasIndexChart(quote) { return CHART_INDEX_IDS.has(quote?.id) && !state.demo; }
 function quoteCard(quote) {
-  const available = hasValue(quote);
-  const chartable = hasIndexChart(quote);
-  const flow = quote.id === 'kr_foreign_kospi' || quote.id === 'kr_foreign_kosdaq';
-  const observed = quote.timestampPrecision === 'month' && quote.observedAt ? `${String(quote.observedAt).slice(0, 7)} 월간 평균` : quote.timestampPrecision === 'day' && quote.observedAt ? String(quote.observedAt).slice(0, 10) : dateText(quote.observedAt);
-  const changeText = flow ? Number(quote.value) < 0 ? '외국인 순매도' : Number(quote.value) > 0 ? '외국인 순매수' : '외국인 순매수 0' : formatChange(quote);
-  const tone = flow ? changeClass(quote.value) : changeClass(quote.change);
-  return E('article', {class: `quote-card${chartable ? ' quote-card-clickable' : ''}`,
+  const available=hasValue(quote);
+  const chartable=hasIndexChart(quote);
+  const foreign=quote.id?.startsWith('kr_foreign_');
+  const pension=quote.id?.startsWith('kr_pension_');
+  const flow=foreign||pension;
+  const investor=pension?'연기금':'외국인';
+  const observed=quote.timestampPrecision==='month'&&quote.observedAt
+    ? `${String(quote.observedAt).slice(0,7)} 월간`
+    : quote.timestampPrecision==='day'&&quote.observedAt
+      ? String(quote.observedAt).slice(0,10) : dateText(quote.observedAt);
+  const label=flow?(quote.id.endsWith('_kospi')?'코스피':'코스닥'):quote.name;
+  const changeText=flow
+    ? Number(quote.value)<0?`${investor} 순매도`
+      :Number(quote.value)>0?`${investor} 순매수`:'매수·매도 균형'
+    :formatChange(quote);
+  const tone=flow?changeClass(quote.value):changeClass(quote.change);
+  const observation=!available?'데이터 미수신'
+    :quote.status==='stale'?`⚠ 오래된 값 · ${observed}`:`${observed} 기준`;
+  return E('article', {class:`quote-card${chartable?' quote-card-clickable':''}${flow?' quote-card-flow':''}`,
     role: chartable ? 'button' : null,
     tabindex: chartable ? 0 : null,
-    'aria-label': chartable ? `${quote.name} 과거 지수 차트 열기` : null,
+    'aria-label':chartable?`${quote.name} 과거 지수 차트 열기`:null,
     onClick: chartable ? () => openIndexChart(quote) : null,
-    onKeydown: chartable ? event => {
-      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openIndexChart(quote); }
-    } : null,
-    title: `${quote.name} · ${state.demo ? '체험용 예시 데이터' : `${sourceName(quote.source)} · ${observed}${quote.basis ? ` · ${quote.basis}` : ''}${quote.reason ? ` · ${quote.reason}` : ''}`}`},
-    E('div', {class: 'quote-top'}, E('h3', {class: 'quote-name'}, quote.name), chartable ? E('span', {class: 'quote-group'}, icon('chart'), '차트') : E('span', {class: 'quote-group'}, groupName(quote.group))),
-    E('div', {class: 'quote-value-row'}, E('span', {class: 'quote-value'}, formatValue(quote)), E('span', {class: 'quote-unit'}, quote.unit || '')),
-    E('div', {class: 'quote-bottom'}, available ? E('span', {class: `quote-change ${tone}`}, changeText) : E('span', {class: 'quote-missing'}, '데이터 연결 필요'), available && !flow ? sparkline(quote) : null),
-    E('div', {class: 'quote-source'}, state.demo ? '체험용 예시' : available ? `${quote.status === 'stale' ? '⚠ 오래된 관측 · ' : quote.status === 'monthly' ? '월간 통계 · ' : ''}${sourceName(quote.source)} · ${observed}` : '— 데이터 연결 필요'));
+    onKeydown:chartable?event=>{
+      if(event.key==='Enter'||event.key===' '){event.preventDefault();openIndexChart(quote);}
+    }:null,
+    title:`${quote.name} · ${state.demo?'체험용 예시 데이터':observation}`},
+    E('div',{class:'quote-top'},E('h3',{class:'quote-name'},label),
+      chartable?E('span',{class:'quote-drilldown','aria-hidden':'true'},icon('chevron'))
+        :flow?E('span',{class:'quote-group quote-investor'},investor+' 수급')
+        :E('span',{class:'quote-group'},groupName(quote.group))),
+    E('div',{class:'quote-value-row'},
+      E('span',{class:`quote-value${flow&&available?' '+tone:''}`},formatValue(quote)),
+      E('span',{class:'quote-unit'},quote.unit||'')),
+    E('div',{class:'quote-bottom'},
+      available?E('span',{class:`quote-change ${tone}`},changeText)
+        :E('span',{class:'quote-missing'},'데이터 연결 필요'),
+      E('span',{class:'quote-observed'},state.demo?'예시':observation)));
 }
 
 // Observed index history only: daily closes are not intraday or candlestick data.

@@ -447,6 +447,7 @@ test('verified KIS overseas candidates win over FRED and missing Finnhub; mismat
       return Response.json({rt_cd:'0',output:[{
         stck_bsop_date:day(1).replace(/-/g,''),
         frgn_ntby_tr_pbmn:market==='KSP'?'-1095596':'0',
+        fund_ntby_tr_pbmn:market==='KSP'?'-20000':'3000',
       }]});
     }
     if(u.pathname.endsWith('inquire-daily-chartprice')){
@@ -480,6 +481,8 @@ test('verified KIS overseas candidates win over FRED and missing Finnhub; mismat
   const flowKosdaq=market.quotes.find(q=>q.id==='kr_foreign_kosdaq');
   assert.equal(flowKospi?.value,-10955.96,'KOSPI foreign net SELLING must remain negative, not missing');
   assert.equal(flowKosdaq?.value,0,'KOSDAQ zero net flow must remain a valid observation');
+  assert.equal(market.quotes.find(q=>q.id==='kr_pension_kospi')?.value,-200);
+  assert.equal(market.quotes.find(q=>q.id==='kr_pension_kosdaq')?.value,30);
   assert.equal(flowKospi?.provider,'kis');
   assert.equal(flowKosdaq?.provider,'kis');
   assert.equal(flowKospi?.status,'daily');
