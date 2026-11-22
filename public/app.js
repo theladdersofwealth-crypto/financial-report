@@ -326,9 +326,9 @@ function renderView() {
   const refresh = B(E('span', {class: 'button-label'}, '새로고침'), event => busy(event.currentTarget, refreshCurrent), 'small', 'refresh', {'aria-label': '현재 화면 새로고침'});
   document.querySelector('#page-header').replaceChildren(E('div', {class: 'page-header'}, E('div', {}, E('p', {class: 'eyebrow'}, item.english), E('h1', {}, item.title), E('p', {class: 'page-subtitle'}, item.subtitle)), E('div', {class: 'header-actions'}, dataState(), refresh)));
   const main = document.querySelector('#main-column');
-  if (state.view === 'overview') main.replaceChildren(renderBrief(), renderQuotes(), E('div', {class: 'section-pair'}, renderSectors(), renderLeaders()), renderOutlook(), renderEvents(true));
+  if (state.view === 'overview') main.replaceChildren(renderBrief(), renderImpact(), renderQuotes(), E('div', {class: 'section-pair'}, renderSectors(), renderLeaders()), renderOutlook(), renderEvents(true));
   if (state.view === 'markets') main.replaceChildren(renderMarketTable(), renderEquityTable('미국 섹터 · ETF 대용지표', state.market?.sectors || []), renderEquityTable('미국 대표 종목', state.market?.leaders || []));
-  if (state.view === 'outlooks') main.replaceChildren(renderOutlook(), methodologyPanel());
+  if (state.view === 'outlooks') main.replaceChildren(renderImpact(), renderOutlook(), methodologyPanel());
   if (state.view === 'calendar') main.replaceChildren(renderEvents(false));
   if (state.view === 'sources') main.replaceChildren(renderSources());
   if (state.view === 'users') main.replaceChildren(renderUsers());
@@ -353,6 +353,36 @@ function renderBrief() {
   const analysisLabel = analysis?.kind === 'ai' ? 'AI 분석' : '지표 기반 자동 해석';
   const analysisNote = analysis?.status === 'unavailable' ? `분석 미생성 · ${analysis.reason || '근거 또는 연결 상태를 확인해 주세요.'}` : analysis?.generatedAt ? `분석 생성 ${dateText(analysis.generatedAt)} KST${analysis.dataAsOf ? ` · 분석 기준 ${dateText(analysis.dataAsOf)} KST` : ''}` : '관측 사실과 전망을 구분합니다. 자세한 근거는 기간별 전망에서 확인하세요.';
   return E('section', {class: 'panel brief-panel'}, E('div', {class: 'panel-head'}, E('p', {class: 'brief-label'}, icon('brief'), state.demo ? 'TODAY’S BRIEF · EXAMPLE' : 'TODAY’S BRIEF'), badge(state.demo ? '예시 시나리오' : state.market?.mode === 'unconfigured' ? '데이터 대기' : analysisLabel, state.demo ? 'amber' : 'blue')), E('div', {class: 'brief-content'}, E('h2', {}, summary.headline || '확인된 데이터를 기다리고 있습니다.'), E('div', {class: 'brief-points'}, (summary.points || []).slice(0, 3).map((point, i) => E('div', {class: 'brief-point'}, E('span', {class: 'point-number'}, `0${i + 1}`), E('span', {}, typeof point === 'string' ? point : point.text || point.title || ''))))), E('div', {class: 'brief-footer'}, E('span', {class: 'brief-foot-note'}, icon('info'), state.demo ? '화면 설명을 위한 가상 해석입니다. 투자 판단에 사용하지 마세요.' : analysisNote), E('span', {}, state.demo ? '예시 데이터' : state.market?.asOf ? `데스크 갱신 ${dateText(state.market.asOf)} KST` : '분석 데이터 미연결')));
+}
+function renderImpact() {
+  const impact = state.demo ? null : state.market?.impact;
+  const section = E('section', {class: 'panel', id: 'korea-impact'},
+    panelHead('글로벌 → 한국 증시 영향', '해외 지표로 국내 시장의 외부 여건을 점검합니다. 실제 지수 등락 예측은 아닙니다.', badge('OBSERVED FACTORS', 'blue'), 'globe'));
+  if (!impact) {
+    section.append(empty('글로벌 영향 분석 대기', state.demo ? '체험용 예시는 실제 분석을 표시하지 않습니다.' : '연결된 지표를 확인하는 중입니다.', 'chart'));
+    return section;
+  }
+  const cards = [['KOSPI', impact.kospi], ['KOSDAQ', impact.kosdaq]].map(([name, item]) => {
+    const headline = `${name} · ${item.state}`;
+    return E('div', {class: 'source-card'},
+      E('div', {class: 'source-body'},
+        E('h3', {class: 'source-name'}, headline),
+        E('p', {class: 'source-description'}, item.summary),
+        E('p', {class: 'tiny muted'}, `반영 근거 ${item.available}/${item.total}개 · 가중치 커버리지 ${Math.round(item.coverage * 100)}% (예측 확률 아님)`),
+        E('ul', {class: 'reason-list'}, item.drivers.slice(0, 4).map(driver =>
+          E('li', {}, `${driver.text} · ${driver.stance} · ${sourceName(driver.source)}`)))));
+  });
+  section.append(E('div', {class: 'source-cards'}, cards));
+  const themes = (impact.themes || []).map(theme =>
+    E('div', {class: 'source-card'},
+      E('div', {class: 'source-body'},
+        E('h3', {class: 'source-name'}, `${theme.title} · ${theme.state}`),
+        E('p', {class: 'source-description'}, theme.reason),
+        theme.evidence ? E('p', {class: 'tiny muted'}, theme.evidence) : null)));
+  section.append(E('div', {class: 'source-cards'}, themes));
+  section.append(E('div', {class: 'source-disclaimer'},
+    `${impact.mixedDates ? '관측 날짜가 다른 지표가 섞여 있습니다. ' : ''}${(impact.cautions || []).join(' ')}`));
+  return section;
 }
 function renderQuotes() {
   const allQuotes = normalizedQuotes();
