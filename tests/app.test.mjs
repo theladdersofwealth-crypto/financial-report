@@ -11,7 +11,7 @@ const memberPassword='Member-test-2026!';
 
 test('private desk authentication, member management and real-time room',async t=>{
   const mf=new Miniflare(convertV4MiniflareOptions({
-    modules:['worker','room','market','analysis'].map(name=>({type:'ESModule',path:resolve(`src/${name}.js`)})),
+    modules:['worker','room','market','market-deploy-snapshot','analysis'].map(name=>({type:'ESModule',path:resolve(`src/${name}.js`)})),
     compatibilityDate:'2026-11-01',
     durableObjects:{DESK:{className:'DeskRoom',useSQLite:true}},
     bindings:{BOOTSTRAP_TOKEN_SHA256:createHash('sha256').update(setupToken).digest('hex')},
@@ -29,6 +29,7 @@ test('private desk authentication, member management and real-time room',async t
     let r=await request('/api/status');
     assert.equal(r.status,200);
     const status=await r.json();assert.equal(status.initialized,false);assert.equal(status.setupAvailable,true);
+    r=await request('/api/pin-login',{method:'POST',body:{nickname:'첫방문',pin:'0123'}});assert.equal(r.status,503);
     r=await request('/api/me');assert.equal(r.status,401);
     r=await request('/api/setup',{method:'POST',body:{token:'wrong',username:'owner',name:'관리자',password:adminPassword}});
     assert.ok([401,403].includes(r.status));
@@ -61,6 +62,39 @@ test('private desk authentication, member management and real-time room',async t
     assert.equal(r.status,200,await r.clone().text());
     const changedCookie=r.headers.get('Set-Cookie')?.split(';')[0];if(changedCookie)memberCookie=changedCookie;
     r=await request('/api/me',{cookie:memberCookie});assert.equal((await r.json()).user.mustChangePassword,false);
+  });
+  await t.test('nickname and PIN create a restricted session, and cannot replace existing credentials', async () => {
+    const submit = (nickname, pin, headers) => request('/api/pin-login', {method:'POST', body:{nickname,pin}, headers});
+    assert.equal((await submit('새손님', 1234)).status, 400);
+    assert.equal((await submit('새손님', '12345')).status, 400);
+    assert.equal((await submit('owner', '0123')).status, 401);
+    const responses = await Promise.all([submit('한글 닉네임', '0123'), submit('한글  닉네임', '0123')]);
+    const users = [];
+    for (const response of responses) {
+      assert.equal(response.status, 200, await response.clone().text());
+      const {user} = await response.json();
+      assert.equal(user.pinLogin, true);
+      assert.equal(user.mustChangePassword, false);
+      assert.equal(user.role, 'member');
+      users.push(user);
+    }
+    assert.equal(users[0].id, users[1].id);
+    const firstCookie = responses[0].headers.get('Set-Cookie').split(';')[0];
+    assert.equal((await request('/api/me',{cookie:firstCookie})).status, 200);
+    assert.equal((await request('/api/chat/history',{cookie:firstCookie})).status, 403);
+    assert.equal((await request('/api/ws',{cookie:firstCookie,headers:{Upgrade:'websocket'}})).status, 403);
+    assert.equal((await request('/api/admin/users',{cookie:firstCookie})).status, 403);
+    assert.equal((await request('/api/login',{method:'POST',body:{username:'한글 닉네임',password:'0123'}})).status, 401);
+    const changed = await request('/api/password',{method:'POST',cookie:firstCookie,body:{currentPassword:'0123',newPassword:'0042'}});
+    assert.equal(changed.status, 200);
+    assert.equal((await submit('한글 닉네임', '0123')).status, 401);
+    const loggedIn = await submit('한글 닉네임', '0042');
+    assert.equal(loggedIn.status, 200);
+    assert.equal((await loggedIn.json()).user.id, users[0].id);
+    for (let i = 0; i < 5; i++) assert.equal((await submit('한글 닉네임', '1111', {'CF-Connecting-IP': `198.51.${i}.20`})).status, 401);
+    assert.equal((await submit('한글 닉네임', '1111', {'CF-Connecting-IP': '203.0.113.20'})).status, 429);
+    assert.equal((await request('/api/admin/users/'+users[0].id,{method:'PATCH',cookie:adminCookie,body:{disabled:true}})).status, 200);
+    assert.equal((await request('/api/me',{cookie:firstCookie})).status, 401);
   });
   const sockets=[];
   t.after(()=>sockets.forEach(s=>{try{s.ws.close()}catch{}}));

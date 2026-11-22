@@ -101,6 +101,7 @@ function field(label, name, options = {}) {
   const input = E('input', {id, name, required: true, ...options});
   return {input, node: E('div', {class: 'field'}, E('label', {for: id}, label), input)};
 }
+const pinFields = {inputmode: 'numeric', pattern: '[0-9]{4}', minlength: 4, maxlength: 4};
 function safeUrl(value) {
   try { const url = new URL(value); return url.protocol === 'https:' ? url.href : null; } catch { return null; }
 }
@@ -176,11 +177,15 @@ function demoMarket() {
   };
 }
 
-function renderWelcome(mode = 'login') {
+function renderWelcome(mode = 'pin') {
   state.user = null;
   const story = E('section', {class: 'welcome-story'}, brand(), E('div', {class: 'story-copy'}, E('p', {class: 'eyebrow'}, 'A WIDER VIEW. A CLEARER DECISION.'), E('h1', {}, '세계의 움직임을,', E('br'), E('span', {}, '투자의 시선으로.')), E('p', {class: 'story-description'}, '밤사이의 미국 증시부터 오늘의 한국시장까지.', E('br'), '흩어진 숫자와 흐름을 연결하는 당신의 금융 데스크.'), E('div', {class: 'story-visual'}, E('div', {class: 'story-line'}, E('span', {}, 'GLOBAL → KOREA'), E('span', {}, 'CONTEXT MATTERS')), storyIllustration(), E('div', {class: 'story-tags'}, ['글로벌 시장', '한국시장 영향', '기간별 시나리오'].map(x => E('span', {}, x))))), E('div', {class: 'story-foot'}, E('span', {}, 'A DESK FOR THE THOUGHTFUL INVESTOR'), E('span', {}, 'SEOUL · GLOBAL')), E('div', {class: 'story-decoration', 'aria-hidden': 'true'}));
   const setup = mode === 'setup';
-  const content = E('div', {class: 'welcome-form'}, E('p', {class: 'eyebrow'}, setup ? 'FIRST THINGS FIRST' : 'WELCOME TO YOUR DESK'), E('h2', {}, setup ? '첫 번째 관리자 만들기' : '오늘의 흐름을 읽어보세요'), E('p', {class: 'welcome-subtitle'}, setup ? '최초 관리자 계정을 안전하게 설정합니다.\n발급받은 초기 설정 토큰을 입력해 주세요.' : '계정으로 로그인하고 글로벌 시장의 연결고리를 확인하세요.'));
+  const pinMode = mode === 'pin';
+  const subtitle = setup ? '최초 관리자 계정을 안전하게 설정합니다.\n발급받은 초기 설정 토큰을 입력해 주세요.'
+    : pinMode ? '처음이라면 닉네임과 숫자 4자리를 정해 주세요. 다음에도 같은 닉네임과 PIN으로 입장할 수 있어요.'
+    : '기존 아이디와 비밀번호로 로그인하세요.';
+  const content = E('div', {class: 'welcome-form'}, E('p', {class: 'eyebrow'}, setup ? 'FIRST THINGS FIRST' : 'WELCOME TO YOUR DESK'), E('h2', {}, setup ? '첫 번째 관리자 만들기' : '오늘의 흐름을 읽어보세요'), E('p', {class: 'welcome-subtitle'}, subtitle));
   if (state.status?.error) content.append(E('p', {class: 'connection-note'}, '서버 연결을 확인하지 못했습니다. 로그인은 연결 복구 후 가능하며 화면 체험은 지금 이용할 수 있습니다.'));
   if (!setup && state.status && !state.status.initialized) content.append(E('div', {class: 'setup-notice'}, state.status.setupAvailable ? '아직 관리자가 설정되지 않았습니다. 초기 설정 토큰이 있다면 첫 관리자 계정을 만들어 주세요.' : '관리자 초기 설정이 필요합니다. 운영자가 서버의 초기 설정을 완료한 후 로그인할 수 있습니다.'));
   const form = E('form', {onSubmit: async event => {
@@ -189,9 +194,10 @@ function renderWelcome(mode = 'login') {
     if (setup && password.input.value !== confirm.input.value) { errorNode.textContent = '비밀번호가 서로 다릅니다.'; return; }
     await busy(submit, async () => {
       try {
-        const payload = {username: username.input.value.trim(), password: password.input.value};
+        const payload = pinMode ? {nickname: username.input.value.trim(), pin: password.input.value}
+          : {username: username.input.value.trim(), password: password.input.value};
         if (setup) Object.assign(payload, {token: token.input.value.trim(), name: name.input.value.trim()});
-        const result = await api(setup ? '/api/setup' : '/api/login', {method: 'POST', body: payload});
+        const result = await api(setup ? '/api/setup' : pinMode ? '/api/pin-login' : '/api/login', {method: 'POST', body: payload});
         password.input.value = '';
         if (setup) { token.input.value = ''; confirm.input.value = ''; }
         if (!result.user) throw new Error('로그인 응답에 계정 정보가 없습니다.');
@@ -208,8 +214,8 @@ function renderWelcome(mode = 'login') {
   }});
   const token = setup ? field('초기 설정 토큰', 'token', {type: 'password', autocomplete: 'off', placeholder: '발급받은 토큰 입력'}) : null;
   const name = setup ? field('표시 이름', 'name', {autocomplete: 'name', placeholder: '대화방과 계정에 표시할 이름', maxlength: 40}) : null;
-  const username = field('아이디', 'username', {autocomplete: 'username', placeholder: '아이디를 입력하세요', maxlength: 40, minlength: setup ? 3 : 1, pattern: setup ? '[a-zA-Z0-9._-]{3,40}' : undefined, autocapitalize: 'none', spellcheck: 'false'});
-  const password = field('비밀번호', 'password', {type: 'password', autocomplete: setup ? 'new-password' : 'current-password', placeholder: setup ? '12~128자의 비밀번호' : '비밀번호를 입력하세요', minlength: setup ? 12 : 1, maxlength: 128});
+  const username = field(pinMode ? '닉네임' : '아이디', pinMode ? 'nickname' : 'username', {autocomplete: 'username', placeholder: pinMode ? '닉네임을 입력하세요' : '아이디를 입력하세요', maxlength: pinMode ? 24 : 40, minlength: setup ? 3 : 1, pattern: setup ? '[a-zA-Z0-9._-]{3,40}' : undefined, autocapitalize: 'none', spellcheck: 'false'});
+  const password = field(pinMode ? '4자리 PIN' : '비밀번호', pinMode ? 'pin' : 'password', {type: 'password', autocomplete: setup ? 'new-password' : 'current-password', placeholder: pinMode ? '숫자 4자리' : setup ? '12~128자의 비밀번호' : '비밀번호를 입력하세요', minlength: setup ? 12 : 1, maxlength: 128, ...(pinMode ? pinFields : {})});
   const confirm = setup ? field('비밀번호 확인', 'confirmPassword', {type: 'password', autocomplete: 'new-password', placeholder: '비밀번호를 다시 입력하세요', minlength: 12, maxlength: 128}) : null;
   const errorNode = E('p', {class: 'form-error', role: 'alert'});
   const submit = E('button', {type: 'submit', class: 'button primary full'}, setup ? '관리자 계정 만들기' : '내 데스크로 입장', icon('arrow'));
@@ -218,10 +224,11 @@ function renderWelcome(mode = 'login') {
   if (setup) form.append(confirm.node, E('p', {class: 'field-help'}, '설정 토큰은 최초 계정 생성에만 사용되며 브라우저에 저장하지 않습니다.'));
   form.append(errorNode, submit);
   content.append(form);
+  if (pinMode) content.append(E('div', {class: 'welcome-switch'}, E('button', {type: 'button', class: 'text-button', onClick: () => renderWelcome('login')}, '기존 계정으로 로그인')));
   if (!setup && state.status?.setupAvailable && !state.status.initialized) content.append(E('div', {class: 'welcome-switch'}, E('button', {type: 'button', class: 'text-button', onClick: () => renderWelcome('setup')}, icon('lock'), '최초 관리자 설정')));
-  if (setup) content.append(E('div', {class: 'welcome-switch'}, E('button', {type: 'button', class: 'text-button', onClick: () => renderWelcome()}, '로그인으로 돌아가기')));
+  if (!pinMode) content.append(E('div', {class: 'welcome-switch'}, E('button', {type: 'button', class: 'text-button', onClick: () => renderWelcome()}, '닉네임과 PIN으로 입장')));
   content.append(E('div', {class: 'welcome-or'}, '먼저 둘러보고 싶다면'), E('button', {type: 'button', class: 'demo-entry', onClick: enterDemo}, icon('grid'), E('span', {}, E('strong', {}, '화면 체험하기'), E('small', {}, '가상 데이터로 데스크의 모든 화면을 살펴보세요')), icon('arrow', 'arrow')), E('p', {class: 'welcome-form-footer'}, '데이터의 출처와 시점을 함께, 전망의 근거와 한계도 함께.', E('br'), '시장의 방향을 단정하지 않고 판단의 맥락을 제공합니다.'));
-  app.replaceChildren(E('div', {class: 'welcome'}, story, E('main', {class: 'welcome-form-area', id: 'main-content'}, content, E('div', {class: 'welcome-version'}, 'THE MARKET DESK · PRIVATE ACCESS'))));
+  app.replaceChildren(E('div', {class: 'welcome'}, story, E('main', {class: 'welcome-form-area', id: 'main-content'}, content, E('div', {class: 'welcome-version'}, 'THE MARKET DESK'))));
 }
 function storyIllustration() {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -266,11 +273,14 @@ function renderDesk() {
   }
   sidebar.append(E('div', {class: 'sidebar-bottom'}, E('div', {class: 'sidebar-note'}, E('strong', {}, '숫자 너머의 맥락'), '등락의 이유와 시장 간의 연결을 함께 살펴보세요.'), E('div', {class: 'sidebar-legal'}, 'THE MARKET DESK', E('br'), 'GLOBAL CONTEXT. LOCAL PERSPECTIVE.')));
   const topbar = E('header', {class: 'topbar'}, E('div', {class: 'topbar-left'}, iconButton('menu', '메뉴 열기', toggleMenu, {class: 'icon-button menu-button'}), E('div', {class: 'breadcrumb'}, E('span', {}, 'Workspace'), E('span', {}, '/'), E('strong', {id: 'breadcrumb-current'}, '시황 데스크'))), E('div', {class: 'topbar-right'}, E('div', {class: 'kst-clock'}, icon('clock'), E('span', {id: 'kst-clock'})), E('div', {class: 'topbar-separator'}), E('button', {type: 'button', class: 'profile-button', onClick: profileModal, 'aria-label': '내 계정 관리'}, E('span', {class: 'avatar'}, String(state.user.name || state.user.username).slice(0, 1)), E('span', {class: 'profile-label'}, state.user.name || state.user.username, E('small', {}, state.demo ? 'DEMO WORKSPACE' : state.user.role === 'admin' ? 'ADMINISTRATOR' : 'MEMBER')), icon('down'))));
-  const main = E('main', {class: 'workspace', id: 'main-content', tabindex: '-1'}, E('div', {id: 'page-header'}), E('div', {class: 'content-layout'}, E('div', {class: 'main-column', id: 'main-column'}), E('aside', {class: 'desk-rail', id: 'desk-rail', 'aria-label': '데스크 대화방'}, railDate(), E('div', {class: 'panel chat-panel', id: 'chat-panel'}), railNote())), E('footer', {class: 'page-footer'}, E('span', {}, '본 서비스의 정보와 시나리오는 투자 판단의 참고 자료입니다. 투자 결정과 책임은 투자자 본인에게 있습니다.'), E('span', {}, '© THE MARKET DESK')));
+  const chatEnabled = !state.user.pinLogin;
+  const rail = E('aside', {class: 'desk-rail', id: 'desk-rail', 'aria-label': chatEnabled ? '데스크 대화방' : '데스크 정보'}, railDate(), chatEnabled ? E('div', {class: 'panel chat-panel', id: 'chat-panel'}) : null, railNote());
+  const main = E('main', {class: 'workspace', id: 'main-content', tabindex: '-1'}, E('div', {id: 'page-header'}), E('div', {class: 'content-layout'}, E('div', {class: 'main-column', id: 'main-column'}), rail), E('footer', {class: 'page-footer'}, E('span', {}, '본 서비스의 정보와 시나리오는 투자 판단의 참고 자료입니다. 투자 결정과 책임은 투자자 본인에게 있습니다.'), E('span', {}, '© THE MARKET DESK')));
   const body = E('div', {class: 'shell-body'}, topbar);
   if (state.demo) body.append(E('div', {class: 'demo-banner', role: 'note'}, E('span', {}, E('strong', {}, '체험 모드 · 예시 데이터 · 가상 계정/접속현황'), '시세·전망·일정은 실제 정보가 아닙니다. 채팅과 관리 기능은 이 브라우저에서만 작동합니다.'), E('button', {type: 'button', class: 'text-button', onClick: exitDemo}, '체험 종료', icon('logout'))));
   body.append(main);
-  app.replaceChildren(E('div', {class: 'app-shell'}, sidebar, body), E('button', {class: 'rail-close-overlay', id: 'chat-overlay', type: 'button', 'aria-label': '대화방 닫기', onClick: () => toggleChat(false)}), E('button', {class: 'chat-toggle', type: 'button', onClick: () => toggleChat(true)}, icon('chat'), '데스크 라운지', E('span', {id: 'chat-toggle-count'}, state.onlineCount)));
+  app.replaceChildren(E('div', {class: 'app-shell'}, sidebar, body));
+  if (chatEnabled) app.append(E('button', {class: 'rail-close-overlay', id: 'chat-overlay', type: 'button', 'aria-label': '대화방 닫기', onClick: () => toggleChat(false)}), E('button', {class: 'chat-toggle', type: 'button', onClick: () => toggleChat(true)}, icon('chat'), '데스크 라운지', E('span', {id: 'chat-toggle-count'}, state.onlineCount)));
   state.menuOpen = false;
   updateClock(); renderView(); renderChat();
 }
@@ -440,9 +450,9 @@ function sourceStatus(status) {
   return ({connected: {label: '데이터 수신', type: 'green'}, live: {label: '연결됨', type: 'green'}, standby: {label: '대체 소스 대기', type: ''}, no_data: {label: '설정됨 · 수신 확인 필요', type: 'amber'}, unconfigured: {label: '설정 필요', type: ''}, demo: {label: '예시 · 미연결', type: 'amber'}})[status] || {label: status || '상태 미제공', type: ''};
 }
 function renderUsers() {
-  const section = E('section', {class: 'panel'}, panelHead(state.demo ? '가상 회원 관리' : '회원 계정', state.demo ? '추가·수정 내용은 이 브라우저의 체험 상태에만 반영됩니다.' : '새 회원은 임시 비밀번호로 입장한 뒤 비밀번호를 변경해야 합니다.', B('회원 추가', () => userModal(), 'primary small', 'plus')));
+  const section = E('section', {class: 'panel'}, panelHead(state.demo ? '가상 회원 관리' : '회원 계정', state.demo ? '추가·수정 내용은 이 브라우저의 체험 상태에만 반영됩니다.' : 'PIN 계정과 초대 계정을 관리합니다.', B('회원 추가', () => userModal(), 'primary small', 'plus')));
   if (!state.users.length) { section.append(E('div', {class: 'admin-empty'}, state.loading ? '회원 목록을 불러오는 중입니다.' : '회원 목록을 새로고침해 주세요.')); return section; }
-  section.append(E('div', {class: 'table-wrap'}, E('table', {}, E('caption', {class: 'sr-only'}, '회원 계정 관리'), E('thead', {}, E('tr', {}, ['이름 / 아이디', '권한', '계정 상태', '최근 접속', '관리'].map(x => E('th', {}, x)))), E('tbody', {}, state.users.map(user => E('tr', {}, E('td', {}, E('strong', {}, user.name), E('div', {class: 'tiny muted'}, user.username)), E('td', {}, badge(user.role === 'admin' ? '관리자' : '회원', user.role === 'admin' ? 'blue' : '')), E('td', {}, E('span', {class: `status-dot ${user.disabled ? 'disabled' : ''}`}, E('i', {class: 'dot'}), user.disabled ? '이용 정지' : '이용 가능'), user.mustChangePassword ? E('div', {class: 'tiny muted'}, '비밀번호 변경 필요') : null), E('td', {class: 'tiny muted'}, state.demo ? '가상 접속' : user.lastSeen ? dateText(user.lastSeen) : '접속 기록 없음'), E('td', {}, E('div', {class: 'row-actions'}, B('수정', () => userModal(user), 'small'), B(user.disabled ? '이용 허용' : '이용 정지', () => userStatusModal(user), 'small', null, {disabled: user.id === state.user.id, title: user.id === state.user.id ? '내 계정은 이 화면에서 정지할 수 없습니다.' : ''})))))))));
+  section.append(E('div', {class: 'table-wrap'}, E('table', {}, E('caption', {class: 'sr-only'}, '회원 계정 관리'), E('thead', {}, E('tr', {}, ['이름 / 아이디', '권한', '계정 상태', '최근 접속', '관리'].map(x => E('th', {}, x)))), E('tbody', {}, state.users.map(user => E('tr', {}, E('td', {}, E('strong', {}, user.name), E('div', {class: 'tiny muted'}, user.username)), E('td', {}, badge(user.role === 'admin' ? '관리자' : user.pinLogin ? 'PIN 열람' : '회원', user.role === 'admin' ? 'blue' : '')), E('td', {}, E('span', {class: `status-dot ${user.disabled ? 'disabled' : ''}`}, E('i', {class: 'dot'}), user.disabled ? '이용 정지' : '이용 가능'), user.mustChangePassword ? E('div', {class: 'tiny muted'}, '비밀번호 변경 필요') : null), E('td', {class: 'tiny muted'}, state.demo ? '가상 접속' : user.lastSeen ? dateText(user.lastSeen) : '접속 기록 없음'), E('td', {}, E('div', {class: 'row-actions'}, B('수정', () => userModal(user), 'small'), B(user.disabled ? '이용 허용' : '이용 정지', () => userStatusModal(user), 'small', null, {disabled: user.id === state.user.id, title: user.id === state.user.id ? '내 계정은 이 화면에서 정지할 수 없습니다.' : ''})))))))));
   section.append(E('div', {class: 'panel-foot'}, state.demo ? '가상 계정에는 실제 비밀번호가 저장되지 않습니다.' : '계정을 정지하거나 비밀번호를 재설정하면 해당 계정의 기존 로그인 세션이 종료됩니다.'));
   return section;
 }
@@ -510,27 +520,31 @@ function showModal(title, description, build, options = {}) {
   return close;
 }
 function profileModal() {
-  showModal('내 계정', state.demo ? '가상 체험 계정입니다.' : '계정 정보를 확인하고 비밀번호를 변경할 수 있습니다.', (body, close) => {
-    body.append(E('div', {class: 'profile-info'}, E('div', {}, E('span', {}, '이름'), E('strong', {}, state.user.name)), E('div', {}, E('span', {}, '아이디'), E('strong', {}, state.user.username)), E('div', {}, E('span', {}, '권한'), E('strong', {}, state.user.role === 'admin' ? '관리자' : '회원'))), B('비밀번호 변경', () => { close(); passwordModal(); }, 'full', 'lock'), E('div', {class: 'modal-actions'}, B(state.demo ? '체험 종료' : '로그아웃', () => { close(); state.demo ? exitDemo() : logout(); }, 'danger', 'logout')));
+  const credential = state.user.pinLogin ? 'PIN' : '비밀번호';
+  showModal('내 계정', state.demo ? '가상 체험 계정입니다.' : state.user.pinLogin ? '닉네임과 PIN을 관리합니다.' : '계정 정보를 확인하고 비밀번호를 변경할 수 있습니다.', (body, close) => {
+    body.append(E('div', {class: 'profile-info'}, E('div', {}, E('span', {}, '이름'), E('strong', {}, state.user.name)), E('div', {}, E('span', {}, '아이디'), E('strong', {}, state.user.username)), E('div', {}, E('span', {}, '권한'), E('strong', {}, state.user.role === 'admin' ? '관리자' : '회원'))), B(credential + ' 변경', () => { close(); passwordModal(); }, 'full', 'lock'), E('div', {class: 'modal-actions'}, B(state.demo ? '체험 종료' : '로그아웃', () => { close(); state.demo ? exitDemo() : logout(); }, 'danger', 'logout')));
   });
 }
 function passwordModal(required = false) {
-  showModal(required ? '비밀번호 변경이 필요합니다' : '비밀번호 변경', required ? '임시 비밀번호를 본인만 아는 새 비밀번호로 바꾼 후 이용할 수 있습니다.' : state.demo ? '실제 비밀번호를 변경하지 않는 체험 기능입니다.' : '변경 후 새 비밀번호로 로그인할 수 있습니다.', (body, close) => {
-    const current = field('현재 비밀번호', 'currentPassword', {type: 'password', autocomplete: 'current-password', maxlength: 128});
-    const next = field('새 비밀번호', 'newPassword', {type: 'password', autocomplete: 'new-password', minlength: 10, maxlength: 128, placeholder: '10~128자의 비밀번호'});
-    const confirm = field('새 비밀번호 확인', 'confirmNewPassword', {type: 'password', autocomplete: 'new-password', minlength: 10, maxlength: 128});
+  const pinLogin = state.user.pinLogin;
+  const credential = pinLogin ? 'PIN' : '비밀번호';
+  const newFields = pinLogin ? pinFields : {minlength: 10, maxlength: 128};
+  showModal(required ? '비밀번호 변경이 필요합니다' : credential + ' 변경', required ? '임시 비밀번호를 본인만 아는 새 비밀번호로 바꾼 후 이용할 수 있습니다.' : state.demo ? '실제 비밀번호를 변경하지 않는 체험 기능입니다.' : '변경 후 새 ' + credential + '로 로그인할 수 있습니다.', (body, close) => {
+    const current = field('현재 ' + credential, 'currentPassword', {type: 'password', autocomplete: 'current-password', maxlength: 128, ...(pinLogin ? pinFields : {})});
+    const next = field('새 ' + credential, 'newPassword', {type: 'password', autocomplete: 'new-password', ...newFields, placeholder: pinLogin ? '숫자 4자리' : '10~128자의 비밀번호'});
+    const confirm = field('새 ' + credential + ' 확인', 'confirmNewPassword', {type: 'password', autocomplete: 'new-password', ...newFields});
     const errorNode = E('p', {class: 'form-error', role: 'alert'});
-    const submit = E('button', {type: 'submit', class: 'button primary'}, state.demo ? '가상 변경 체험' : '비밀번호 변경');
+    const submit = E('button', {type: 'submit', class: 'button primary'}, state.demo ? '가상 변경 체험' : credential + ' 변경');
     body.append(E('form', {onSubmit: async event => {
       event.preventDefault(); errorNode.textContent = '';
-      if (next.input.value !== confirm.input.value) { errorNode.textContent = '새 비밀번호가 서로 다릅니다.'; return; }
+      if (next.input.value !== confirm.input.value) { errorNode.textContent = '새 ' + credential + ' 입력이 서로 다릅니다.'; return; }
       await busy(submit, async () => {
         try {
           if (!state.demo) await api('/api/password', {method: 'POST', body: {currentPassword: current.input.value, newPassword: next.input.value}});
           state.user.mustChangePassword = false;
           current.input.value = ''; next.input.value = ''; confirm.input.value = '';
           close();
-          toast(state.demo ? '비밀번호 변경 흐름을 체험했습니다. 실제 비밀번호는 저장되지 않았습니다.' : '비밀번호를 변경했습니다.');
+          toast(state.demo ? '비밀번호 변경 흐름을 체험했습니다. 실제 비밀번호는 저장되지 않았습니다.' : credential + ' 변경을 완료했습니다.');
           if (!state.demo) { disconnect(); await loadDashboard(); }
         } catch (error) { errorNode.textContent = errorText(error); }
       });
@@ -538,10 +552,10 @@ function passwordModal(required = false) {
   }, {required});
 }
 function userModal(user = null) {
-  showModal(user ? '회원 정보 수정' : '새 회원 추가', state.demo ? '가상 계정만 변경합니다. 실제 비밀번호를 입력하지 마세요.' : user ? '표시 이름을 수정하거나 임시 비밀번호를 새로 발급합니다.' : '추가한 회원에게 아이디와 임시 비밀번호를 안전하게 전달해 주세요.', (body, close) => {
+  showModal(user ? '회원 정보 수정' : '새 회원 추가', state.demo ? '가상 계정만 변경합니다. 실제 비밀번호를 입력하지 마세요.' : user?.pinLogin ? '표시 이름을 수정하거나 숫자 4자리 PIN을 재설정합니다.' : user ? '표시 이름을 수정하거나 임시 비밀번호를 새로 발급합니다.' : '추가한 회원에게 아이디와 임시 비밀번호를 안전하게 전달해 주세요.', (body, close) => {
     const name = field('표시 이름', 'memberName', {value: user?.name || '', maxlength: 50, autocomplete: 'off'});
     const username = field('아이디', 'memberUsername', {value: user?.username || '', pattern: '[a-zA-Z0-9._-]{3,40}', minlength: 3, maxlength: 40, placeholder: '영문·숫자·점·밑줄·하이픈 3~40자', autocomplete: 'off'});
-    const password = field(user ? '임시 비밀번호 재설정 (선택)' : '임시 비밀번호', 'memberPassword', {type: 'password', autocomplete: 'new-password', minlength: 10, maxlength: 128, required: !user, placeholder: user ? '기존 비밀번호 유지 시 비워두세요' : '10~128자의 임시 비밀번호'});
+    const password = field(user?.pinLogin ? 'PIN 재설정 (선택)' : user ? '임시 비밀번호 재설정 (선택)' : '임시 비밀번호', 'memberPassword', {type: 'password', autocomplete: 'new-password', minlength: 10, maxlength: 128, required: !user, placeholder: user ? '기존 값 유지 시 비워두세요' : '10~128자의 임시 비밀번호', ...(user?.pinLogin ? pinFields : {})});
     const own = user?.id === state.user.id;
     const role = E('select', {name: 'role', id: 'member-role'}, E('option', {value: 'member'}, '일반 회원'), E('option', {value: 'admin'}, '관리자'));
     const errorNode = E('p', {class: 'form-error', role: 'alert'});
@@ -619,7 +633,7 @@ function heartbeat() {
   if (!state.demo && state.ws?.readyState === WebSocket.OPEN) state.ws.send(JSON.stringify({type: 'heartbeat', visible: !document.hidden, active: Date.now() - state.lastActivity < 300000}));
 }
 function connectChat() {
-  if (!state.user || state.demo || state.user.mustChangePassword) return;
+  if (!state.user || state.demo || state.user.pinLogin || state.user.mustChangePassword) return;
   if (state.ws && [WebSocket.CONNECTING, WebSocket.OPEN].includes(state.ws.readyState)) return;
   const generation = state.sessionGeneration;
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/api/ws`);
@@ -653,13 +667,15 @@ async function loadMarket() {
 }
 async function loadDashboard() {
   const generation = state.sessionGeneration;
-  const results = await Promise.allSettled([api('/api/market'), api('/api/chat/history'), api('/api/settings')]);
+  const requests = [api('/api/market')];
+  if (!state.user?.pinLogin) requests.push(api('/api/chat/history'), api('/api/settings'));
+  const results = await Promise.allSettled(requests);
   if (generation !== state.sessionGeneration || !state.user || state.demo) return;
   const [market, history, settings] = results;
   if (market.status === 'fulfilled') state.market = {...defaultMarket(), ...market.value};
   else { state.market = defaultMarket(); toast(`시황 조회: ${errorText(market.reason)}`, true); }
-  if (history.status === 'fulfilled') state.messages = history.value.messages || [];
-  if (settings.status === 'fulfilled' && Number.isInteger(settings.value.chatThreshold)) state.threshold = settings.value.chatThreshold;
+  if (history?.status === 'fulfilled') state.messages = history.value.messages || [];
+  if (settings?.status === 'fulfilled' && Number.isInteger(settings.value.chatThreshold)) state.threshold = settings.value.chatThreshold;
   if (results.some(result => result.status === 'rejected' && result.reason.status === 401)) { await expireSession(); return; }
   renderView(); renderChat(); connectChat();
 }
@@ -686,7 +702,7 @@ async function initialize() {
     state.user = results[1].value.user; state.market = defaultMarket(); state.sessionGeneration++;
     renderDesk(); await loadDashboard();
     if (state.user?.mustChangePassword) passwordModal(true);
-  } else renderWelcome(location.pathname === '/setup' && state.status.setupAvailable && !state.status.initialized ? 'setup' : 'login');
+  } else renderWelcome(location.pathname === '/setup' && state.status.setupAvailable && !state.status.initialized ? 'setup' : 'pin');
 }
 document.addEventListener('visibilitychange', heartbeat);
 ['pointerdown', 'keydown', 'touchstart'].forEach(event => document.addEventListener(event, () => { state.lastActivity = Date.now(); }, {passive: true}));

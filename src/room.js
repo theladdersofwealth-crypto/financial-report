@@ -2,6 +2,7 @@ const SESSION_MS = 7 * 24 * 60 * 60 * 1000;
 const PRESENCE_MS = 90_000;
 const ACCOUNTING_CAP_MS = 60_000;
 const PBKDF2_ITERATIONS = 100_000;
+const PIN_ATTEMPT_WINDOW_MS = 30 * 60_000;
 const encoder = new TextEncoder();
 
 class ApiError extends Error {
@@ -32,7 +33,21 @@ export async function verifyPassword(password, encoded) {
 }
 
 function publicUser(row) {
-  return { id: row.id, username: row.username, name: row.name, role: row.role, mustChangePassword: !!row.must_change_password, disabled: !!row.disabled, createdAt: new Date(row.created_at).toISOString(), lastSeen: row.last_seen ? new Date(row.last_seen).toISOString() : null };
+  return { id: row.id, username: row.username, name: row.name, role: row.role, pinLogin: row.auth_mode === 'pin', mustChangePassword: !!row.must_change_password, disabled: !!row.disabled, createdAt: new Date(row.created_at).toISOString(), lastSeen: row.last_seen ? new Date(row.last_seen).toISOString() : null };
+}
+function validatePin(value) {
+  if (typeof value !== 'string' || !/^[0-9]{4}$/.test(value)) throw new ApiError(400, 'PIN은 숫자 4자리로 입력해 주세요.');
+  return value;
+}
+function validateNickname(value) {
+  if (typeof value !== 'string') throw new ApiError(400, '닉네임을 입력해 주세요.');
+  const name = value.trim().normalize('NFC').replace(/ +/g, ' ');
+  if (!/^[\p{L}\p{N}][\p{L}\p{N} ._-]{0,23}$/u.test(name)) throw new ApiError(400, '닉네임은 한글·영문·숫자 등 1~24자로 입력해 주세요.');
+  return name;
+}
+function clientNetwork(request) {
+  const ip = request.headers.get('CF-Connecting-IP') || 'local';
+  return ip.includes(':') ? ip.split(':').slice(0,4).join(':') : ip.split('.').slice(0,3).join('.');
 }
 function validatePassword(value) {
   if (typeof value !== 'string' || value.length < 10 || value.length > 128) throw new ApiError(400, '비밀번호는 10~128자로 입력해 주세요.');
@@ -94,6 +109,9 @@ export class DeskRoom {
         active_seconds REAL NOT NULL DEFAULT 0, PRIMARY KEY(user_id,day)
       );
       INSERT OR IGNORE INTO settings(key,value) VALUES ('chatThreshold','2');`);
+      if (!this.rows('PRAGMA table_info(users)').some(column => column.name === 'auth_mode')) {
+        this.sql.exec("ALTER TABLE users ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'password' CHECK(auth_mode IN ('password','pin'))");
+      }
     });
   }
 
@@ -134,6 +152,32 @@ export class DeskRoom {
     const row = this.one('SELECT count,started_at FROM throttle WHERE key=?', key);
     if (row && now - row.started_at < duration && row.count >= limit) throw new ApiError(429, '요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.');
     if (increment) this.sql.exec('INSERT INTO throttle(key,count,started_at) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=CASE WHEN started_at>? THEN count+1 ELSE 1 END, started_at=CASE WHEN started_at>? THEN started_at ELSE excluded.started_at END', key, now, now - duration, now - duration);
+  }
+
+  async pinSession(request) {
+    const data = await jsonBody(request);
+    const name = validateNickname(data.nickname), username = name.toLowerCase().normalize('NFC');
+    const pin = validatePin(data.pin);
+    const network = await digest(clientNetwork(request));
+    this.rate(`pin-ip:${network}`, 30, 15 * 60_000);
+    const accountKey = `pin-account:${await digest(username)}`;
+    let user = this.one('SELECT * FROM users WHERE username=?', username);
+    if (!user) {
+      // Keep the first administrator bootstrap available on an empty desk.
+      if (!this.one("SELECT id FROM users WHERE role='admin' LIMIT 1")) throw new ApiError(503, '관리자 초기 설정 후 PIN으로 입장할 수 있습니다.');
+      this.rate(`pin-signup:${network}`, 10, 60 * 60_000);
+      const id = crypto.randomUUID(), passwordHash = await hashPassword(pin);
+      const created = this.one(`INSERT INTO users(id,username,name,password_hash,role,must_change_password,created_at,auth_mode)
+        VALUES(?,?,?,?,'member',0,?,'pin') ON CONFLICT(username) DO NOTHING RETURNING *`, id, username, name, passwordHash, Date.now());
+      if (created) return this.loginSession(created, request);
+      user = this.one('SELECT * FROM users WHERE username=?', username);
+    }
+    if (user?.auth_mode !== 'pin' || user.role !== 'member' || user.disabled) throw new ApiError(401, '닉네임 또는 PIN을 확인해 주세요.');
+    this.rate(accountKey, 5, PIN_ATTEMPT_WINDOW_MS);
+    if (!(await verifyPassword(pin, user.password_hash))) throw new ApiError(401, '닉네임 또는 PIN을 확인해 주세요.');
+    const response = await this.loginSession(user, request);
+    this.sql.exec('DELETE FROM throttle WHERE key=?', accountKey);
+    return response;
   }
 
   async ensureAlarm() {
@@ -237,18 +281,18 @@ export class DeskRoom {
         });
         return await this.loginSession(this.one('SELECT * FROM users WHERE id=?', id), request);
       }
+      if (path === '/api/pin-login' && method === 'POST') return await this.pinSession(request);
       if (path === '/api/login' && method === 'POST') {
         const data = await jsonBody(request);
         const username = typeof data.username === 'string' ? data.username.toLowerCase().slice(0,100) : '';
-        const ip = request.headers.get('CF-Connecting-IP') || 'local';
-        const coarseIp = ip.includes(':') ? ip.split(':').slice(0,4).join(':') : ip.split('.').slice(0,3).join('.');
+        const coarseIp = clientNetwork(request);
         this.rate(`login-ip:${await digest(coarseIp)}`, 60, 15 * 60_000);
         const key = `login:${await digest(username + '|' + coarseIp)}`;
         this.rate(key, 8, 15 * 60_000, false);
         const user = this.one('SELECT * FROM users WHERE username=?', username);
         const password = typeof data.password === 'string' ? data.password.slice(0,129) : '';
         const dummy = 'pbkdf2-sha256$100000$00000000000000000000000000000000$0000000000000000000000000000000000000000000000000000000000000000';
-        const valid = await verifyPassword(password, user?.password_hash || dummy);
+        const valid = await verifyPassword(password, user?.auth_mode === 'password' ? user.password_hash : dummy);
         const currentUser = user && this.one('SELECT * FROM users WHERE id=?', user.id);
         if (!currentUser || currentUser.disabled || !valid || currentUser.password_hash !== user.password_hash) { this.rate(key, 8, 15 * 60_000); throw new ApiError(401, '아이디 또는 비밀번호를 확인해 주세요.'); }
         this.sql.exec('DELETE FROM throttle WHERE key=?', key);
@@ -266,7 +310,8 @@ export class DeskRoom {
       }
       if (path === '/api/password' && method === 'POST') {
         const data = await jsonBody(request);
-        validatePassword(data.newPassword);
+        if (user.auth_mode === 'pin') validatePin(data.newPassword);
+        else validatePassword(data.newPassword);
         this.rate(`password:${user.id}`, 8, 15 * 60_000);
         if (typeof data.currentPassword !== 'string' || !(await verifyPassword(data.currentPassword, user.password_hash))) throw new ApiError(400, '현재 비밀번호가 올바르지 않습니다.');
         if (data.newPassword === data.currentPassword) throw new ApiError(400, '현재 비밀번호와 다른 비밀번호를 입력해 주세요.');
@@ -278,6 +323,7 @@ export class DeskRoom {
         return result({ user: publicUser(this.one('SELECT * FROM users WHERE id=?', user.id)) });
       }
       if (user.must_change_password) throw new ApiError(403, '임시 비밀번호를 먼저 변경해 주세요.');
+      if (user.auth_mode === 'pin' && (path === '/api/ws' || path.startsWith('/api/chat/'))) throw new ApiError(403, '대화방은 초대 계정으로 이용할 수 있습니다.');
       if (path === '/api/ws' && method === 'GET') {
         requireOrigin(request);
         if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') throw new ApiError(426, 'WebSocket 연결이 필요합니다.');
@@ -319,7 +365,8 @@ export class DeskRoom {
           let passwordHash = null;
           if ('password' in data) {
             if (target.role === 'admin' && target.id === user.id) throw new ApiError(400, '본인 비밀번호는 비밀번호 변경 메뉴를 이용해 주세요.');
-            validatePassword(data.password);
+            if (target.auth_mode === 'pin') validatePin(data.password);
+            else validatePassword(data.password);
             passwordHash = await hashPassword(data.password);
           }
           this.ctx.storage.transactionSync(() => {
@@ -329,7 +376,7 @@ export class DeskRoom {
             if (data.disabled && target.role === 'admin' && this.one("SELECT COUNT(*) AS count FROM users WHERE role='admin' AND disabled=0").count <= 1) throw new ApiError(409, '마지막 관리자는 정지할 수 없습니다.');
             if (name !== null) this.sql.exec('UPDATE users SET name=? WHERE id=?', name, target.id);
             if ('disabled' in data) this.sql.exec('UPDATE users SET disabled=? WHERE id=?', data.disabled ? 1 : 0, target.id);
-            if (passwordHash) this.sql.exec('UPDATE users SET password_hash=?,must_change_password=1 WHERE id=?', passwordHash, target.id);
+            if (passwordHash) this.sql.exec('UPDATE users SET password_hash=?,must_change_password=? WHERE id=?', passwordHash, target.auth_mode === 'pin' ? 0 : 1, target.id);
           });
           if (passwordHash || data.disabled) this.closeSessions(target.id);
           this.broadcastState();
