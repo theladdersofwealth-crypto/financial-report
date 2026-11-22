@@ -3423,3 +3423,197 @@ td strong {
     border: 1px solid #999999;
   }
 }
+
+
+/* ── Visual hierarchy refresh: distinguish each market topic at a glance. ── */
+.quote-overview-panel > .panel-head{
+  background:#fff;
+  border-bottom:1px solid #d5dfe9;
+  padding:24px 25px 21px;
+}
+.quote-overview-panel > .panel-head .panel-title{
+  font-size:18px;
+  font-weight:800;
+  color:#112943;
+  letter-spacing:-.5px;
+}
+.quote-overview-panel > .panel-head .panel-subtitle{
+  margin-top:8px;
+  font-size:12.5px;
+  line-height:1.7;
+  color:#536779;
+  max-width:680px;
+}
+.metric-jump{
+  display:flex;flex-wrap:wrap;align-items:center;
+  gap:8px;padding:14px 22px;
+  background:#eef2f7;
+  border-bottom:1px solid #d9e2ec;
+}
+.metric-jump-label{
+  font-size:11px;font-weight:750;color:#40566d;margin-right:8px;
+}
+.metric-jump-button{
+  display:inline-flex;align-items:center;gap:7px;
+  min-height:36px;padding:7px 12px;
+  border:1px solid #cbd7e5;border-radius:8px;
+  background:#fff;color:#263f5a;
+  font-size:11.5px;font-weight:700;white-space:nowrap;
+}
+.metric-jump-button:hover{background:#dde9f7;border-color:#8faac5}
+.metric-jump-button>span{font-weight:550}
+.metric-sections{display:grid;gap:22px;padding:24px;background:#f4f6f9}
+.metric-section{
+  --metric-accent:#315d87;
+  --metric-soft:#edf3f9;
+  border:1px solid #d6e0ea;
+  border-radius:12px;
+  background:#fff;
+  overflow:hidden;
+  scroll-margin-top:28px;
+  box-shadow:0 3px 10px rgba(17,41,67,.045);
+}
+.metric-korea{--metric-accent:#235d8c;--metric-soft:#edf5fc}
+.metric-global{--metric-accent:#4c4f9e;--metric-soft:#f1f0fc}
+.metric-macro{--metric-accent:#217f78;--metric-soft:#edf8f5}
+.metric-commodities{--metric-accent:#956220;--metric-soft:#fff5e8}
+.metric-crypto{--metric-accent:#9a5f32;--metric-soft:#fff5ec}
+.metric-other{--metric-accent:#596e83;--metric-soft:#f0f3f7}
+.metric-section-heading{
+  display:flex;align-items:center;gap:15px;
+  padding:17px 19px;
+  background:var(--metric-soft);
+  border-left:5px solid var(--metric-accent);
+  border-bottom:1px solid #dce5ee;
+}
+.metric-section-number{
+  font-size:15px;line-height:1.1;font-weight:800;
+  color:var(--metric-accent);
+  font-variant-numeric:tabular-nums;
+  min-width:28px;
+}
+.metric-section-copy{flex:1;min-width:0}
+.metric-section-title{
+  font-size:16px;line-height:1.45;
+  font-weight:800;letter-spacing:-.3px;color:#162d45;
+}
+.metric-section-description{
+  font-size:11.5px;line-height:1.65;color:#526677;
+  margin-top:4px;word-break:keep-all;
+}
+.metric-section-coverage{
+  display:inline-block;flex:none;
+  background:#fff;border:1px solid #d7e1ec;border-radius:20px;
+  padding:6px 9px;font-size:10.5px;font-weight:650;color:#4e6176;
+}
+.metric-section .market-grid{
+  gap:11px;padding:15px;
+  border:0;background:#f9fbfd;
+}
+.metric-section .quote-card,
+.metric-section .quote-card:nth-child(4n),
+.metric-section .quote-card:nth-last-child(-n+4){
+  min-height:143px;
+  padding:16px 15px 13px;
+  border:1px solid #dbe3ed;
+  border-radius:10px;
+  background:#fff;
+  box-shadow:0 1px 2px rgba(17,41,67,.025);
+}
+.metric-section .quote-card:hover{
+  border-color:#a8bdd4;
+  box-shadow:0 3px 10px rgba(24,62,98,.07);
+}
+.metric-section .quote-name{
+  font-size:12.5px;font-weight:750;
+  color:#263d55;line-height:1.5;
+}
+.metric-section .quote-value{
+  font-size:24px;font-weight:800;
+  letter-spacing:-.7px;color:#152b42;
+}
+.metric-section .quote-unit{font-size:11px}
+.metric-section .quote-bottom{margin-top:12px}
+.metric-section .quote-source{
+  border-top:1px solid #ecf0f5;
+  padding-top:9px;margin-top:10px;
+}
+.metric-section .quote-change{font-weight:750}
+@media (max-width:850px){
+  .metric-sections{padding:15px;gap:16px}
+  .metric-section-heading{padding:15px 14px;gap:10px}
+  .metric-section-title{font-size:14.5px}
+  .metric-section-description{font-size:11px}
+  .metric-section .market-grid{padding:10px;gap:9px}
+  .quote-overview-panel>.panel-head{padding:20px 17px}
+  .metric-jump{padding:12px 14px}
+}
+@media (max-width:480px){
+  .metric-section-heading{flex-wrap:wrap}
+  .metric-section-coverage{margin-left:38px}
+  .metric-jump-label{width:100%}
+  .metric-jump-button{font-size:10.5px;min-height:34px;padding:7px 9px}
+  .metric-section .quote-card,
+  .metric-section .quote-card:nth-child(4n),
+  .metric-section .quote-card:nth-last-child(-n+4){min-height:140px;padding:13px 11px}
+  .metric-section .quote-value{font-size:21px}
+}
+
+/* Topic hierarchy beyond quote cards */
+.nav-group-label{
+  margin:18px 11px 5px;
+  font-size:10px;line-height:1.4;font-weight:800;
+  color:#596e82;letter-spacing:.4px;
+}
+.nav-list .nav-group-label:first-child{margin-top:1px}
+.overview-section-intro{
+  display:flex;align-items:center;gap:14px;
+  padding:18px 20px;
+  border-radius:12px;
+  background:#e9eef5;
+  border:1px solid #cdd9e7;
+  border-left:5px solid #2b5a88;
+}
+.overview-section-mark{
+  display:grid;place-items:center;
+  width:40px;height:40px;flex:none;
+  color:#1b527e;border-radius:10px;
+  background:#fff;border:1px solid #cfdae7;
+}
+.overview-section-mark .icon{width:21px;height:21px}
+.overview-section-intro h2{font-size:17px;font-weight:800;letter-spacing:-.3px;color:#16344f}
+.overview-section-intro p{margin-top:4px;font-size:12px;line-height:1.6;color:#50677d}
+@media(max-width:600px){
+  .overview-section-intro{padding:15px 14px}
+  .overview-section-intro h2{font-size:15px}
+  .overview-section-intro p{font-size:11px}
+}
+
+/* Readable category dividers inside the complete market table */
+.market-table-section td{
+  padding:0!important;
+  border-bottom:1px solid #c7d7e7!important;
+  border-top:2px solid #b5cadf!important;
+  white-space:normal;
+  background:#e9f0f8!important;
+}
+.market-table-section-inner{
+  display:flex;align-items:center;flex-wrap:wrap;gap:9px 14px;
+  padding:13px 18px;
+  color:#3d5975;
+  font-size:11.5px;
+}
+.market-table-section-inner strong{
+  color:#173852;font-size:14px;font-weight:800;
+}
+.market-table-section-inner small{
+  margin-left:auto;font-size:10.5px;color:#5f7387;
+  background:#fff;border:1px solid #cbd9e8;border-radius:12px;
+  padding:4px 9px;font-weight:650;
+}
+.market-table-section + tr td{border-top:0}
+@media(max-width:540px){
+  .market-table-section-inner{padding:13px 12px;gap:5px 9px}
+  .market-table-section-inner strong{font-size:13px}
+  .market-table-section-inner small{margin-left:0}
+}

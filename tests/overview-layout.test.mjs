@@ -6,7 +6,7 @@ test('market desk overview starts with indicators, before commentary and Korea i
   const code = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
   const overview = code.match(/if \(state\.view === 'overview'\) main\.replaceChildren\(([^;]+)\);/)?.[1];
   assert.ok(overview, 'overview renderer must exist');
-  assert.match(overview, /^renderQuotes\(\),\s*renderBrief\(\),\s*renderImpact\(\),/);
+  assert.match(overview, /^\s*renderQuotes\(\),\s*overviewSectionIntro\(/);
   assert.ok(overview.indexOf('renderQuotes()') < overview.indexOf('renderBrief()'));
   assert.ok(overview.indexOf('renderBrief()') < overview.indexOf('renderImpact()'));
 });
@@ -14,12 +14,18 @@ test('market desk overview starts with indicators, before commentary and Korea i
 test('KIS Korea indexes and signed foreign flows are rendered before global indicators', async () => {
   const code = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
   const section = code.slice(code.indexOf('function renderQuotes()'), code.indexOf('function sparkline('));
-  assert.ok(section.includes("panelHead('국내외 핵심 지표'"));
+  assert.ok(section.includes("panelHead('시장 핵심 지표 · 주제별 현황'"));
   for (const id of ['kospi', 'kosdaq', 'kr_foreign_kospi', 'kr_foreign_kosdaq']) {
     assert.ok(section.includes(`['${id}',`), `missing domestic indicator ${id}`);
   }
-  assert.ok(section.indexOf("domestic.map(quoteCard)") < section.indexOf("global.map(quoteCard)"),
-    'domestic indicator cards must display before global cards');
+  for (const title of ['한국 증시 · 외국인 수급','미국 증시 · 위험 심리','금리 · 환율','원자재','디지털자산']) {
+    assert.ok(section.includes(title), `missing topic title: ${title}`);
+  }
+  const groups=['metrics-korea','metrics-global','metrics-macro','metrics-commodities','metrics-crypto'];
+  for(let i=1;i<groups.length;i++)
+    assert.ok(section.indexOf(groups[i-1])<section.indexOf(groups[i]),'market topics must stay in reading order');
+  assert.match(section,/groups\.map\(\(\[number,id,title,subtitle,theme,quotes\]\)=>/);
+  assert.match(section,/seen\.add\(id\)/,'do not duplicate KIS domestic indicators');
   assert.match(section, /Number\(quote\.value\) < 0 \? '외국인 순매도'/);
   assert.match(code, /quote\.id\?\.startsWith\('kr_foreign_'\) \? 2/,
     'foreign flow values in KRW 100M should retain two fractional digits');
