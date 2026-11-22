@@ -378,13 +378,28 @@ function overseasIndexQuoteFromResponse(data) {
 
 // Called only server-side, with existing Cloudflare KIS Secrets and cached token.
 // Invalid response / unrelated instrument => no substitution.
+let macroCache = null;
+let macroPending = null;
 export async function collectKisMacro(env) {
   if(!kisConfigured(env))return [];
-  const token=await tokenFor(env);
-  if(!token)return [];
-  const [rates,dxy]=await Promise.all([
-    probeKisRates(env,token).catch(()=>[]),
-    probeKisDxy(env,token).catch(()=>null),
-  ]);
-  return [...rates,...(dxy?[dxy]:[])];
+  const key=env.KIS_APP_KEY;
+  if(macroCache?.appKey===key && Date.now()<macroCache.expiresAt)
+    return structuredClone(macroCache.result);
+  if(macroPending?.appKey===key)return structuredClone(await macroPending.promise);
+  const task=(async()=>{
+    const token=await tokenFor(env);
+    if(!token)return [];
+    const [rates,dxy]=await Promise.all([
+      probeKisRates(env,token).catch(()=>[]),
+      probeKisDxy(env,token).catch(()=>null),
+    ]);
+    const result=[...rates,...(dxy?[dxy]:[])];
+    // Negative probes are deliberately cached too: no repeated blind requests
+    // for an unsupported code every five-minute market refresh.
+    macroCache={appKey:key,expiresAt:Date.now()+60*60000,result};
+    return result;
+  })();
+  macroPending={appKey:key,promise:task};
+  try{return structuredClone(await task)}
+  finally{if(macroPending?.promise===task)macroPending=null}
 }
