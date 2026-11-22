@@ -114,14 +114,45 @@ function canonicalQuote(id, rows, field, div=1) {
     basis:flow?'시장별 외국인 순매수 거래대금 · 백만원 단위 응답을 억원으로 변환':'국내 주가지수 일별 종가',
   };
 }
+// Use actual KIS OHLC rows. Never derive high/low/open from closing values.
+function indexCandles(rows) {
+  const observations = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const date = dateOf(row?.stck_bsop_date);
+    const open = val(row?.bstp_nmix_oprc);
+    const high = val(row?.bstp_nmix_hgpr);
+    const low = val(row?.bstp_nmix_lwpr);
+    const close = val(row?.bstp_nmix_prpr);
+    if (!date || date > new Date().toISOString().slice(0,10)
+      || [open,high,low,close].some(v => v === null || v <= 0)
+      || low > high || low > Math.min(open,close) || high < Math.max(open,close)) continue;
+    observations.set(date, {date,open,high,low,close});
+  }
+  return [...observations.values()].sort((a,b) => a.date.localeCompare(b.date)).slice(-150);
+}
+
 async function indexQuote(env,token,id,iscd) {
-  const data=await kisGet(env,token,'/uapi/domestic-stock/v1/quotations/inquire-daily-indexchartprice',
-    'FHKUP03500100',{
-      FID_COND_MRKT_DIV_CODE:'U',FID_INPUT_ISCD:iscd,
-      FID_INPUT_DATE_1:fromKstDaysAgo(93),FID_INPUT_DATE_2:todayKst(),
-      FID_PERIOD_DIV_CODE:'D',
-    });
-  return canonicalQuote(id,data?.output2,'bstp_nmix_prpr');
+  // KIS FHKUP03500100 supports actual D/W/M periods and complete OHLC.
+  const timeframes = [
+    ['D', 210],
+    ['W', 1095],
+    ['M', 3650],
+  ];
+  const replies = await Promise.all(timeframes.map(([period,days]) =>
+    kisGet(env,token,'/uapi/domestic-stock/v1/quotations/inquire-daily-indexchartprice',
+      'FHKUP03500100',{
+        FID_COND_MRKT_DIV_CODE:'U',FID_INPUT_ISCD:iscd,
+        FID_INPUT_DATE_1:fromKstDaysAgo(days),FID_INPUT_DATE_2:todayKst(),
+        FID_PERIOD_DIV_CODE:period,
+      })));
+  const quote = canonicalQuote(id,replies[0]?.output2,'bstp_nmix_prpr');
+  if (!quote) return null;
+  return {
+    ...quote,
+    // Missing or invalid periods stay empty; the browser never fabricates candles.
+    chartPeriods: Object.fromEntries(timeframes.map(([period],i) => [period,indexCandles(replies[i]?.output2)])),
+    chartBasis: 'KIS 공식 일봉·주봉·월봉별 시가·고가·저가·종가',
+  };
 }
 async function investorQuote(env,token,id,iscd,market) {
   // KIS reference requires FID_INPUT_DATE_1 and _2 to be the SAME date.

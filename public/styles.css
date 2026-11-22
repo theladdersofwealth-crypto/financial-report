@@ -71,3 +71,13 @@
   .market-chart-range{padding:7px 11px}
   .market-chart-axis{font-size:12px}
 }
+
+
+/* KIS-sourced OHLC candles. Korean equities: red up, blue down. */
+.market-chart-extent{border-top:1px solid var(--line);padding-top:12px;margin-bottom:14px}
+.market-chart-extent .market-chart-range{font-size:10px;padding:6px 10px}
+.market-chart-wick{stroke-width:1.6;vector-effect:non-scaling-stroke}
+.market-chart-body{stroke-width:.7;vector-effect:non-scaling-stroke}
+.market-candle-up{stroke:var(--gain);fill:var(--gain)}
+.market-candle-down{stroke:var(--loss);fill:var(--loss)}
+@media(max-width:760px){.market-chart-wick{stroke-width:1.1}.market-chart-body{stroke-width:.5}}

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {chartSeries,chartPeriod,chartPeriodChange} from '../public/chart-data.js';
+import {chartSeries,chartPeriod,chartPeriodChange,chartFrequency,candleSeries} from '../public/chart-data.js';
 
 test('chart history accepts only real dated positive observations, sorted without interpolation',()=>{
  const input=[
@@ -56,13 +56,49 @@ test('main index cards and market table open an accessible chart modal from hist
  assert.match(main,/onClick: chartable \? \(\) => openIndexChart\(quote\)/);
  assert.match(main,/openIndexChart\(quote\)/);
  assert.match(main,/chartSeries\(quote\.history\)/);
- assert.match(main,/chartPeriod\(observations,activePeriod\)/);
+ assert.match(main,/chartPeriod\(all,activePeriod\)/);
+ assert.match(main,/\['D','일봉'\],\['W','주봉'\],\['M','월봉'\]/);
+ assert.match(main,/candleSeries\(quote\.chartPeriods\?\.\[activeTimeframe\]\)/);
+ assert.match(main,/market-chart-wick/);
+ assert.match(main,/market-chart-body/);
  assert.match(main,/1개월/);
  assert.match(main,/3개월/);
- assert.match(main,/전체 보유/);
+ assert.match(main,/\['all','전체'\]/);
  assert.match(main,/showModal\(/);
  assert.match(main,/market-chart-scrubber/);
- assert.match(main,/history\s*\.length|observations\.length/);
+ assert.match(main,/chartFrequency\(observations,activeTimeframe\)/);
  assert.match(app,/class:'market-table-chart-link'/);
  assert.match(styles,/market-history-modal/);
+});
+
+test('official OHLC candles remain distinct from close-only data; reject fabricated highs and lows',()=>{
+ const good=[
+  {date:'2026-11-20',open:4890,high:4990,low:4800,close:4869.96},
+  {date:'2026-11-18',open:4950,high:5010,low:4900,close:5000},
+ ];
+ const invalid=[
+  {date:'2026-11-19',open:4900,close:4930},
+  {date:'2026-11-17',open:5000,high:4980,low:4900,close:4990},
+  {date:'2026-11-16',open:4800,high:5010,low:4900,close:4990},
+  {date:'2026-11-14',open:4700,high:5000,low:4600,close:''},
+ ];
+ assert.deepEqual(candleSeries([...good,...invalid]).map(x=>({date:x.date,value:x.value})),[
+   {date:'2026-11-18',value:5000},{date:'2026-11-20',value:4869.96}
+ ]);
+ assert.deepEqual(candleSeries([{date:'2026-11-20',value:4869.96}]),[]);
+ assert.deepEqual(candleSeries(null),[]);
+});
+
+test('close-only global indices aggregate actual last observed close by calendar week or month',()=>{
+ const daily=chartSeries([
+  {date:'2026-09-30',value:100},{date:'2026-10-01',value:110},
+  {date:'2026-10-02',value:105},{date:'2026-10-05',value:120},
+  {date:'2026-10-07',value:115},{date:'2026-11-02',value:125},
+ ]);
+ assert.deepEqual(chartFrequency(daily,'D'),daily);
+ assert.deepEqual(chartFrequency(daily,'W').map(x=>x.value),[105,115,125]);
+ assert.deepEqual(chartFrequency(daily,'M').map(x=>x.value),[100,115,125]);
+ assert.equal(chartFrequency(daily,'W').some(x=>x.open!==undefined),false,'weekly line cannot invent OHLC');
+ assert.deepEqual(chartFrequency(daily,'bad'),[]);
+ assert.equal(chartPeriod(daily,'1y').length,6);
 });

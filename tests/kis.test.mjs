@@ -39,9 +39,17 @@ test('KIS index and market foreign flow are parsed, with a shared cached bearer 
       assert.equal(opts.headers.tr_id,'FHKUP03500100');
       assert.equal(url.searchParams.get('FID_COND_MRKT_DIV_CODE'),'U');
       const base=code==='0001'?3000:900;
+      const period=url.searchParams.get('FID_PERIOD_DIV_CODE');
+      assert.ok(['D','W','M'].includes(period));
+      const candle=(date,open,close)=>({
+        stck_bsop_date:date,bstp_nmix_oprc:String(open),
+        bstp_nmix_hgpr:String(Math.max(open,close)+12),
+        bstp_nmix_lwpr:String(Math.min(open,close)-12),
+        bstp_nmix_prpr:String(close),
+      });
       return Response.json({rt_cd:'0',output2:[
-        {stck_bsop_date:iso(3),bstp_nmix_prpr:String(base)},
-        {stck_bsop_date:iso(1),bstp_nmix_prpr:String(base+30)},
+        candle(iso(period==='M'?30:period==='W'?10:3),base-15,base),
+        candle(iso(1),base+9,base+30),
         {stck_bsop_date:iso(1),bstp_nmix_prpr:''},
       ]});
     }
@@ -69,7 +77,17 @@ test('KIS index and market foreign flow are parsed, with a shared cached bearer 
   assert.equal(byId.kr_foreign_kosdaq.source,'한국투자증권 KIS Open API');
   assert.equal(byId.kospi.status,'daily');
   assert.equal(calls.filter(c=>c.path==='/oauth2/tokenP').length,1);
-  assert.equal(calls.filter(c=>c.method==='GET').length,4);
+  assert.equal(calls.filter(c=>c.method==='GET').length,8);
+  for (const id of ['kospi','kosdaq']) {
+    const periods=byId[id].chartPeriods;
+    assert.deepEqual(Object.keys(periods),['D','W','M']);
+    for (const tf of ['D','W','M']) {
+      assert.equal(periods[tf].length,2);
+      assert.equal(periods[tf][1].close,byId[id].value);
+      assert.ok(periods[tf][1].high >= periods[tf][1].close);
+      assert.ok(periods[tf][1].low <= periods[tf][1].open);
+    }
+  }
   await collectKis(env);
   assert.equal(calls.filter(c=>c.path==='/oauth2/tokenP').length,1,'token must be reused');
   assert.equal(JSON.stringify(quotes).includes('mock-app-secret'),false);
