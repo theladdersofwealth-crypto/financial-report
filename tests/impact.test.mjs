@@ -69,3 +69,29 @@ test('KOSPI and KOSDAQ use independent factor sets', () => {
   assert.equal(impact.kospi.state, '우호');
   assert.equal(impact.kosdaq.state, '부담');
 });
+
+test('domestic actual closes and signed foreign flow are displayed as factual observations', () => {
+  const quotes = [
+    {...quote('kospi', -1.2, 'korea'), value: 5000, unit: 'pt', name: '코스피'},
+    {...quote('kosdaq', 1.6, 'korea'), value: 900, unit: 'pt', name: '코스닥'},
+    {...quote('kr_foreign_kospi', 400, 'korea', '억원'), value: -800, unit: '억원',
+      name: '코스피 외국인 순매수'},
+  ];
+  const impact = buildImpact({quotes}, now);
+  assert.equal(impact.domestic.kospi.value, 5000);
+  assert.equal(impact.domestic.kosdaq.value, 900);
+  assert.equal(impact.domestic.foreignKospi.value, -800);
+  assert.equal(impact.kospi.state, '판단 보류', 'actual domestic closes do not leak into the overseas checklist');
+  assert.ok(impact.cautions.some(s => s.includes('코스닥 수급')));
+});
+
+test('stale or backup domestic observations never masquerade as current', () => {
+  const impact = buildImpact({quotes: [
+    {...quote('kospi', 2, 'korea', '%', '2026-10-01'), value: 5000},
+    {...quote('kosdaq', 2, 'korea'), value: 900, deploymentBackup: true},
+    {...quote('kr_foreign_kospi', 1, 'korea', '%'), value: -200},
+  ]},now);
+  assert.equal(impact.domestic.kospi,null);
+  assert.equal(impact.domestic.kosdaq,null);
+  assert.equal(impact.domestic.foreignKospi,null);
+});
