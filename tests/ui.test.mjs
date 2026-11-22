@@ -41,7 +41,8 @@ test('standalone demo renders every destination without accessing member APIs',a
   assert.ok(document.querySelectorAll('.overview-section-intro').length>=3,
     'interpretation, sector and forecast panels must have section titles');
   for (const section of document.querySelectorAll('.metric-section')) {
-    assert.ok(section.querySelector('.metric-section-description')?.textContent.trim());
+    if (section.id !== 'metrics-korea') assert.ok(section.querySelector('.metric-section-description')?.textContent.trim());
+    else assert.equal(section.querySelector('.metric-section-description'),null);
     assert.ok(section.querySelectorAll('.quote-card').length>0);
   }
   for(const view of ['overview','markets','instrument','outlooks','calendar','sources','users','activity']) {
