@@ -1,4 +1,4 @@
-import { chartSeries, chartPeriod, chartPeriodChange } from './chart-data.js';
+import { chartSeries, chartPeriod, chartPeriodChange, chartFrequency, candleSeries } from './chart-data.js';
 
 const app = document.querySelector('#app');
 const state = {
@@ -471,62 +471,76 @@ function quoteCard(quote) {
 // Observed index history only: daily closes are not intraday or candlestick data.
 function openIndexChart(quote) {
   const observations = chartSeries(quote.history);
+  const hasOfficialCandles = ['kospi','kosdaq'].includes(quote.id)
+    && quote.provider === 'kis' && !!quote.chartPeriods;
   const isIndexStale = quote.status === 'stale' || quote.deploymentBackup;
-  showModal(`${quote.name} · 지수 추이`,
-    `${sourceName(quote.source)} · 일별 관측 데이터 · ${observations.length}개 관측일`,
+  showModal(`${quote.name} · 지수 차트`,
+    hasOfficialCandles ? '한투 KIS 실제 시가·고가·저가·종가 · 주기별 원자료' :
+      '관측된 종가로 표시하는 추이 차트 · 실제 봉 시고저종 데이터 없음',
     body => {
-      const ranges = [
-        ['1m','1개월'],
-        ['3m','3개월'],
-        ['all','전체 보유'],
-      ];
-      const menu = E('div', {class:'market-chart-ranges',role:'group','aria-label':'차트 기간 선택'});
+      const frequencies = [['D','일봉'],['W','주봉'],['M','월봉']];
+      const ranges = [['1m','1개월'],['3m','3개월'],['1y','1년'],['all','전체']];
+      const frequencyMenu = E('div',{class:'market-chart-ranges',role:'group','aria-label':'차트 봉 주기'});
+      const periodMenu = E('div',{class:'market-chart-ranges market-chart-extent',role:'group','aria-label':'차트 조회 범위'});
       const headline = E('div', {class:'market-chart-summary'});
       const plot = E('div', {class:'market-chart-container'});
       const foot = E('div', {class:'market-chart-footnote'});
-      let activePeriod = '3m';
-      const buttons = ranges.map(([value, label]) => E('button', {
-        type:'button',class:'market-chart-range',onClick: () => {
-          activePeriod = value;
-          redraw();
-        },
-      }, label));
-      menu.append(...buttons);
-      body.append(menu, headline, plot, foot);
+      let activeTimeframe = 'D';
+      let activePeriod = 'all';
+      const frequenciesButtons = frequencies.map(([value,label]) => E('button',{
+        type:'button',class:'market-chart-range',onClick:()=>{activeTimeframe=value;redraw();}
+      },label));
+      const periodButtons = ranges.map(([value,label]) => E('button',{
+        type:'button',class:'market-chart-range',onClick:()=>{activePeriod=value;redraw();}
+      },label));
+      frequencyMenu.append(...frequenciesButtons);
+      periodMenu.append(...periodButtons);
+      body.append(frequencyMenu,periodMenu,headline,plot,foot);
       function redraw() {
-        buttons.forEach((button,i) => {
-          const active = ranges[i][0] === activePeriod;
-          button.classList.toggle('active',active);
-          button.setAttribute('aria-pressed',String(active));
+        frequenciesButtons.forEach((button,i)=>{
+          const selected=frequencies[i][0]===activeTimeframe;
+          button.classList.toggle('active',selected);
+          button.setAttribute('aria-pressed',String(selected));
         });
-        const series = chartPeriod(observations,activePeriod);
+        periodButtons.forEach((button,i)=>{
+          const selected=ranges[i][0]===activePeriod;
+          button.classList.toggle('active',selected);
+          button.setAttribute('aria-pressed',String(selected));
+        });
+        const all = hasOfficialCandles ? candleSeries(quote.chartPeriods?.[activeTimeframe]) :
+          chartFrequency(observations,activeTimeframe);
+        const series=chartPeriod(all,activePeriod);
+        const candleMode=hasOfficialCandles;
+        const label=frequencies.find(x=>x[0]===activeTimeframe)?.[1]||'일봉';
         plot.replaceChildren();
-        const change = chartPeriodChange(series);
-        const last = series.at(-1);
-        const changeText = change === null ? '기간 변동률 산출 불가' :
-          `${change > 0 ? '+' : ''}${change.toFixed(2)}% (선택 기간 첫 관측 대비)`;
+        const change=chartPeriodChange(series);
+        const last=series.at(-1);
+        const changeText=change===null ? '기간 변동률 산출 불가' :
+          `${change>0?'+':''}${change.toFixed(2)}% (표시된 첫 종가 대비)`;
         headline.replaceChildren(
-          E('div', {}, E('strong', {class:'market-chart-current'}, last ?
-            `${last.value.toLocaleString('ko-KR',{maximumFractionDigits:2})} ${quote.unit || 'pt'}` : '—'),
-            E('p', {class:'market-chart-date'}, last ? `${last.date} 종가` : '조회된 날짜 없음')),
-          E('span', {class:`market-chart-change ${changeClass(change)}`}, changeText));
-        if (series.length < 2) {
-          plot.append(E('div',{class:'market-chart-empty'}, '해당 기간에 연결된 과거 관측값이 2개 미만입니다. 차트를 임의로 생성하지 않습니다.'));
+          E('div',{},
+            E('strong',{class:'market-chart-current'},last ?
+              `${last.value.toLocaleString('ko-KR',{maximumFractionDigits:2})} ${quote.unit||'pt'}`:'—'),
+            E('p',{class:'market-chart-date'},last ? `${last.date} · ${label} 종가`:'해당 주기의 관측값 없음')),
+          E('span',{class:`market-chart-change ${changeClass(change)}`},changeText));
+        if (!series.length || (!candleMode && series.length<2)) {
+          plot.append(E('div',{class:'market-chart-empty'}, candleMode ?
+            `연결된 ${label} 시가·고가·저가·종가가 없습니다. 실제 응답이 확인될 때까지 봉을 생성하지 않습니다.` :
+            `해당 ${label} 구간에 종가 관측값이 2개 미만입니다.`));
         } else {
-          const dims = {w:760,h:300,left:72,right:22,top:20,bottom:44};
-          const width=dims.w-dims.left-dims.right, height=dims.h-dims.top-dims.bottom;
-          const allValues=series.map(p=>p.value), minimum=Math.min(...allValues), maximum=Math.max(...allValues);
-          const padding=Math.max((maximum-minimum)*0.10,Math.abs(maximum)*0.002,0.01);
-          const low=minimum-padding,high=maximum+padding;
-          const firstTime=Date.parse(series[0].date+'T00:00:00Z');
-          const lastTime=Date.parse(series.at(-1).date+'T00:00:00Z');
-          const periodMs=Math.max(1,lastTime-firstTime);
-          const xx=d=>dims.left+(Date.parse(d+'T00:00:00Z')-firstTime)/periodMs*width;
-          const yy=v=>dims.top+(high-v)/(high-low)*height;
+          const dims={w:760,h:310,left:76,right:24,top:20,bottom:45};
+          const width=dims.w-dims.left-dims.right,height=dims.h-dims.top-dims.bottom;
+          const lows=series.map(p=>candleMode?p.low:p.value);
+          const highs=series.map(p=>candleMode?p.high:p.value);
+          const min=Math.min(...lows),max=Math.max(...highs);
+          const padding=Math.max((max-min)*0.09,Math.abs(max)*0.002,0.01);
+          const low=min-padding,high=max+padding;
+          const xx=i=>dims.left+(series.length===1?width/2:i/(series.length-1)*width);
+          const yy=value=>dims.top+(high-value)/(high-low)*height;
           const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
           svg.setAttribute('viewBox',`0 0 ${dims.w} ${dims.h}`);
           svg.setAttribute('role','img');
-          svg.setAttribute('aria-label',`${quote.name} ${series[0].date}부터 ${series.at(-1).date}까지 실제 일별 지수 종가 추이`);
+          svg.setAttribute('aria-label',`${quote.name} ${label}: ${series[0].date}부터 ${series.at(-1).date}까지 ${candleMode?'KIS 실제 OHLC 봉':'확인된 종가 추이'}`);
           svg.setAttribute('class',`market-chart-svg ${changeClass(change)}`);
           const draw=(tag,attributes={},content=null)=>{
             const node=document.createElementNS(svg.namespaceURI,tag);
@@ -535,51 +549,70 @@ function openIndexChart(quote) {
             svg.append(node);
             return node;
           };
-          for(let tick=0;tick<=4;tick++){
-            const value=low+(high-low)*tick/4, y=yy(value);
+          for(let tick=0;tick<=4;tick++) {
+            const value=low+(high-low)*tick/4,y=yy(value);
             draw('line',{x1:dims.left,x2:dims.w-dims.right,y1:y,y2:y,class:'market-chart-gridline'});
-            draw('text',{x:dims.left-10,y:y+4,'text-anchor':'end',class:'market-chart-axis'},value.toLocaleString('ko-KR',{maximumFractionDigits:2}));
+            draw('text',{x:dims.left-10,y:y+4,'text-anchor':'end',class:'market-chart-axis'},
+              value.toLocaleString('ko-KR',{maximumFractionDigits:2}));
           }
-          const path=series.map((row,i)=>`${i?'L':'M'}${xx(row.date).toFixed(1)},${yy(row.value).toFixed(1)}`).join(' ');
-          draw('path',{d:path,class:'market-chart-path',fill:'none','stroke-linecap':'round','stroke-linejoin':'round'});
-          const labelledDates=[series[0],series[Math.floor((series.length-1)/2)],series.at(-1)];
-          labelledDates.forEach((row,i)=>{
-            draw('text',{x:xx(row.date),y:dims.h-13,'text-anchor':i===0?'start':i===2?'end':'middle',class:'market-chart-axis'},row.date.slice(5));
+          if (candleMode) {
+            const bodyWidth=Math.max(2,Math.min(18,width/Math.max(series.length,1)*0.64));
+            series.forEach((bar,i)=>{
+              const x=xx(i),isUp=bar.close>=bar.open;
+              const color=isUp?'market-candle-up':'market-candle-down';
+              const yOpen=yy(bar.open),yClose=yy(bar.close);
+              draw('line',{x1:x,x2:x,y1:yy(bar.high),y2:yy(bar.low),class:`market-chart-wick ${color}`});
+              draw('rect',{x:x-bodyWidth/2,y:Math.min(yOpen,yClose),
+                width:bodyWidth,height:Math.max(1.8,Math.abs(yOpen-yClose)),
+                rx:0.6,class:`market-chart-body ${color}`});
+            });
+          } else {
+            const path=series.map((bar,i)=>`${i?'L':'M'}${xx(i).toFixed(1)},${yy(bar.value).toFixed(1)}`).join(' ');
+            draw('path',{d:path,class:'market-chart-path',fill:'none',
+              'stroke-linecap':'round','stroke-linejoin':'round'});
+          }
+          const labelIndices=[0,Math.floor((series.length-1)/2),series.length-1];
+          [...new Set(labelIndices)].forEach(i=>{
+            draw('text',{x:xx(i),y:dims.h-13,
+              'text-anchor':i===0?'start':i===series.length-1?'end':'middle',
+              class:'market-chart-axis'},series[i].date.slice(5));
           });
           const vertical=draw('line',{class:'market-chart-crosshair'});
-          const dot=draw('circle',{r:5,class:'market-chart-marker'});
+          const dot=draw('circle',{r:4,class:'market-chart-marker'});
           const reading=E('div',{class:'market-chart-reading','aria-live':'polite'});
           const selector=E('input',{type:'range',class:'market-chart-scrubber',
             min:0,max:series.length-1,value:series.length-1,step:1,
-            'aria-label':'날짜별 지수 종가 확인',
+            'aria-label':`${label} 날짜별 시세 확인`,
             onInput:event=>highlight(Number(event.target.value))});
-          function highlight(index) {
-            const row=series[Math.max(0,Math.min(series.length-1,index))];
-            const x=xx(row.date),y=yy(row.value);
+          function formatPrice(value){return value.toLocaleString('ko-KR',{maximumFractionDigits:2});}
+          function highlight(index){
+            const i=Math.max(0,Math.min(series.length-1,index));
+            const bar=series[i],x=xx(i),y=yy(bar.value);
             for(const [key,value] of Object.entries({x1:x,x2:x,y1:dims.top,y2:dims.h-dims.bottom}))vertical.setAttribute(key,String(value));
             dot.setAttribute('cx',String(x));dot.setAttribute('cy',String(y));
-            reading.textContent=`${row.date} · ${row.value.toLocaleString('ko-KR',{maximumFractionDigits:2})} ${quote.unit||'pt'}`;
-            selector.value=String(index);
+            reading.textContent=candleMode ?
+              `${bar.date} · 시 ${formatPrice(bar.open)} / 고 ${formatPrice(bar.high)} / 저 ${formatPrice(bar.low)} / 종 ${formatPrice(bar.close)} ${quote.unit||'pt'}` :
+              `${bar.date} · 종가 ${formatPrice(bar.value)} ${quote.unit||'pt'}`;
+            selector.value=String(i);
             selector.setAttribute('aria-valuetext',reading.textContent);
           }
           svg.addEventListener('pointermove',event=>{
             const rect=svg.getBoundingClientRect();
             if(!rect.width)return;
-            const rel=(event.clientX-rect.left)/rect.width*dims.w;
+            const x=(event.clientX-rect.left)/rect.width*dims.w;
             let best=0,distance=Infinity;
-            series.forEach((row,i)=>{
-              const diff=Math.abs(xx(row.date)-rel);
-              if(diff<distance){best=i;distance=diff;}
-            });
+            series.forEach((bar,i)=>{const diff=Math.abs(xx(i)-x);if(diff<distance){best=i;distance=diff;}});
             highlight(best);
           });
           plot.append(svg,selector,reading);
           highlight(series.length-1);
         }
         foot.replaceChildren(
-          E('p',{},`출처: ${sourceName(quote.source)} · 과거 데이터 ${observations.length}개 관측일 중 선택 구간만 표시 · 일별 종가이며 장중 실시간 차트가 아닙니다.`),
-          isIndexStale ? E('p',{class:'market-chart-stale'},'⚠ 현재 관측값이 오래됐거나 배포 시 저장한 값입니다. 최근 시세로 해석하지 마세요.') : null,
-          quote.sourceUrl ? link('원자료 확인',quote.sourceUrl) : null);
+          E('p',{},candleMode ?
+            `출처: ${sourceName(quote.source)} · ${label} 실측 시가·고가·저가·종가 · 해당 기간 ${all.length}개 관측 봉 · 장중 실시간 아님` :
+            `출처: ${sourceName(quote.source)} · 종가만 제공되어 선 차트로 표시합니다. 주간·월간은 그 기간 마지막 실제 관측 종가이며 OHLC 캔들이 아닙니다.`),
+          isIndexStale?E('p',{class:'market-chart-stale'},'⚠ 오래된 관측값 또는 배포 시 저장된 데이터입니다. 현재 시세로 해석하지 마세요.'):null,
+          quote.sourceUrl?link('원자료 확인',quote.sourceUrl):null);
       }
       redraw();
     },{className:'market-history-modal'});
