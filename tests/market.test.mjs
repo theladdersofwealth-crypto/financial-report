@@ -422,3 +422,55 @@ test('old IMF nickel month is explicitly stale, not a current LME spot quote',as
   assert.notEqual(q.status,'live');
   assert.match(q.basis,/월간/);
 });
+
+
+test('verified KIS overseas candidates win over FRED and missing Finnhub; mismatched indices fall back',async t=>{
+  const publicFixture=providerFixture();
+  const original=globalThis.fetch;
+  globalThis.fetch=async (input,options={})=>{
+    const u=new URL(String(input));
+    if(u.hostname!=='openapi.koreainvestment.com')return publicFixture(input,options);
+    if(u.pathname==='/oauth2/tokenP')return Response.json({access_token:'fixture-overseas-token',expires_in:86000});
+    if(u.pathname.endsWith('inquire-daily-indexchartprice')){
+      const code=u.searchParams.get('FID_INPUT_ISCD');
+      return Response.json({rt_cd:'0',output2:[
+        {stck_bsop_date:day(3).replace(/-/g,''),bstp_nmix_prpr:code==='0001'?'3100':'700',
+          bstp_nmix_oprc:'3000',bstp_nmix_hgpr:'3200',bstp_nmix_lwpr:'690'},
+        {stck_bsop_date:day(1).replace(/-/g,''),bstp_nmix_prpr:code==='0001'?'3110':'720',
+          bstp_nmix_oprc:'3000',bstp_nmix_hgpr:'3200',bstp_nmix_lwpr:'690'},
+      ]});
+    }
+    if(u.pathname.endsWith('inquire-investor-daily-by-market')){
+      return Response.json({rt_cd:'0',output:[{stck_bsop_date:day(1).replace(/-/g,''),frgn_ntby_tr_pbmn:'1100'}]});
+    }
+    if(u.pathname.endsWith('inquire-daily-chartprice')){
+      const isWrong=u.searchParams.get('FID_INPUT_ISCD')==='.NDX';
+      return Response.json({rt_cd:'0',output2:[
+        {stck_bsop_date:day(3).replace(/-/g,''),ovrs_nmix_prpr:'100'},
+        {stck_bsop_date:day(1).replace(/-/g,''),ovrs_nmix_prpr:isWrong?'9000':'101'},
+      ]});
+    }
+    if(u.pathname==='/uapi/overseas-price/v1/quotations/price'){
+      const symbol=u.searchParams.get('SYMB');
+      const code=u.searchParams.get('EXCD');
+      return Response.json({rt_cd:'0',output:{last:'75.25',rate:'2.4',rsym:code+symbol}});
+    }
+    throw Error('unexpected KIS route');
+  };
+  t.after(()=>{globalThis.fetch=original});
+  const {collectMarket}=await freshModule();
+  const market=await collectMarket({KIS_APP_KEY:'unique-us-market-test-key',KIS_APP_SECRET:'unique-us-market-test-secret'});
+  const sp=market.quotes.find(q=>q.id==='sp500');
+  assert.equal(sp.provider,'kis');
+  assert.equal(sp.value,101);
+  const ndx=market.quotes.find(q=>q.id==='nasdaq');
+  assert.equal(ndx.provider,'fred','wrong or unverified KIS index must never override FRED');
+  assert.equal(ndx.value,101);
+  assert.equal(market.sectors.find(q=>q.symbol==='XLK')?.provider,'kis');
+  assert.equal(market.sectors.length,11);
+  assert.equal(market.leaders.length,7);
+  assert.equal(market.leaders.find(q=>q.symbol==='NVDA')?.provider,'kis');
+  assert.equal(market.sources.find(x=>x.id==='kis')?.status,'partial');
+  assert.equal(JSON.stringify(market).includes('unique-us-market-test-secret'),false);
+  assert.equal(JSON.stringify(market).includes('fixture-overseas-token'),false);
+});
