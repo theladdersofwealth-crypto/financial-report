@@ -87,3 +87,27 @@
 .data-state-action:hover{background:#f2f6fa;border-color:var(--line)}
 .data-state-action:focus-visible{outline:2px solid #376997;outline-offset:2px}
 @media(max-width:760px){.data-state-action{padding:6px 7px;font-size:9px}}
+
+/* Symbol-by-symbol market lookup. Inputs are client-side but all quotes come
+   from member-authenticated read-only Worker routes. */
+.instrument-search-panel{display:grid;gap:20px}
+.instrument-form{display:grid;gap:18px}
+.instrument-tabs{display:flex;gap:8px;flex-wrap:wrap}
+.instrument-tabs .tab{padding:9px 14px;border:1px solid var(--line);border-radius:8px;min-height:38px;background:#fff;color:var(--text);font-size:12px}
+.instrument-tabs .tab.active{background:var(--navy);color:#fff;border-color:var(--navy)}
+.instrument-search-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:end}
+.instrument-search-row label{margin-bottom:8px}
+.instrument-search-row .button{min-height:44px}
+.instrument-samples{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.instrument-samples>span{margin-right:6px}
+.instrument-sample{border:1px solid var(--line);border-radius:18px;padding:7px 10px;background:#f9fafb;display:inline-flex;gap:7px;align-items:center;font-size:11px}
+.instrument-sample:hover{background:#eaf0f6}
+.instrument-search-feedback{border:1px dashed var(--line);border-radius:10px;padding:25px 18px;color:var(--muted);line-height:1.75;font-size:12px}
+.instrument-result{border:1px solid var(--line);border-radius:12px;padding:22px;display:grid;gap:12px}
+.instrument-result-heading{display:flex;justify-content:space-between;align-items:start;gap:16px}
+.instrument-result-heading h3{font-size:19px;margin:6px 0}
+.instrument-code{font-size:11px;color:var(--muted)}
+.instrument-result-quote{display:flex;align-items:baseline;flex-wrap:wrap;gap:14px}
+.instrument-result-quote strong{font-size:26px;color:var(--ink);font-variant-numeric:tabular-nums}
+.instrument-result-quote span{font-size:14px;font-weight:600}
+@media(max-width:600px){.instrument-search-row{grid-template-columns:1fr}.instrument-search-row .button{width:100%}.instrument-result-heading{flex-wrap:wrap}}
