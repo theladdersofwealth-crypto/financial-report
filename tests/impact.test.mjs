@@ -82,7 +82,7 @@ test('domestic actual closes and signed foreign flow are displayed as factual ob
   assert.equal(impact.domestic.kosdaq.value, 900);
   assert.equal(impact.domestic.foreignKospi.value, -800);
   assert.equal(impact.kospi.state, '판단 보류', 'actual domestic closes do not leak into the overseas checklist');
-  assert.ok(impact.cautions.some(s => s.includes('코스닥 수급')));
+  assert.ok(impact.cautions.some(s => s.includes('시장별 일별 관측값')));
 });
 
 test('stale or backup domestic observations never masquerade as current', () => {

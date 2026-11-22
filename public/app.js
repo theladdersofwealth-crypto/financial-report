@@ -389,6 +389,7 @@ function renderImpact() {
     ['코스피 일별 종가', domestic.kospi],
     ['코스닥 일별 종가', domestic.kosdaq],
     ['코스피 외국인 순매수', domestic.foreignKospi],
+    ['코스닥 외국인 순매수', domestic.foreignKosdaq],
   ];
   section.append(E('div', {class: 'panel-foot'}, E('strong', {}, '국내 시장 관측 · 실제 종가와 수급'),
     E('span', {}, ' · 일별 확정 자료이며 위 해외 환경 판단의 적중률이 아닙니다.')));

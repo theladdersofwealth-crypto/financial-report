@@ -280,7 +280,7 @@ test('ECOS daily stock indices and KOSPI foreign flow distinguish levels from ab
   assert.equal(data.impact.domestic.foreignKospi.value,-800);
   assert.equal(data.impact.domestic.kospi.value,2100);
   assert.equal(data.impact.domestic.kosdaq.value,2100);
-  assert.ok(data.impact.cautions.some(c=>c.includes('코스닥 수급')));
+  assert.ok(data.impact.cautions.some(c=>c.includes('시장별 일별 관측값')));
 });
 
 
