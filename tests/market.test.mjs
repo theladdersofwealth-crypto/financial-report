@@ -358,3 +358,66 @@ test('failed Finnhub quotes expose safe provider diagnostic counts, not secrets'
   assert.ok(finnhub.failures.some(x=>x.code==='HTTP_403'));
   assert.equal(JSON.stringify(data).includes('test-private-token'),false);
 });
+
+
+test('keyless metal spot quotes and monthly nickel are distinct, timestamped products', async t => {
+  installFetch(t, providerFixture());
+  const { collectMarket } = await freshModule();
+  const market = await collectMarket({});
+  for(const [id,price,unit,symbol] of [['gold',3500,'USD/oz','XAU'],['silver',40,'USD/oz','XAG'],['copper',5.5,'USD/lb','HG']]){
+    const q = market.quotes.find(q => q.id === id);
+    assert.equal(q.value,price);
+    assert.equal(q.unit,unit);
+    assert.equal(q.change,null,'spot endpoint does not provide prior-day change');
+    assert.equal(q.provider,'goldapi');
+    assert.equal(q.source,'Gold API');
+    assert.equal(q.status,'delayed');
+    assert.ok(Date.parse(q.observedAt)>Date.now()-60_000);
+    assert.match(q.basis, /참고/);
+  }
+  const nickel=market.quotes.find(q=>q.id==='nickel');
+  assert.equal(nickel.value,15400);
+  assert.equal(nickel.status,'monthly');
+  assert.equal(nickel.unit,'USD/t');
+  assert.equal(nickel.timestampPrecision,'month');
+  assert.equal(nickel.changeUnit,'%');
+  assert.match(nickel.delay,/실시간 시세 아님/);
+  assert.equal(market.sources.find(x=>x.id==='goldapi')?.status,'connected');
+  assert.equal(market.sources.find(x=>x.id==='goldapi')?.received,3);
+  assert.equal(market.sources.find(x=>x.id==='fred')?.monthly,1);
+});
+
+test('metal feed never invents quote changes, units or present-time freshness', async t => {
+  const fixture=providerFixture();
+  installFetch(t, async(input,options)=>{
+    const url = new URL(String(input));
+    if(url.hostname==='api.gold-api.com'){
+      const symbol=url.pathname.split('/').at(-1);
+      if(symbol==='XAU')return Response.json({symbol,currency:'EUR',price:6000,updatedAt:new Date().toISOString()});
+      if(symbol==='XAG')return Response.json({symbol,currency:'USD',price:45,updatedAt:new Date(Date.now()-5*86400000).toISOString()});
+      return Response.json({symbol,currency:'USD',price:null,updatedAt:new Date().toISOString()});
+    }
+    return fixture(input,options);
+  });
+  const {collectMarket}=await freshModule();
+  const market=await collectMarket({});
+  assert.equal(market.quotes.find(x=>x.id==='gold')?.value,null,'EUR must never be presented as USD');
+  assert.equal(market.quotes.find(x=>x.id==='silver')?.status,'stale','five-day-old quote must be shown as stale');
+  assert.equal(market.quotes.find(x=>x.id==='copper')?.value,null,'empty quote must not count');
+  assert.equal(market.sources.find(x=>x.id==='goldapi')?.status,'stale');
+  assert.equal(market.sources.find(x=>x.id==='goldapi')?.received,0);
+  assert.equal(market.sources.find(x=>x.id==='goldapi')?.stale,1);
+  assert.equal(market.sources.find(x=>x.id==='goldapi')?.missing,2);
+});
+
+test('old IMF nickel month is explicitly stale, not a current LME spot quote',async t=>{
+  const m=(n)=>{const d=new Date();return new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()-n,1)).toISOString().slice(0,10);};
+  installFetch(t,providerFixture({PNICKUSDM:[[m(12),'12000'],[m(10),'13000']]}));
+  const {collectMarket}=await freshModule();
+  const market=await collectMarket({});
+  const q=market.quotes.find(q=>q.id==='nickel');
+  assert.equal(q.status,'stale');
+  assert.equal(q.timestampPrecision,'month');
+  assert.notEqual(q.status,'live');
+  assert.match(q.basis,/월간/);
+});
