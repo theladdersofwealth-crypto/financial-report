@@ -26,3 +26,48 @@
 
 /* Domestic and global indicator groups are separated without changing the site theme. */
 .market-section-label{padding:11px 22px;font-size:10px;font-weight:650;letter-spacing:.3px;color:#59718a;background:#f8fafc;border-top:1px solid var(--line)}
+
+/* Historical close chart: first-party SVG with actual observed points only. */
+.quote-card-clickable{cursor:pointer;transition:background .15s,box-shadow .15s}
+.quote-card-clickable:hover{background:#f6f9fc;box-shadow:inset 0 0 0 1px #cedceb}
+.quote-card-clickable:focus-visible,.market-table-chart-link:focus-visible{outline:2px solid #376997;outline-offset:-3px;border-radius:5px}
+.quote-card-clickable .quote-group{color:#477294;font-weight:650}
+.market-table-chart-link{display:inline;padding:0;border:0;background:none;color:#32638b;font-size:inherit;font-weight:inherit;text-decoration:underline;text-underline-offset:3px}
+.market-history-modal{max-width:880px;width:min(880px,100%)}
+.market-history-modal .modal-body{padding:20px 26px 24px}
+.market-chart-ranges{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 14px}
+.market-chart-range{font-size:11px;border:1px solid var(--line);background:#fff;border-radius:6px;padding:8px 14px;color:#647c94}
+.market-chart-range.active{background:#eaf0f6;border-color:#bfcfe0;color:#264969;font-weight:700}
+.market-chart-range:focus-visible,.market-chart-scrubber:focus-visible{outline:2px solid #376997;outline-offset:3px}
+.market-chart-summary{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:12px;flex-wrap:wrap}
+.market-chart-current{display:block;font-variant-numeric:tabular-nums;font-weight:700;font-size:25px;line-height:1.4;color:var(--ink)}
+.market-chart-date{font-size:10px;color:#8291a0;margin-top:4px}
+.market-chart-change{font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
+.market-chart-change.gain{color:var(--gain)}
+.market-chart-change.loss{color:var(--loss)}
+.market-chart-container{background:#fbfcfe;border:1px solid var(--line);border-radius:9px;padding:12px 12px 16px}
+.market-chart-svg{width:100%;height:auto;display:block;overflow:visible}
+.market-chart-axis{fill:#8592a0;font-size:11px;font-family:'DM Sans','Noto Sans KR',sans-serif}
+.market-chart-gridline{stroke:#e8edf2;stroke-width:1;shape-rendering:crispEdges}
+.market-chart-path{stroke:var(--gain);stroke-width:2.8;vector-effect:non-scaling-stroke}
+.market-chart-svg.loss .market-chart-path{stroke:var(--loss)}
+.market-chart-svg.neutral .market-chart-path{stroke:#6889a8}
+.market-chart-crosshair{stroke:#a2b2c1;stroke-width:1.2;stroke-dasharray:4 5}
+.market-chart-marker{fill:white;stroke:var(--gain);stroke-width:3;vector-effect:non-scaling-stroke}
+.market-chart-svg.loss .market-chart-marker{stroke:var(--loss)}
+.market-chart-scrubber{display:block;width:100%;margin:0;accent-color:#4477a2;cursor:ew-resize}
+.market-chart-reading{font-size:12px;color:#465c73;font-variant-numeric:tabular-nums;text-align:center;margin-top:6px;font-weight:600}
+.market-chart-empty{padding:50px 24px;color:#8b97a4;text-align:center;font-size:12px;line-height:1.8}
+.market-chart-footnote{margin-top:14px;font-size:10px;line-height:1.9;color:#8694a2}
+.market-chart-footnote a{display:inline-flex;margin-top:6px}
+.market-chart-stale{color:#b06f4b;margin-top:6px}
+@media(max-width:760px){
+  .market-history-modal{max-width:100%;max-height:94dvh}
+  .market-history-modal .modal-head{padding:17px 18px 14px}
+  .market-history-modal .modal-body{padding:15px 14px 19px}
+  .market-chart-current{font-size:21px}
+  .market-chart-change{font-size:11px}
+  .market-chart-container{padding:8px 6px 10px}
+  .market-chart-range{padding:7px 11px}
+  .market-chart-axis{font-size:12px}
+}
