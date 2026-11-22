@@ -61,7 +61,7 @@ test('mixed observation dates are disclosed and neutral evidence is not called b
 
 test('KOSPI and KOSDAQ use independent factor sets', () => {
   const quotes = [
-    quote('sox', 2), quote('nasdaq', -2), quote('sp500', 2),
+    quote('sox', 2), quote('nasdaq', -2),
     quote('usdkrw', -2, 'fx'), quote('us10y', -2, 'rates'),
     quote('usreal10y', 6, 'rates'), quote('vix', 5, 'risk'),
   ];
