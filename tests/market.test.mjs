@@ -488,3 +488,60 @@ test('verified KIS overseas candidates win over FRED and missing Finnhub; mismat
   assert.equal(JSON.stringify(market).includes('unique-us-market-test-secret'),false);
   assert.equal(JSON.stringify(market).includes('fixture-overseas-token'),false);
 });
+
+
+test('Binance public BTC/ETH/SOL USDT tickers are primary, preserve USDT units and 24h window timestamp',async t=>{
+  const fallback=providerFixture(),calls=[];
+  installFetch(t,async(input,options)=>{
+    const u=new URL(String(input));
+    if(u.hostname==='data-api.binance.vision'){
+      calls.push(u);
+      assert.equal(options.headers.Accept,'application/json');
+      assert.ok(['BTCUSDT','ETHUSDT','SOLUSDT'].includes(u.searchParams.get('symbol')));
+      return Response.json({
+        symbol:u.searchParams.get('symbol'),lastPrice:{BTCUSDT:'101500.25',ETHUSDT:'3600.10',SOLUSDT:'225.00'}[u.searchParams.get('symbol')],
+        priceChangePercent:'-2.23',closeTime:Date.now(),count:15000,
+      });
+    }
+    if(u.hostname==='www.bitstamp.net'||u.hostname==='api.coinbase.com')throw Error('fallback must never be called if Binance succeeded');
+    return fallback(input,options);
+  });
+  const {collectMarket}=await freshModule();
+  const result=await collectMarket({});
+  for(const [id,val] of [['btc',101500.25],['eth',3600.10],['sol',225]]){
+    const q=result.quotes.find(x=>x.id===id);
+    assert.equal(q.provider,'binance');
+    assert.equal(q.unit,'USDT','USDT must not be mislabeled USD');
+    assert.equal(q.value,val);
+    assert.equal(q.change,-2.23);
+    assert.equal(q.timestampPrecision,'window_end');
+    assert.equal(q.status,'live');
+  }
+  assert.equal(calls.length,3);
+  assert.equal(result.sources.find(x=>x.id==='binance').received,3);
+  assert.equal(result.sources.find(x=>x.id==='bitstamp').status,'standby');
+});
+
+test('unavailable Binance API retains original USD Bitstamp spot fallback',async t=>{
+  const original=providerFixture(),calls=[];
+  installFetch(t,async(input,options)=>{
+    const u=new URL(String(input));
+    if(['data-api.binance.vision','api.binance.com'].includes(u.hostname)) {
+      calls.push(u.hostname);
+      return new Response('access denied',{status:451});
+    }
+    return original(input,options);
+  });
+  const {collectMarket}=await freshModule();
+  const market=await collectMarket({});
+  assert.equal(calls.length,6);
+  for(const id of ['btc','eth','sol']){
+    const q=market.quotes.find(x=>x.id===id);
+    assert.equal(q.provider,'bitstamp');
+    assert.equal(q.unit,'USD');
+    assert.equal(q.value,100);
+    assert.equal(q.change,-1.25);
+  }
+  assert.equal(market.sources.find(x=>x.id==='binance').received,0);
+  assert.equal(market.sources.find(x=>x.id==='bitstamp').received,3);
+});

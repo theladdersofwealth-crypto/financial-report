@@ -33,7 +33,7 @@ test('standalone demo renders every destination without accessing member APIs',a
     const demo=document.querySelector('.demo-entry');assert.ok(demo,'로그인 화면의 체험 버튼');demo.click();
   }
   assert.match(document.querySelector('.demo-banner').textContent,/예시 데이터/);
-  for(const view of ['overview','markets','outlooks','calendar','sources','users','activity']) {
+  for(const view of ['overview','markets','instrument','outlooks','calendar','sources','users','activity']) {
     const button=document.querySelector(`[data-view="${view}"]`);assert.ok(button,view);button.click();
     await new Promise(r=>nativeTimeout(r,5));
     assert.ok(document.querySelector('#main-column').textContent.trim().length>20,`${view} content`);

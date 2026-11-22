@@ -4,6 +4,7 @@ const app = document.querySelector('#app');
 const state = {
   user: null, demo: false, status: null, view: 'overview', horizon: 'day',
   market: null, marketFilter: '전체', marketSearch: '', users: [], activity: null,
+  instrumentMarket: 'KR', instrumentQuery: '', instrumentResult: null, instrumentLoading: false,
   online: [], onlineCount: 0, threshold: 2, messages: [], chatDraft: '',
   ws: null, connected: false, reconnect: null, lastActivity: Date.now(),
   chatOpen: false, menuOpen: false, loading: false, sessionGeneration: 0,
@@ -259,6 +260,7 @@ function enterDemo() {
 const navigation = [
   {id: 'overview', title: '시황 데스크', english: 'MARKET OVERVIEW', icon: 'grid', subtitle: '세계의 움직임과 한국시장의 연결고리를 한눈에.'},
   {id: 'markets', title: '자산별 시장', english: 'GLOBAL MARKETS', icon: 'globe', subtitle: '주식·금리·외환·원자재·가상자산의 같은 날, 다른 움직임.'},
+  {id: 'instrument', title: '개별 종목 검색', english: 'INSTRUMENT SEARCH', icon: 'search', subtitle: '국내 종목코드·미국 주식 티커·바이낸스 USDT 현물 시세를 직접 확인합니다.'},
   {id: 'outlooks', title: '기간별 전망', english: 'MARKET PERSPECTIVE', icon: 'chart', subtitle: '오늘부터 3~6개월까지, 근거와 조건을 함께 읽는 시나리오.'},
   {id: 'calendar', title: '경제 일정', english: 'WHAT TO WATCH', icon: 'calendar', subtitle: '시장의 다음 움직임을 바꿀 주요 이벤트를 확인하세요.'},
   {id: 'sources', title: '데이터 출처', english: 'DATA & TRANSPARENCY', icon: 'source', subtitle: '어디에서 왔는지, 언제 관측됐는지. 숫자의 맥락을 확인하세요.'},
@@ -330,11 +332,101 @@ function renderView() {
   const main = document.querySelector('#main-column');
   if (state.view === 'overview') main.replaceChildren(renderQuotes(), renderBrief(), renderImpact(), E('div', {class: 'section-pair'}, renderSectors(), renderLeaders()), renderOutlook(), renderEvents(true));
   if (state.view === 'markets') main.replaceChildren(renderMarketTable(), renderEquityTable('미국 섹터 · ETF 대용지표', state.market?.sectors || []), renderEquityTable('미국 대표 종목', state.market?.leaders || []));
+  if (state.view === 'instrument') main.replaceChildren(renderInstrumentSearch());
   if (state.view === 'outlooks') main.replaceChildren(renderImpact(), renderOutlook(), methodologyPanel());
   if (state.view === 'calendar') main.replaceChildren(renderEvents(false));
   if (state.view === 'sources') main.replaceChildren(renderSources());
   if (state.view === 'users') main.replaceChildren(renderUsers());
   if (state.view === 'activity') main.replaceChildren(...renderActivity());
+}
+const searchSamples={
+  KR:[['삼성전자','005930'],['SK하이닉스','000660'],['현대차','005380'],['네이버','035420']],
+  US:[['엔비디아','NVDA'],['애플','AAPL'],['마이크로소프트','MSFT'],['테슬라','TSLA']],
+  CRYPTO:[['비트코인','BTC'],['이더리움','ETH'],['솔라나','SOL'],['도지코인','DOGE']],
+};
+async function submitInstrumentSearch() {
+  if(state.instrumentLoading)return;
+  const generation=state.sessionGeneration,market=state.instrumentMarket;
+  const query=state.instrumentQuery.trim();
+  if(!query){state.instrumentResult={status:'invalid',message:'종목명 또는 코드를 입력해 주세요.'};renderView();return;}
+  if(state.demo){state.instrumentResult={status:'invalid',message:'체험 모드에서는 실시간 조회를 하지 않습니다. 로그인 후 검색해 주세요.'};renderView();return;}
+  state.instrumentLoading=true;
+  state.instrumentResult=null;
+  renderView();
+  try{
+    const params=new URLSearchParams({market,symbol:query});
+    const result=await api('/api/instrument?'+params.toString());
+    if(generation===state.sessionGeneration&&state.user&&market===state.instrumentMarket)
+      state.instrumentResult=result;
+  }catch(error){
+    if(generation===state.sessionGeneration&&state.user)
+      state.instrumentResult={status:'error',message:errorText(error)};
+  }finally{
+    if(generation===state.sessionGeneration && state.user) {
+      state.instrumentLoading=false;
+      if(state.view==='instrument')renderView();
+    }
+  }
+}
+function renderInstrumentSearch() {
+  const active=state.instrumentMarket;
+  const form=E('form',{class:'instrument-form',onSubmit:event=>{
+    event.preventDefault();
+    submitInstrumentSearch();
+  }});
+  const tabs=E('div',{class:'instrument-tabs',role:'group','aria-label':'조회 시장'},
+    [['KR','국내 주식'],['US','미국 주식·ETF'],['CRYPTO','바이낸스 코인']].map(([id,label])=>
+      E('button',{type:'button',class:`tab ${active===id?'active':''}`,
+        'aria-pressed':String(active===id),
+        onClick:()=>{
+          if(state.instrumentLoading)return;
+          state.instrumentMarket=id;state.instrumentQuery='';state.instrumentResult=null;renderView();
+          document.querySelector('#instrument-symbol')?.focus();
+        }},label)));
+  const label=E('label',{for:'instrument-symbol'},
+    active==='KR'?'종목명 또는 6자리 종목코드':active==='US'?'종목명 또는 티커':'코인명 또는 USDT 거래쌍');
+  const input=E('input',{id:'instrument-symbol',type:'search',autocomplete:'off',
+    maxlength:42,required:true,value:state.instrumentQuery,
+    placeholder:active==='KR'?'삼성전자 또는 005930':active==='US'?'엔비디아 또는 NVDA':'비트코인 또는 BTCUSDT',
+    'aria-describedby':'instrument-hint',
+    onInput:event=>{state.instrumentQuery=event.target.value;}});
+  const action=E('button',{type:'submit',class:'button primary',disabled:state.instrumentLoading},
+    icon('search'),state.instrumentLoading?'조회 중...':'시세 조회');
+  form.append(tabs,E('div',{class:'instrument-search-row'},E('div',{},label,input),
+    action),E('p',{id:'instrument-hint',class:'tiny muted'},active==='KR'
+    ?'코스피·코스닥 개별 주식·ETF는 6자리 코드로 검색할 수 있습니다. 종목명 자동완성은 아래 추천 항목에 한정됩니다.'
+    :active==='US'?'미국 상장 종목은 티커로 조회합니다. NASDAQ → NYSE → AMEX 순서로 KIS에서 확인합니다.'
+    :'바이낸스 현물 USDT 거래쌍으로 조회합니다. USD 가격과 혼동하지 마세요.'));
+  const samples=E('div',{class:'instrument-samples'},E('span',{class:'tiny muted'},'빠른 조회'),
+    searchSamples[active].map(([name,code])=>
+      E('button',{type:'button',class:'instrument-sample',disabled:state.instrumentLoading,
+        onClick:()=>{
+          state.instrumentQuery=code;
+          submitInstrumentSearch();
+        }},name,E('span',{class:'muted'},code))));
+  const result=state.instrumentResult;
+  let resultNode;
+  if(state.instrumentLoading)resultNode=E('div',{class:'instrument-search-feedback','aria-live':'polite'},'해당 거래소 시세를 확인하는 중입니다.');
+  else if(result?.status==='ok'&&result.quote){
+    const q=result.quote;
+    const valid=hasValue(q);
+    resultNode=E('div',{class:'instrument-result','aria-live':'polite'},
+      E('div',{class:'instrument-result-heading'},
+        E('div',{},E('p',{class:'eyebrow'},q.market==='CRYPTO'?'BINANCE SPOT':q.market==='KR'?'KOREA STOCK':'US EQUITY'),
+          E('h3',{},q.name||q.symbol),
+          E('p',{class:'instrument-code'},q.symbol, q.exchange?` · ${q.exchange}`:'')),
+        badge(q.status==='live'?'공개 현물 조회':'거래소 지연 가능',q.status==='live'?'green':'amber')),
+      E('div',{class:'instrument-result-quote'},E('strong',{},valid?`${formatValue(q)} ${q.unit}`:'—'),
+        E('span',{class:changeClass(q.change)},q.change===null?'등락률 미제공':formatChange(q))),
+      E('p',{class:'tiny muted'},`출처: ${sourceName(q.source)} · ${q.observedAt?dateText(q.observedAt):'관측시각 미제공'}`),
+      E('p',{class:'tiny muted'},q.delay||'공급자별 이용권한·시차를 확인해 주세요.'),
+      q.sourceUrl?link('공급자 API 안내',q.sourceUrl):null);
+  }else resultNode=E('div',{class:'instrument-search-feedback','aria-live':'polite'},
+    result?.message||'종목을 선택하거나 검색어를 입력해 시세를 확인해 보세요.');
+  return E('section',{class:'panel instrument-search-panel'},
+    panelHead('개별 종목 검색','시세 조회 전용 · 주문/계좌 연결 없음',badge('KIS · Binance','blue'),'search'),
+    form,samples,resultNode,E('p',{class:'panel-foot'},
+      '국내·미국 주식은 KIS 이용권한에 따라 지연될 수 있습니다. 국내·미국 종목명 예시는 일부만 제공하며, 전체 종목은 코드/티커로 검색합니다.'));
 }
 function dataState() {
   if (state.demo) return E('span', {class: 'data-state partial'}, E('i', {class: 'dot'}), 'EXAMPLE');

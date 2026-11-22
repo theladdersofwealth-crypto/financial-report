@@ -403,3 +403,62 @@ export async function collectKisMacro(env) {
   try{return structuredClone(await task)}
   finally{if(macroPending?.promise===task)macroPending=null}
 }
+
+
+/**
+ * Exact-symbol lookup for the member-only instrument search. Query API is
+ * read-only, one submitted symbol at a time; this does not enumerate accounts
+ * or use stock-order endpoints.
+ */
+export async function lookupKisInstrument(env, market, symbol, requestedExchange = '') {
+  if (!kisConfigured(env)) return null;
+  const token=await tokenFor(env);
+  if(!token) return null;
+  const currentTime=new Date().toISOString();
+  if (market==='KR' && /^[0-9]{6}$/.test(symbol)) {
+    const quote=await kisGet(env,token,'/uapi/domestic-stock/v1/quotations/inquire-price',
+      'FHKST01010100',{FID_COND_MRKT_DIV_CODE:'J',FID_INPUT_ISCD:symbol});
+    const value=val(quote?.output?.stck_prpr);
+    if(value===null || value<=0)return null;
+    const info=await kisGet(env,token,'/uapi/domestic-stock/v1/quotations/search-stock-info',
+      'CTPF1002R',{PRDT_TYPE_CD:'300',PDNO:symbol});
+    const row=Array.isArray(info?.output)?info.output[0]:info?.output;
+    const verifiedInfo=String(row?.pdno||'')===symbol?row:null;
+    const change=val(quote.output.prdy_ctrt);
+    return {
+      market:'KR',symbol,exchange:'KRX',
+      name:String(verifiedInfo?.prdt_name||verifiedInfo?.prdt_abrv_name||symbol).slice(0,85),
+      value,unit:'KRW',change:change!==null&&Math.abs(change)<=100?change:null,changeUnit:'%',
+      provider:'kis',source:'한국투자증권 KIS Open API',
+      sourceUrl:'https://apiportal.koreainvestment.com/',
+      observedAt:currentTime,timestampPrecision:'retrieval',status:'delayed',
+      delay:'국내주식 현재가 조회 · 거래소 최종 체결시각 미제공 · 조회시각 표시 (실시간 여부 미보장)',
+    };
+  }
+  if(market!=='US' || !/^[A-Z][A-Z0-9.\-]{0,10}$/.test(symbol))return null;
+  const codes={NAS:'512',NYS:'513',AMS:'529'};
+  const exchanges=requestedExchange && codes[requestedExchange]?[requestedExchange]:['NAS','NYS','AMS'];
+  for(const exchange of exchanges){
+    const quote=await kisGet(env,token,'/uapi/overseas-price/v1/quotations/price',
+      'HHDFS00000300',{AUTH:'',EXCD:exchange,SYMB:symbol});
+    const row=quote?.output;
+    const value=val(row?.last);
+    if(value===null||value<=0 || (typeof row?.rsym==='string' && row.rsym.trim()
+       && !row.rsym.trim().toUpperCase().endsWith(symbol)))continue;
+    const info=await kisGet(env,token,'/uapi/overseas-price/v1/quotations/search-info',
+      'CTPF1702R',{PRDT_TYPE_CD:codes[exchange],PDNO:symbol});
+    const metadata=Array.isArray(info?.output)?info.output[0]:info?.output;
+    const verifiedInfo=String(metadata?.pdno||'').toUpperCase()===symbol?metadata:null;
+    const change=val(row?.rate);
+    return {
+      market:'US',symbol,exchange,
+      name:String(verifiedInfo?.ovrs_item_name||verifiedInfo?.prdt_eng_name||verifiedInfo?.prdt_name||symbol).slice(0,85),
+      value,unit:'USD',change:change!==null&&Math.abs(change)<=100?change:null,changeUnit:'%',
+      provider:'kis',source:'한국투자증권 KIS Open API',
+      sourceUrl:'https://apiportal.koreainvestment.com/',
+      observedAt:currentTime,timestampPrecision:'retrieval',status:'delayed',
+      delay:'해외주식 현재체결가 · 거래소 체결시각 미제공 · 이용권한에 따라 지연 가능',
+    };
+  }
+  return null;
+}
