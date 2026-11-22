@@ -66,7 +66,7 @@ test('main index cards and market table open an accessible chart modal from hist
  assert.match(main,/\['all','전체'\]/);
  assert.match(main,/showModal\(/);
  assert.match(main,/market-chart-scrubber/);
- assert.match(main,/history\s*\.length|observations\.length/);
+ assert.match(main,/chartFrequency\(observations,activeTimeframe\)/);
  assert.match(app,/class:'market-table-chart-link'/);
  assert.match(styles,/market-history-modal/);
 });
