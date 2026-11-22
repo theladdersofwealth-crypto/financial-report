@@ -539,29 +539,71 @@ function renderImpact() {
     `${impact.mixedDates ? '관측 날짜가 다른 지표가 섞여 있습니다. ' : ''}${(impact.cautions || []).join(' ')}`));
   return section;
 }
+function metricSection(number, id, title, subtitle, theme, quotes) {
+  if (!quotes.length) return null;
+  const observed=quotes.filter(quote=>hasValue(quote)).length;
+  return E('section', {class:`metric-section metric-${theme}`, id,
+    'aria-label':title},
+    E('div', {class:'metric-section-heading'},
+      E('span', {class:'metric-section-number','aria-hidden':'true'},number),
+      E('div', {class:'metric-section-copy'},
+        E('h3', {class:'metric-section-title'},title),
+        E('p', {class:'metric-section-description'},subtitle)),
+      E('span', {class:'metric-section-coverage'},
+        state.demo ? `예시 ${quotes.length}개` : `수신 ${observed}/${quotes.length}`)),
+    E('div', {class:'market-grid'},quotes.map(quoteCard)));
+}
 function renderQuotes() {
-  const allQuotes = normalizedQuotes();
-  // Domestic indices are primary market indicators, not a secondary outlook.
-  // Keep explicit placeholders if KIS is unavailable, without fabricating values.
-  const domestic = [
-    ['kospi', '코스피', 'pt'],
-    ['kosdaq', '코스닥', 'pt'],
-    ['kr_foreign_kospi', '코스피 외국인 순매수', '억원'],
-    ['kr_foreign_kosdaq', '코스닥 외국인 순매수', '억원'],
-  ].map(([id, name, unit]) => allQuotes.find(quote => quote.id === id) ||
-    {id, name, unit, group: 'korea', value: null, change: null, status: 'unconfigured'});
-  const global = coreQuotes().map(core => allQuotes.find(quote => quote.id === core.id) || core);
-  global.push(...['silver', 'nickel'].map(id => allQuotes.find(quote => quote.id === id)).filter(Boolean));
-  return E('section', {class: 'panel'},
-    panelHead('국내외 핵심 지표', '국내 증시를 먼저, 글로벌 시장을 이어서 확인합니다.',
-      E('button', {type: 'button', class: 'text-button', onClick: () => navigate('markets')}, '전체 시장', icon('chevron'))),
-    E('div', {class: 'market-section-label'}, '국내 증시 · 코스피 / 코스닥 / 외국인 수급'),
-    E('div', {class: 'market-grid'}, domestic.map(quoteCard)),
-    E('div', {class: 'market-section-label'}, '글로벌 시장 · 주식 / 금리 / 환율 / 원자재 / 코인'),
-    E('div', {class: 'market-grid'}, global.map(quoteCard)),
-    E('div', {class: 'panel-foot'}, E('span', {class: 'gain'}, '● 순매수·상승'), '　',
-      E('span', {class: 'loss'}, '● 순매도·하락'),
-      '　외국인 수급은 해당 일자의 순매수액이며, 등락률이 아닙니다. 관측일과 데이터 출처를 확인하세요.'));
+  const allQuotes=normalizedQuotes();
+  const seen=new Set();
+  // Present real KIS Korean indexes/net buying before overseas factors.
+  // If KIS is unavailable, keep the genuine missing-data placeholders.
+  const domestic=[
+    ['kospi','코스피','pt'],['kosdaq','코스닥','pt'],
+    ['kr_foreign_kospi','코스피 외국인 순매수','억원'],
+    ['kr_foreign_kosdaq','코스닥 외국인 순매수','억원'],
+  ].map(([id,name,unit])=>{
+    seen.add(id);
+    return allQuotes.find(q=>q.id===id)||
+      {id,name,unit,group:'korea',value:null,change:null,status:'unconfigured'};
+  });
+  const take=predicate=>allQuotes.filter(q=>{
+    if(seen.has(q.id)||!predicate(q))return false;
+    seen.add(q.id);return true;
+  });
+  const domesticPlus=take(q=>groupName(q.group)==='한국시장');
+  const equities=take(q=>['sp500','nasdaq','nasdaqcom','sox','vix'].includes(q.id)
+    ||groupName(q.group)==='주식'||groupName(q.group)==='변동성');
+  const ratesFx=take(q=>['금리','외환'].includes(groupName(q.group))
+    ||['us2y','us10y','kr3y','kr10y','usdkrw','dxy','broadusd'].includes(q.id));
+  const commodities=take(q=>groupName(q.group)==='원자재');
+  const crypto=take(q=>groupName(q.group)==='디지털자산');
+  const other=take(()=>true);
+  const groups=[
+    ['01','metrics-korea','한국 증시 · 외국인 수급','코스피·코스닥의 방향과 외국인 자금 흐름을 구분해서 확인합니다.','korea',[...domestic,...domesticPlus]],
+    ['02','metrics-global','미국 증시 · 위험 심리','미국 대표 지수와 변동성 지표로 밤사이 시장 분위기를 확인합니다.','global',equities],
+    ['03','metrics-macro','금리 · 환율','미국·한국 채권금리와 달러 움직임을 살펴봅니다.','macro',ratesFx],
+    ['04','metrics-commodities','원자재','금·에너지·산업금속 가격을 주식시장과 구분해 비교합니다.','commodities',commodities],
+    ['05','metrics-crypto','디지털자산','BTC·ETH·SOL 등 코인 현물 가격을 확인합니다. USD와 USDT를 구분해 표시합니다.','crypto',crypto],
+    ['06','metrics-other','그 밖의 지표','앞선 범주에 포함되지 않은 관측 지표입니다.','other',other],
+  ].filter(group=>group[5].length);
+  const jump=E('nav',{class:'metric-jump','aria-label':'핵심 지표 주제 바로가기'},
+    E('span',{class:'metric-jump-label'},'주제별 이동'),
+    groups.map(([number,id,title])=>E('button',{type:'button',class:'metric-jump-button',
+      onClick:()=>document.getElementById(id)?.scrollIntoView({behavior:'smooth',block:'start'})},
+      number,E('span',{},title.split(' · ')[0]))));
+  return E('section', {class:'panel quote-overview-panel'},
+    panelHead('시장 핵심 지표 · 주제별 현황',
+      '먼저 국내 증시를 보고, 미국 증시 → 금리·환율 → 원자재 → 코인 순으로 읽으세요.',
+      E('button',{type:'button',class:'text-button',onClick:()=>navigate('markets')},'전체 시장',icon('chevron'))),
+    jump,
+    E('div',{class:'metric-sections'},
+      groups.map(([number,id,title,subtitle,theme,quotes])=>
+        metricSection(number,id,title,subtitle,theme,quotes))),
+    E('div',{class:'panel-foot'},
+      E('span',{class:'gain'},'● 상승·순매수'),'　',
+      E('span',{class:'loss'},'● 하락·순매도'),
+      '　외국인 수급은 등락률이 아닌 순매수액입니다. 서로 다른 지표의 관측일과 출처를 함께 확인하세요.'));
 }
 const CHART_INDEX_IDS = new Set(['kospi','kosdaq','sp500','nasdaq','nasdaqcom','sox','dxy','broadusd','vix']);
 function hasIndexChart(quote) { return CHART_INDEX_IDS.has(quote?.id) && !state.demo; }
