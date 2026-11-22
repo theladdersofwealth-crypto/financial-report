@@ -646,25 +646,44 @@ function renderQuotes() {
 const CHART_INDEX_IDS = new Set(['kospi','kosdaq','sp500','nasdaq','nasdaqcom','sox','dxy','broadusd','vix']);
 function hasIndexChart(quote) { return CHART_INDEX_IDS.has(quote?.id) && !state.demo; }
 function quoteCard(quote) {
-  const available = hasValue(quote);
-  const chartable = hasIndexChart(quote);
-  const flow = quote.id === 'kr_foreign_kospi' || quote.id === 'kr_foreign_kosdaq';
-  const observed = quote.timestampPrecision === 'month' && quote.observedAt ? `${String(quote.observedAt).slice(0, 7)} 월간 평균` : quote.timestampPrecision === 'day' && quote.observedAt ? String(quote.observedAt).slice(0, 10) : dateText(quote.observedAt);
-  const changeText = flow ? Number(quote.value) < 0 ? '외국인 순매도' : Number(quote.value) > 0 ? '외국인 순매수' : '외국인 순매수 0' : formatChange(quote);
-  const tone = flow ? changeClass(quote.value) : changeClass(quote.change);
-  return E('article', {class: `quote-card${chartable ? ' quote-card-clickable' : ''}`,
-    role: chartable ? 'button' : null,
-    tabindex: chartable ? 0 : null,
-    'aria-label': chartable ? `${quote.name} 과거 지수 차트 열기` : null,
-    onClick: chartable ? () => openIndexChart(quote) : null,
-    onKeydown: chartable ? event => {
-      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openIndexChart(quote); }
-    } : null,
-    title: `${quote.name} · ${state.demo ? '체험용 예시 데이터' : `${sourceName(quote.source)} · ${observed}${quote.basis ? ` · ${quote.basis}` : ''}${quote.reason ? ` · ${quote.reason}` : ''}`}`},
-    E('div', {class: 'quote-top'}, E('h3', {class: 'quote-name'}, quote.name), chartable ? E('span', {class: 'quote-group'}, icon('chart'), '차트') : E('span', {class: 'quote-group'}, groupName(quote.group))),
-    E('div', {class: 'quote-value-row'}, E('span', {class: 'quote-value'}, formatValue(quote)), E('span', {class: 'quote-unit'}, quote.unit || '')),
-    E('div', {class: 'quote-bottom'}, available ? E('span', {class: `quote-change ${tone}`}, changeText) : E('span', {class: 'quote-missing'}, '데이터 연결 필요'), available && !flow ? sparkline(quote) : null),
-    E('div', {class: 'quote-source'}, state.demo ? '체험용 예시' : available ? `${quote.status === 'stale' ? '⚠ 오래된 관측 · ' : quote.status === 'monthly' ? '월간 통계 · ' : ''}${sourceName(quote.source)} · ${observed}` : '— 데이터 연결 필요'));
+  const available=hasValue(quote);
+  const chartable=hasIndexChart(quote);
+  const foreign=quote.id?.startsWith('kr_foreign_');
+  const pension=quote.id?.startsWith('kr_pension_');
+  const flow=foreign||pension;
+  const investor=pension?'연기금':'외국인';
+  const observed=quote.timestampPrecision==='month'&&quote.observedAt
+    ? `${String(quote.observedAt).slice(0,7)} 월간`
+    : quote.timestampPrecision==='day'&&quote.observedAt
+      ? String(quote.observedAt).slice(0,10) : dateText(quote.observedAt);
+  const label=flow?(quote.id.endsWith('_kospi')?'코스피':'코스닥'):quote.name;
+  const changeText=flow
+    ? Number(quote.value)<0?`${investor} 순매도`
+      :Number(quote.value)>0?`${investor} 순매수`:'매수·매도 균형'
+    :formatChange(quote);
+  const tone=flow?changeClass(quote.value):changeClass(quote.change);
+  const observation=!available?'데이터 미수신'
+    :quote.status==='stale'?`⚠ 오래된 값 · ${observed}`:`${observed} 기준`;
+  return E('article', {class:`quote-card${chartable?' quote-card-clickable':''}${flow?' quote-card-flow':''}`,
+    role:chartable?'button':null,
+    tabindex:chartable?0:null,
+    'aria-label':chartable?`${quote.name} 과거 지수 차트 열기`:null,
+    onClick:chartable?()=>openIndexChart(quote):null,
+    onKeydown:chartable?event=>{
+      if(event.key==='Enter'||event.key===' '){event.preventDefault();openIndexChart(quote);}
+    }:null,
+    title:`${quote.name} · ${state.demo?'체험용 예시 데이터':observation}`},
+    E('div',{class:'quote-top'},E('h3',{class:'quote-name'},label),
+      chartable?E('span',{class:'quote-drilldown','aria-hidden':'true'},icon('chevron'))
+        :flow?E('span',{class:'quote-group quote-investor'},investor+' 수급')
+        :E('span',{class:'quote-group'},groupName(quote.group))),
+    E('div',{class:'quote-value-row'},
+      E('span',{class:`quote-value${flow&&available?' '+tone:''}`},formatValue(quote)),
+      E('span',{class:'quote-unit'},quote.unit||'')),
+    E('div',{class:'quote-bottom'},
+      available?E('span',{class:`quote-change ${tone}`},changeText)
+        :E('span',{class:'quote-missing'},'데이터 연결 필요'),
+      E('span',{class:'quote-observed'},state.demo?'예시':observation)));
 }
 
 // Observed index history only: daily closes are not intraday or candlestick data.
