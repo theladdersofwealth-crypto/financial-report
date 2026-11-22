@@ -354,6 +354,17 @@ function renderBrief() {
   const analysisNote = analysis?.status === 'unavailable' ? `분석 미생성 · ${analysis.reason || '근거 또는 연결 상태를 확인해 주세요.'}` : analysis?.generatedAt ? `분석 생성 ${dateText(analysis.generatedAt)} KST${analysis.dataAsOf ? ` · 분석 기준 ${dateText(analysis.dataAsOf)} KST` : ''}` : '관측 사실과 전망을 구분합니다. 자세한 근거는 기간별 전망에서 확인하세요.';
   return E('section', {class: 'panel brief-panel'}, E('div', {class: 'panel-head'}, E('p', {class: 'brief-label'}, icon('brief'), state.demo ? 'TODAY’S BRIEF · EXAMPLE' : 'TODAY’S BRIEF'), badge(state.demo ? '예시 시나리오' : state.market?.mode === 'unconfigured' ? '데이터 대기' : analysisLabel, state.demo ? 'amber' : 'blue')), E('div', {class: 'brief-content'}, E('h2', {}, summary.headline || '확인된 데이터를 기다리고 있습니다.'), E('div', {class: 'brief-points'}, (summary.points || []).slice(0, 3).map((point, i) => E('div', {class: 'brief-point'}, E('span', {class: 'point-number'}, `0${i + 1}`), E('span', {}, typeof point === 'string' ? point : point.text || point.title || ''))))), E('div', {class: 'brief-footer'}, E('span', {class: 'brief-foot-note'}, icon('info'), state.demo ? '화면 설명을 위한 가상 해석입니다. 투자 판단에 사용하지 마세요.' : analysisNote), E('span', {}, state.demo ? '예시 데이터' : state.market?.asOf ? `데스크 갱신 ${dateText(state.market.asOf)} KST` : '분석 데이터 미연결')));
 }
+function renderBacktest(review) {
+  const outer = E('div', {class:'source-cards'});
+  for (const [name,item] of [['KOSPI',review.kospi],['KOSDAQ',review.kosdaq]]) {
+    const body = E('div',{class:'source-body'});
+    body.append(E('h3',{class:'source-name'}, name+' · '+(item.status==='exploratory'?'표본 확보':'표본 부족')));
+    body.append(E('p',{class:'source-description'},item.agreementRate===null?('판정 가능한 '+item.classifiedDays+'거래일 · 최소 '+review.minimumClassifiedDays+'일 필요'):('과거 종가 방향 일치 '+item.agreementRate+'% · '+item.classifiedDays+'거래일')));
+    body.append(E('p',{class:'tiny muted'},(item.from||'—')+' ~ '+(item.until||'—')+' · 미래 적중률을 뜻하지 않습니다.'));
+    outer.append(E('div',{class:'source-card'},body));
+  }
+  return outer;
+}
 function renderImpact() {
   const impact = state.demo ? null : state.market?.impact;
   const section = E('section', {class: 'panel', id: 'korea-impact'},
@@ -391,6 +402,10 @@ function renderImpact() {
         ? E('p', {class: 'tiny muted'}, `직전 관측 대비 ${quote.change > 0 ? '+' : ''}${quote.change}${quote.changeUnit || ''} · ${quote.changeBasis || '전일 대비'}`) : null,
       quote?.source ? E('p', {class: 'tiny muted'}, sourceName(quote.source)) : null)))));
 
+  if (impact.validation) {
+    section.append(E('div', {class:'panel-foot'}, '과거 방향 일치 점검 · 탐색적 통계'), renderBacktest(impact.validation),
+      E('div', {class:'source-disclaimer'}, (impact.validation.limitations || []).join(' ')));
+  }
   const themes = (impact.themes || []).map(theme =>
     E('div', {class: 'source-card'},
       E('div', {class: 'source-body'},
