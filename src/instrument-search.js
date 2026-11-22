@@ -67,7 +67,7 @@ export function normalizeSearch(market,query,exchange=''){
   if(type==='KR'&&!/^[0-9]{6}$/.test(symbol))return null;
   if(type==='US'&&!/^[A-Z][A-Z0-9.\-]{0,10}$/.test(symbol))return null;
   if(type==='CRYPTO'&&!/^[A-Z0-9/\- ]{2,24}$/.test(symbol))return null;
-  if(!['','NAS','NYS','AMS'].includes(exchange))return null;
+  if(!['','NAS','NYS','AMS'].includes(exchange) || (type!=='US' && exchange))return null;
   return {market:type,symbol,exchange:type==='US'?exchange:''};
 }
 
