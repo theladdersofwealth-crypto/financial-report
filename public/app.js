@@ -285,7 +285,18 @@ function renderDesk() {
   document.querySelector('#modal-root').replaceChildren();
   const sidebar = E('aside', {class: 'sidebar', id: 'sidebar', 'aria-label': '주 메뉴'}, brand(), E('p', {class: 'nav-section-title'}, 'YOUR MARKET DESK'));
   const publicNav = E('nav', {class: 'nav-list', 'aria-label': '시장 메뉴'});
-  navigation.filter(x => !x.admin).forEach(item => publicNav.append(navButton(item)));
+  const groups=[
+    ['시장 확인',['overview','markets','instrument']],
+    ['분석 · 일정',['outlooks','calendar']],
+    ['데이터 검증',['sources']],
+  ];
+  for (const [name,views] of groups) {
+    publicNav.append(E('p',{class:'nav-group-label'},name));
+    views.forEach(id=>{
+      const item=navigation.find(x=>x.id===id);
+      if(item)publicNav.append(navButton(item));
+    });
+  }
   sidebar.append(publicNav);
   if (state.user.role === 'admin') {
     sidebar.append(E('p', {class: 'nav-section-title'}, 'WORKSPACE'), E('nav', {class: 'nav-list', 'aria-label': '관리 메뉴'}, navigation.filter(x => x.admin).map(navButton)));
@@ -337,6 +348,11 @@ async function navigate(view) {
   renderView();
   if (view === 'users' || view === 'activity') await loadAdmin(view);
 }
+function overviewSectionIntro(title,subtitle,iconName) {
+  return E('div',{class:'overview-section-intro'},
+    E('div',{class:'overview-section-mark'},icon(iconName)),
+    E('div',{},E('h2',{},title),E('p',{},subtitle)));
+}
 function renderView() {
   if (!state.user) return;
   const item = navigation.find(x => x.id === state.view) || navigation[0];
@@ -344,7 +360,14 @@ function renderView() {
   const refresh = B(E('span', {class: 'button-label'}, '새로고침'), event => busy(event.currentTarget, refreshCurrent), 'small', 'refresh', {'aria-label': '현재 화면 새로고침'});
   document.querySelector('#page-header').replaceChildren(E('div', {class: 'page-header'}, E('div', {}, E('p', {class: 'eyebrow'}, item.english), E('h1', {}, item.title), E('p', {class: 'page-subtitle'}, item.subtitle)), E('div', {class: 'header-actions'}, dataState(), refresh)));
   const main = document.querySelector('#main-column');
-  if (state.view === 'overview') main.replaceChildren(renderQuotes(), renderBrief(), renderImpact(), E('div', {class: 'section-pair'}, renderSectors(), renderLeaders()), renderOutlook(), renderEvents(true));
+  if (state.view === 'overview') main.replaceChildren(
+    renderQuotes(),
+    overviewSectionIntro('시장 해석','글로벌 숫자가 국내 주식시장에 어떤 의미인지 살펴봅니다.','brief'),
+    renderBrief(), renderImpact(),
+    overviewSectionIntro('업종과 주도 기업','미국 업종별 흐름과 주요 기술주가 같은 방향으로 움직이는지 확인합니다.','layers'),
+    E('div', {class: 'section-pair'}, renderSectors(), renderLeaders()),
+    overviewSectionIntro('앞으로 볼 변수','기간별 조건과 예정된 경제 이벤트를 분리해서 확인합니다.','calendar'),
+    renderOutlook(), renderEvents(true));
   if (state.view === 'markets') main.replaceChildren(renderMarketTable(), renderEquityTable('미국 섹터 · ETF 대용지표', state.market?.sectors || []), renderEquityTable('미국 대표 종목', state.market?.leaders || []));
   if (state.view === 'instrument') main.replaceChildren(renderInstrumentSearch());
   if (state.view === 'outlooks') main.replaceChildren(renderImpact(), renderOutlook(), methodologyPanel());
