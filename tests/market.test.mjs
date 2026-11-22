@@ -441,7 +441,13 @@ test('verified KIS overseas candidates win over FRED and missing Finnhub; mismat
       ]});
     }
     if(u.pathname.endsWith('inquire-investor-daily-by-market')){
-      return Response.json({rt_cd:'0',output:[{stck_bsop_date:day(1).replace(/-/g,''),frgn_ntby_tr_pbmn:'1100'}]});
+      const market=u.searchParams.get('FID_INPUT_ISCD_1');
+      // Regression: foreign NET flow is signed: negative = selling, zero
+      // = balanced buys and sells. Neither is a missing observation.
+      return Response.json({rt_cd:'0',output:[{
+        stck_bsop_date:day(1).replace(/-/g,''),
+        frgn_ntby_tr_pbmn:market==='KSP'?'-1095596':'0',
+      }]});
     }
     if(u.pathname.endsWith('inquire-daily-chartprice')){
       const isWrong=u.searchParams.get('FID_INPUT_ISCD')==='.NDX';
@@ -470,6 +476,14 @@ test('verified KIS overseas candidates win over FRED and missing Finnhub; mismat
   assert.equal(market.sectors.length,11);
   assert.equal(market.leaders.length,7);
   assert.equal(market.leaders.find(q=>q.symbol==='NVDA')?.provider,'kis');
+  const flowKospi=market.quotes.find(q=>q.id==='kr_foreign_kospi');
+  const flowKosdaq=market.quotes.find(q=>q.id==='kr_foreign_kosdaq');
+  assert.equal(flowKospi?.value,-10955.96,'KOSPI foreign net SELLING must remain negative, not missing');
+  assert.equal(flowKosdaq?.value,0,'KOSDAQ zero net flow must remain a valid observation');
+  assert.equal(flowKospi?.provider,'kis');
+  assert.equal(flowKosdaq?.provider,'kis');
+  assert.equal(flowKospi?.status,'daily');
+  assert.equal(flowKosdaq?.status,'daily');
   assert.equal(market.sources.find(x=>x.id==='kis')?.status,'partial');
   assert.equal(JSON.stringify(market).includes('unique-us-market-test-secret'),false);
   assert.equal(JSON.stringify(market).includes('fixture-overseas-token'),false);
