@@ -181,3 +181,108 @@ export async function collectKis(env) {
   ]);
   return fetched.filter(Boolean);
 }
+
+/**
+ * Overseas KIS quote-first candidates, strictly read-only. The configured
+ * index symbols are probed; any invalid/missing response preserves FRED.
+ * US sector ETFs use the AMEX/NYSE Arca pricing code AMS; invalid responses
+ * preserve Finnhub without attributing an unsupported exchange.
+ */
+const OVERSEAS_INDEXES = [
+  ['sp500', '.INX'],
+  ['nasdaq', '.NDX'],
+  ['nasdaqcom', '.IXIC'],
+  ['sox', '.SOX'],
+];
+const OVERSEAS_SECURITIES = [
+  ['NVDA','엔비디아','equity','NAS'],['AAPL','애플','equity','NAS'],
+  ['MSFT','마이크로소프트','equity','NAS'],['AMZN','아마존','equity','NAS'],
+  ['GOOGL','알파벳','equity','NAS'],['META','메타','equity','NAS'],
+  ['TSLA','테슬라','equity','NAS'],
+  ['XLK','기술','sector','AMS'],['XLF','금융','sector','AMS'],
+  ['XLE','에너지','sector','AMS'],['XLV','헬스케어','sector','AMS'],
+  ['XLY','경기소비재','sector','AMS'],['XLP','필수소비재','sector','AMS'],
+  ['XLI','산업재','sector','AMS'],['XLB','소재','sector','AMS'],
+  ['XLU','유틸리티','sector','AMS'],['XLRE','부동산','sector','AMS'],
+  ['XLC','통신서비스','sector','AMS'],
+];
+
+function overseasSecurityQuote(id,name,group,exchange,symbol,row) {
+  const value=val(row?.last),change=val(row?.rate);
+  if(value===null||value<=0||!Number.isFinite(change)||Math.abs(change)>100) return null;
+  if(typeof row.rsym==='string' && row.rsym.trim() &&
+     !row.rsym.trim().toUpperCase().endsWith(symbol)) return null;
+  // KIS last-price response has NO actual observation timestamp.
+  // fetchedAt is a retrieval time, not an exchange trade time.
+  const fetchedAt=new Date().toISOString();
+  return {
+    id,provider:'kis',source:'한국투자증권 KIS Open API',sourceUrl:'https://apiportal.koreainvestment.com/',
+    name,symbol,group,unit:'USD',value,change,changeUnit:'%',
+    changeBasis:'한투 제공 전일 종가 대비 변동률',
+    observedAt:fetchedAt,retrievedAt:fetchedAt,timestampPrecision:'retrieval',
+    status:'delayed',history:[],reason:null,
+    basis:group==='sector'?'미국 상장 섹터 ETF · 실제 섹터 지수는 아님':'미국 상장 종목',
+    delay:'해외주식 현재체결가 · 거래소 체결시각 미제공 · 조회시각 별도 표시 · 실시간 여부는 이용권한에 따름',
+  };
+}
+
+async function overseasIndexQuote(env,token,id,code) {
+  const data=await kisGet(env,token,'/uapi/overseas-price/v1/quotations/inquire-daily-chartprice',
+    'FHKST03030100',{
+      FID_COND_MRKT_DIV_CODE:'N',FID_INPUT_ISCD:code,
+      FID_INPUT_DATE_1:fromKstDaysAgo(145),FID_INPUT_DATE_2:todayKst(),
+      FID_PERIOD_DIV_CODE:'D',
+    });
+  const bars=Array.isArray(data?.output2) ? data.output2 : [];
+  const history=bars.map(row=>({
+    date:dateOf(row?.stck_bsop_date),value:val(row?.ovrs_nmix_prpr),
+    open:val(row?.ovrs_nmix_oprc),high:val(row?.ovrs_nmix_hgpr),
+    low:val(row?.ovrs_nmix_lwpr),
+  })).filter(row=>row.date&&row.value!==null&&row.value>0
+    && row.date<=new Date().toISOString().slice(0,10))
+    .sort((a,b)=>a.date.localeCompare(b.date));
+  if(!history.length) return null;
+  const last=history.at(-1),prev=history.at(-2);
+  const age=Date.now()-Date.parse(last.date+'T23:59:59-04:00');
+  if(age>7*86400000 || age < -86400000) return null;
+  return {
+    id,provider:'kis',source:'한국투자증권 KIS Open API',
+    sourceUrl:'https://apiportal.koreainvestment.com/',observedAt:last.date,
+    retrievedAt:new Date().toISOString(),timestampPrecision:'day',status:'daily',
+    value:last.value,change:prev?.value ? (last.value-prev.value)/prev.value*100:null,
+    changeUnit:'%',changeBasis:'KIS 해외지수 직전 관측 종가 대비',unit:'pt',
+    history:history.map(({date,value})=>({date,value})).slice(-65),
+    basis:'한투 해외지수 일별 종가 · FRED 동일 지수 대조 후 우선 적용',
+    delay:'해외지수 종가 · 장중 실시간 시세 아님',reason:null,
+  };
+}
+
+async function overseasSecurity(env,token,[symbol,name,group,exchange]) {
+  const data=await kisGet(env,token,'/uapi/overseas-price/v1/quotations/price',
+    'HHDFS00000300',{AUTH:'',EXCD:exchange,SYMB:symbol});
+  return overseasSecurityQuote(symbol.toLowerCase(),name,group,exchange,symbol,data?.output);
+}
+
+/**
+ * Read-only overseas quote candidates, and never a reason to lose older
+ * FRED/Finnhub feeds. Limits concurrent requests to respect KIS rate limits.
+ */
+export async function collectKisOverseas(env) {
+  if(!kisConfigured(env)) return {indices:[],sectors:[],leaders:[]};
+  const token=await tokenFor(env);
+  if(!token) return {indices:[],sectors:[],leaders:[]};
+  const tasks=[
+    ...OVERSEAS_INDEXES.map(([id,code])=>()=>overseasIndexQuote(env,token,id,code)),
+    ...OVERSEAS_SECURITIES.map(entry=>()=>overseasSecurity(env,token,entry)),
+  ];
+  const results=[];
+  for(let i=0;i<tasks.length;i+=4) {
+    const batch=await Promise.all(tasks.slice(i,i+4).map(task=>task().catch(()=>null)));
+    results.push(...batch.filter(Boolean));
+  }
+  return {
+    indices:results.filter(q=>OVERSEAS_INDEXES.some(([id])=>id===q.id)),
+    sectors:results.filter(q=>q.group==='sector'),
+    leaders:results.filter(q=>q.group==='equity'),
+  };
+}
