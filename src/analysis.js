@@ -47,7 +47,7 @@ impact는 검증되지 않은 가중치로 만든 해외 시장 환경 점검입
 관측 사실과 원인 해석을 구분하고, 인과관계는 가능성으로 표현하세요. 결측/오래된 관측/다른 기준시각을 명시하고 데이터가 부족하면 판단을 유보하세요. 일별 종가, ECB 기준환율, 실시간 호가, 코인 24시간 변화율은 동일한 기준이 아닙니다. VIX는 기대변동성이지 상승·하락 확률이 아닙니다.
 코스피와 코스닥을 구분하여 조건부 시나리오를 작성하세요. 상승 확률 숫자, 확정적 수익·주가 예측, 직접적인 매수·매도 지시는 쓰지 마세요. 근거 문장에는 제공된 지표 이름과 관측 날짜를 포함하세요. 결측값·미확인 실적·미확인 국내 수급으로 강한 결론을 내리지 마세요.
 summary는 120자 이내 headline과 2~4개 points입니다. 전망은 day(오늘), short(2~3거래일), week(다음 주), month(1개월), quarter(3~6개월) 각각 정확히 한 개씩 작성하세요. 각 전망의 title은 60자 이내, kospi와 kosdaq는 각각 220자 이내, evidence/counter/invalidation은 각각 1~3개와 항목당 200자 이내입니다. 각 기간은 서로 다른 질문에 답하세요. 장기 전망에 필요한 경기·이익 자료가 없으면 그 부족을 적으세요.
-confidence는 낮음/보통/높음 중 근거의 충실도입니다. 국내 지수·외국인 수급·실적자료가 없으면 코스피·코스닥 방향에 높은 확신을 표시하지 마세요. 응답은 제시한 JSON schema를 따르세요.`;
+confidence는 낮음/보통/높음 중 근거의 충실도입니다. 국내 지수·외국인 수급·실적자료가 없으면 코스피·코스닥 방향에 높은 확신을 표시하지 마세요. 국내 일별 종가와 코스피 외국인 순매수 실측이 있으면 해당 시장·날짜·수치를 정확하게 소개하되, 이를 사전 예측 근거 또는 코스닥 외국인 수급으로 오인하지 마세요. 응답은 제시한 JSON schema를 따르세요.`;
 
 function isRecord(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 function plain(value, limit) {
@@ -101,6 +101,15 @@ function impactInput(input) {
     })),
   } : null;
 }
+function domesticInput(quote) {
+  return quote ? {
+    id: field(quote.id, 40), name: field(quote.name, 80),
+    value: number(quote.value), unit: field(quote.unit, 20),
+    change: number(quote.change), changeUnit: field(quote.changeUnit, 20),
+    changeBasis: field(quote.changeBasis, 150),
+    observedAt: field(quote.observedAt, 40), source: field(quote.source, 150),
+  } : null;
+}
 function snapshotInput(market) {
   return {
     quotes: (Array.isArray(market?.quotes) ? market.quotes : []).slice(0, 50).map(quoteInput),
@@ -114,6 +123,11 @@ function snapshotInput(market) {
       mixedDates: market.impact.mixedDates === true,
       kospi: impactInput(market.impact.kospi),
       kosdaq: impactInput(market.impact.kosdaq),
+      domestic: {
+        kospi: domesticInput(market.impact.domestic?.kospi),
+        kosdaq: domesticInput(market.impact.domestic?.kosdaq),
+        foreignKospi: domesticInput(market.impact.domestic?.foreignKospi),
+      },
       themes: (Array.isArray(market.impact.themes) ? market.impact.themes : []).slice(0, 6).map(theme => ({
         title: field(theme?.title, 60), state: field(theme?.state, 30),
         reason: field(theme?.reason, 250), evidence: field(theme?.evidence, 180),
