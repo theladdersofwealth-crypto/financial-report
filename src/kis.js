@@ -154,7 +154,7 @@ async function indexQuote(env,token,id,iscd) {
     chartBasis: 'KIS 공식 일봉·주봉·월봉별 시가·고가·저가·종가',
   };
 }
-async function investorQuote(env,token,id,iscd,market,field='frgn_ntby_tr_pbmn') {
+async function investorQuotes(env,token,iscd,market,suffix) {
   // KIS reference requires FID_INPUT_DATE_1 and _2 to be the SAME date.
   // Weekends use the previous business weekday; official holidays may yield
   // no rows, which must remain missing rather than inventing a flow.
@@ -167,7 +167,10 @@ async function investorQuote(env,token,id,iscd,market,field='frgn_ntby_tr_pbmn')
       FID_INPUT_DATE_2:date,FID_INPUT_ISCD_1:market,FID_INPUT_ISCD_2:iscd,
     });
   // API may refuse a market/plan. Never replace actual flow with synthetic data.
-  return canonicalQuote(id,data?.output,field,100);
+  return [
+    canonicalQuote(`kr_foreign_${suffix}`,data?.output,'frgn_ntby_tr_pbmn',100),
+    canonicalQuote(`kr_pension_${suffix}`,data?.output,'fund_ntby_tr_pbmn',100),
+  ].filter(Boolean);
 }
 export async function collectKis(env) {
   if(!kisConfigured(env)) return [];
@@ -176,12 +179,10 @@ export async function collectKis(env) {
   const fetched=await Promise.all([
     indexQuote(env,token,'kospi','0001'),
     indexQuote(env,token,'kosdaq','1001'),
-    investorQuote(env,token,'kr_foreign_kospi','0001','KSP'),
-    investorQuote(env,token,'kr_foreign_kosdaq','1001','KSQ'),
-    investorQuote(env,token,'kr_pension_kospi','0001','KSP','fund_ntby_tr_pbmn'),
-    investorQuote(env,token,'kr_pension_kosdaq','1001','KSQ','fund_ntby_tr_pbmn'),
+    investorQuotes(env,token,'0001','KSP','kospi'),
+    investorQuotes(env,token,'1001','KSQ','kosdaq'),
   ]);
-  return fetched.filter(Boolean);
+  return fetched.flat().filter(Boolean);
 }
 
 /**
