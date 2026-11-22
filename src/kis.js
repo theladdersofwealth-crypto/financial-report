@@ -289,3 +289,102 @@ export async function collectKisOverseas(env) {
     leaders:results.filter(q=>q.group==='equity'),
   };
 }
+
+
+/**
+ * Read-only capability probes for exact KR sovereign benchmark yields and
+ * ICE DXY spot index. Do not assume a bond coupon/YTM or USD futures contract
+ * is the benchmark index. Official comp-interest examples document class 1
+ * as overseas rates; class 2 is probed only, never assumed supported.
+ */
+function rateQuoteByName(rows,id,years) {
+  const matches=(Array.isArray(rows)?rows:[]).filter(row=>{
+    const label=String(row?.hts_kor_isnm||'').replace(/\s+/g,'');
+    const isKoreanSovereign=/(국고채|국고채권|국채|KTB|Korea(?:n)?Treasury)/i.test(label);
+    const maturity = years===3 ? /(3년|3Y|3YR|3YEAR)/i : /(10년|10Y|10YR|10YEAR)/i;
+    return isKoreanSovereign && maturity.test(label);
+  }).map(row=>{
+    const rate=val(row?.bond_mnrt_prpr);
+    const date=dateOf(row?.stck_bsop_date);
+    if(!date||date>new Date().toISOString().slice(0,10)
+      || rate===null||rate<=0||rate>=25)return null;
+    return {date,value:rate};
+  }).filter(Boolean).sort((a,b)=>a.date.localeCompare(b.date));
+  if(!matches.length)return null;
+  const last=matches.at(-1);
+  const age=Date.now()-Date.parse(last.date+'T23:59:59+09:00');
+  if(age>7*86400000 || age < -86400000)return null;
+  return {
+    id,provider:'kis',source:'한국투자증권 KIS Open API',sourceUrl:'https://apiportal.koreainvestment.com/',
+    observedAt:last.date,retrievedAt:new Date().toISOString(),timestampPrecision:'day',
+    status:'daily',value:last.value,unit:'%',change:null,changeUnit:'bp',
+    changeBasis:'전일 기준금리와의 비교자료 미제공; 임의로 계산하지 않음',
+    history:matches.slice(-65),basis:`국고채 ${years}년 대표금리 명칭을 가진 한투 금리종합 관측값`,
+    delay:'한투 금리종합 일별 관측 · 체결 시각 보증 없음',reason:null,
+  };
+}
+
+async function probeKisRates(env,token) {
+  const path='/uapi/domestic-stock/v1/quotations/comp-interest';
+  const calls=['1','2'].map(cls=>kisGet(env,token,path,'FHPST07020000',{
+    FID_COND_MRKT_DIV_CODE:'I',FID_COND_SCR_DIV_CODE:'20702',
+    FID_DIV_CLS_CODE:cls,FID_DIV_CLS_CODE1:'',
+  }));
+  const responses=await Promise.all(calls);
+  const rows=responses.flatMap(data=>[...(Array.isArray(data?.output1)?data.output1:[]),
+    ...(Array.isArray(data?.output2)?data.output2:[])]);
+  return [rateQuoteByName(rows,'kr3y',3),rateQuoteByName(rows,'kr10y',10)].filter(Boolean);
+}
+
+async function probeKisDxy(env,token) {
+  // .DXY is a candidate only; validate provider metadata explicitly.
+  // N means OVERSEAS INDEX, not the separate ICE currency-futures contract.
+  const data=await kisGet(env,token,'/uapi/overseas-price/v1/quotations/inquire-daily-chartprice',
+    'FHKST03030100',{
+      FID_COND_MRKT_DIV_CODE:'N',FID_INPUT_ISCD:'.DXY',
+      FID_INPUT_DATE_1:fromKstDaysAgo(90),FID_INPUT_DATE_2:todayKst(),
+      FID_PERIOD_DIV_CODE:'D',
+    });
+  const info=Array.isArray(data?.output1)?data.output1[0]:data?.output1;
+  const name=String(info?.hts_kor_isnm||'');
+  if (!/(dxy|u\.?s\.?\s*dollar\s*index|미국\s*달러\s*(지수|인덱스))/i.test(name)
+      || /(선물|futures|future|ETF)/i.test(name))return null;
+  const index=overseasIndexQuoteFromResponse(data);
+  return index ? {...index,id:'dxy',
+    basis:'한투 해외지수 DXY · 원자료 명칭 검증 · ICE 선물 시세가 아님',
+    changeBasis:'직전 관측 종가 대비',
+  } : null;
+}
+
+function overseasIndexQuoteFromResponse(data) {
+  const history=(Array.isArray(data?.output2)?data.output2:[]).map(row=>({
+    date:dateOf(row?.stck_bsop_date),value:val(row?.ovrs_nmix_prpr),
+  })).filter(x=>x.date&&x.value!==null&&x.value>0&&
+    x.date<=new Date().toISOString().slice(0,10)).sort((a,b)=>a.date.localeCompare(b.date));
+  if(!history.length)return null;
+  const last=history.at(-1),prev=history.at(-2);
+  const age=Date.now()-Date.parse(last.date+'T23:59:59-04:00');
+  if(age>7*86400000||age< -86400000)return null;
+  return {
+    provider:'kis',source:'한국투자증권 KIS Open API',
+    sourceUrl:'https://apiportal.koreainvestment.com/',
+    observedAt:last.date,retrievedAt:new Date().toISOString(),timestampPrecision:'day',
+    status:'daily',value:last.value,unit:'pt',change:prev?.value?
+      (last.value-prev.value)/prev.value*100:null,changeUnit:'%',
+    history:history.slice(-65),delay:'해외지수 일별 종가 · 실시간 시세 아님',
+    reason:null,
+  };
+}
+
+// Called only server-side, with existing Cloudflare KIS Secrets and cached token.
+// Invalid response / unrelated instrument => no substitution.
+export async function collectKisMacro(env) {
+  if(!kisConfigured(env))return [];
+  const token=await tokenFor(env);
+  if(!token)return [];
+  const [rates,dxy]=await Promise.all([
+    probeKisRates(env,token).catch(()=>[]),
+    probeKisDxy(env,token).catch(()=>null),
+  ]);
+  return [...rates,...(dxy?[dxy]:[])];
+}
