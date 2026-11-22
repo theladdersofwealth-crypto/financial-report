@@ -212,7 +212,9 @@ test('optional ECOS feeds return official Korean daily yields and basis-point ch
     assert.equal(quote.observedAt, day(1));
     assert.equal(quote.source, '한국은행 ECOS');
   }
-  assert.equal(data.sources.find(source => source.id === 'ecos')?.status, 'connected');
+  assert.equal(data.sources.find(source => source.id === 'ecos')?.status, 'partial');
+  assert.equal(data.sources.find(source => source.id === 'ecos')?.received, 2);
+  assert.equal(data.sources.find(source => source.id === 'ecos')?.missing, 3);
   assert.equal(JSON.stringify(data).includes(secret), false, 'credentials must not enter responses');
   assert.equal(data.impact.method, 'weighted_directional_checklist_v1');
 });
