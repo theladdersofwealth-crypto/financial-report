@@ -26,7 +26,7 @@ test('KIS Korea indexes and signed foreign flows are rendered before global indi
     assert.ok(section.indexOf(groups[i-1])<section.indexOf(groups[i]),'market topics must stay in reading order');
   assert.match(section,/groups\.map\(\(\[number,id,title,subtitle,theme,quotes\]\)=>/);
   assert.match(section,/seen\.add\(id\)/,'do not duplicate KIS domestic indicators');
-  assert.match(section, /Number\(quote\.value\) < 0 \? '외국인 순매도'/);
+  assert.match(code, /const investor = pension \? '연기금' : '외국인'/);
   assert.match(code, /quote\.id\?\.startsWith\('kr_foreign_'\) \? 2/,
     'foreign flow values in KRW 100M should retain two fractional digits');
 });
