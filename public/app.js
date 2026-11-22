@@ -326,7 +326,7 @@ function renderView() {
   const refresh = B(E('span', {class: 'button-label'}, '새로고침'), event => busy(event.currentTarget, refreshCurrent), 'small', 'refresh', {'aria-label': '현재 화면 새로고침'});
   document.querySelector('#page-header').replaceChildren(E('div', {class: 'page-header'}, E('div', {}, E('p', {class: 'eyebrow'}, item.english), E('h1', {}, item.title), E('p', {class: 'page-subtitle'}, item.subtitle)), E('div', {class: 'header-actions'}, dataState(), refresh)));
   const main = document.querySelector('#main-column');
-  if (state.view === 'overview') main.replaceChildren(renderBrief(), renderImpact(), renderQuotes(), E('div', {class: 'section-pair'}, renderSectors(), renderLeaders()), renderOutlook(), renderEvents(true));
+  if (state.view === 'overview') main.replaceChildren(renderQuotes(), renderBrief(), renderImpact(), E('div', {class: 'section-pair'}, renderSectors(), renderLeaders()), renderOutlook(), renderEvents(true));
   if (state.view === 'markets') main.replaceChildren(renderMarketTable(), renderEquityTable('미국 섹터 · ETF 대용지표', state.market?.sectors || []), renderEquityTable('미국 대표 종목', state.market?.leaders || []));
   if (state.view === 'outlooks') main.replaceChildren(renderImpact(), renderOutlook(), methodologyPanel());
   if (state.view === 'calendar') main.replaceChildren(renderEvents(false));
