@@ -39,6 +39,22 @@ test('standalone demo renders every destination without accessing member APIs',a
     assert.ok(document.querySelector('#main-column').textContent.trim().length>20,`${view} content`);
     assert.ok(document.querySelector('.demo-banner'),`${view} retains demo warning`);
   }
+  // Registration is a separate four-field flow; existing member and
+  // administrator login modes retain their original credential formats.
+  vm.runInContext('renderWelcome("register")',ctx);
+  assert.ok(document.querySelector('input[name="nickname"]'));
+  assert.ok(document.querySelector('input[name="birth6"]'));
+  assert.equal(document.querySelector('input[name="birth6"]').getAttribute('maxlength'),'6');
+  assert.ok(document.querySelector('#registerGender'));
+  assert.equal(document.querySelector('#registerGender').querySelectorAll('option').length,3);
+  assert.ok(document.querySelector('input[name="pin"]'));
+  assert.equal(document.querySelector('input[name="pin"]').getAttribute('maxlength'),'4');
+  vm.runInContext('renderWelcome("pin")',ctx);
+  assert.equal(document.querySelector('input[name="birth6"]'),null,'existing PIN members are not blocked by new profile fields');
+  assert.ok(document.querySelector('input[name="pin"]'));
+  vm.runInContext('renderWelcome("login")',ctx);
+  assert.ok(document.querySelector('input[name="username"]'),'legacy admin/password sign-in still exists');
+  assert.equal(document.querySelector('input[name="birth6"]'),null);
   assert.equal(requested.length,0,'file preview never contacts a member or market API');
   timers.forEach(nativeClearTimeout);
 });

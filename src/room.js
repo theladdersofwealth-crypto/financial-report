@@ -35,6 +35,24 @@ export async function verifyPassword(password, encoded) {
 function publicUser(row) {
   return { id: row.id, username: row.username, name: row.name, role: row.role, pinLogin: row.auth_mode === 'pin', mustChangePassword: !!row.must_change_password, disabled: !!row.disabled, createdAt: new Date(row.created_at).toISOString(), lastSeen: row.last_seen ? new Date(row.last_seen).toISOString() : null };
 }
+// Six-digit YYMMDD is retained as entered; it is not an identity number.
+function validateBirth6(value) {
+  if (typeof value !== 'string' || !/^[0-9]{6}$/.test(value)) throw new ApiError(400, '생년월일은 950705처럼 숫자 6자리로 입력해 주세요.');
+  const yy=Number(value.slice(0,2)),month=Number(value.slice(2,4)),day=Number(value.slice(4,6));
+  const current=new Date().getUTCFullYear();
+  const year=yy<=current%100?2000+yy:1900+yy;
+  const actual=new Date(Date.UTC(year,month-1,day));
+  if(month<1||month>12||day<1||actual.getUTCFullYear()!==year||actual.getUTCMonth()+1!==month||actual.getUTCDate()!==day
+    ||actual.getTime()>Date.now()) throw new ApiError(400, '실제 존재하는 생년월일을 입력해 주세요.');
+  return value;
+}
+function validateGender(value) {
+  if(value!=='남'&&value!=='여') throw new ApiError(400, '성별은 남 또는 여를 선택해 주세요.');
+  return value;
+}
+function selfUser(row) {
+  return {...publicUser(row), birth6: row.birth_ymd || null, gender: row.gender || null};
+}
 function validatePin(value) {
   if (typeof value !== 'string' || !/^[0-9]{4}$/.test(value)) throw new ApiError(400, 'PIN은 숫자 4자리로 입력해 주세요.');
   return value;
@@ -109,9 +127,13 @@ export class DeskRoom {
         active_seconds REAL NOT NULL DEFAULT 0, PRIMARY KEY(user_id,day)
       );
       INSERT OR IGNORE INTO settings(key,value) VALUES ('chatThreshold','2');`);
-      if (!this.rows('PRAGMA table_info(users)').some(column => column.name === 'auth_mode')) {
+      const columns=new Set(this.rows('PRAGMA table_info(users)').map(column=>column.name));
+      if (!columns.has('auth_mode')) {
         this.sql.exec("ALTER TABLE users ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'password' CHECK(auth_mode IN ('password','pin'))");
       }
+      // Additive, nullable migration: existing accounts and passwords unchanged.
+      if (!columns.has('birth_ymd')) this.sql.exec('ALTER TABLE users ADD COLUMN birth_ymd TEXT');
+      if (!columns.has('gender')) this.sql.exec('ALTER TABLE users ADD COLUMN gender TEXT');
     });
   }
 
@@ -144,7 +166,7 @@ export class DeskRoom {
     this.sql.exec('INSERT INTO sessions(id,user_id,created_at,expires_at,last_seen,accounted_at) VALUES(?,?,?,?,?,?)', id, user.id, now, now + SESSION_MS, now, now);
     this.sql.exec('UPDATE users SET last_seen=? WHERE id=?', now, user.id);
     await this.ensureAlarm();
-    return result({ user: publicUser({ ...user, last_seen: now }) }, 200, { 'Set-Cookie': sessionCookie(token, request, true) });
+    return result({ user: selfUser({ ...user, last_seen: now }) }, 200, { 'Set-Cookie': sessionCookie(token, request, true) });
   }
 
   rate(key, limit, duration, increment = true) {
@@ -154,6 +176,25 @@ export class DeskRoom {
     if (increment) this.sql.exec('INSERT INTO throttle(key,count,started_at) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=CASE WHEN started_at>? THEN count+1 ELSE 1 END, started_at=CASE WHEN started_at>? THEN started_at ELSE excluded.started_at END', key, now, now - duration, now - duration);
   }
 
+  async pinRegister(request) {
+    const data = await jsonBody(request);
+    const name=validateNickname(data.nickname),username=name.toLowerCase().normalize('NFC');
+    const birth6=validateBirth6(data.birth6),gender=validateGender(data.gender),pin=validatePin(data.pin);
+    const network=await digest(clientNetwork(request));
+    this.rate(`pin-ip:${network}`,30,15*60_000);
+    this.rate(`pin-signup:${network}`,10,60*60_000);
+    if(!this.one("SELECT id FROM users WHERE role='admin' LIMIT 1"))
+      throw new ApiError(503,'관리자 초기 설정 후 회원가입할 수 있습니다.');
+    if(this.one('SELECT id FROM users WHERE username=?',username))
+      throw new ApiError(409,'이미 사용 중인 닉네임입니다. 로그인해 주세요.');
+    const id=crypto.randomUUID(),passwordHash=await hashPassword(pin);
+    const created=this.one(`INSERT INTO users(id,username,name,password_hash,role,must_change_password,created_at,auth_mode,birth_ymd,gender)
+      VALUES(?,?,?,?,'member',0,?,'pin',?,?) ON CONFLICT(username) DO NOTHING RETURNING *`,
+      id,username,name,passwordHash,Date.now(),birth6,gender);
+    if(!created)throw new ApiError(409,'이미 사용 중인 닉네임입니다. 로그인해 주세요.');
+    return await this.loginSession(created,request);
+  }
+
   async pinSession(request) {
     const data = await jsonBody(request);
     const name = validateNickname(data.nickname), username = name.toLowerCase().normalize('NFC');
@@ -161,18 +202,9 @@ export class DeskRoom {
     const network = await digest(clientNetwork(request));
     this.rate(`pin-ip:${network}`, 30, 15 * 60_000);
     const accountKey = `pin-account:${await digest(username)}`;
-    let user = this.one('SELECT * FROM users WHERE username=?', username);
-    if (!user) {
-      // Keep the first administrator bootstrap available on an empty desk.
-      if (!this.one("SELECT id FROM users WHERE role='admin' LIMIT 1")) throw new ApiError(503, '관리자 초기 설정 후 PIN으로 입장할 수 있습니다.');
-      this.rate(`pin-signup:${network}`, 10, 60 * 60_000);
-      const id = crypto.randomUUID(), passwordHash = await hashPassword(pin);
-      const created = this.one(`INSERT INTO users(id,username,name,password_hash,role,must_change_password,created_at,auth_mode)
-        VALUES(?,?,?,?,'member',0,?,'pin') ON CONFLICT(username) DO NOTHING RETURNING *`, id, username, name, passwordHash, Date.now());
-      if (created) return this.loginSession(created, request);
-      user = this.one('SELECT * FROM users WHERE username=?', username);
-    }
-    if (user?.auth_mode !== 'pin' || user.role !== 'member' || user.disabled) throw new ApiError(401, '닉네임 또는 PIN을 확인해 주세요.');
+    const user = this.one('SELECT * FROM users WHERE username=?', username);
+    if (!user || user.auth_mode !== 'pin' || user.role !== 'member' || user.disabled)
+      throw new ApiError(401, '닉네임 또는 PIN을 확인해 주세요.');
     this.rate(accountKey, 5, PIN_ATTEMPT_WINDOW_MS);
     if (!(await verifyPassword(pin, user.password_hash))) throw new ApiError(401, '닉네임 또는 PIN을 확인해 주세요.');
     const response = await this.loginSession(user, request);
@@ -282,6 +314,7 @@ export class DeskRoom {
         return await this.loginSession(this.one('SELECT * FROM users WHERE id=?', id), request);
       }
       if (path === '/api/pin-login' && method === 'POST') return await this.pinSession(request);
+      if (path === '/api/pin-register' && method === 'POST') return await this.pinRegister(request);
       if (path === '/api/login' && method === 'POST') {
         const data = await jsonBody(request);
         const username = typeof data.username === 'string' ? data.username.toLowerCase().slice(0,100) : '';
@@ -300,13 +333,22 @@ export class DeskRoom {
       }
 
       const { user, sessionHash } = await this.session(request);
-      if (path === '/api/me' && method === 'GET') return result({ user: publicUser(user) });
+      if (path === '/api/me' && method === 'GET') return result({ user: selfUser(user) });
       if (path === '/api/logout' && method === 'POST') {
         this.accountSession(sessionHash);
         this.sql.exec('UPDATE sessions SET ended_at=? WHERE id=?', Date.now(), sessionHash);
         for (const socket of this.sockets()) if (this.attachment(socket)?.sessionHash === sessionHash) { try { socket.close(1000, '로그아웃'); } catch {} }
         this.broadcastState();
         return result({ ok: true }, 200, { 'Set-Cookie': sessionCookie('', request, false) });
+      }
+      if (path === '/api/profile' && method === 'PATCH') {
+        if (user.auth_mode !== 'pin') throw new ApiError(403, 'PIN 회원만 이 정보를 수정할 수 있습니다.');
+        const data=await jsonBody(request);
+        const birth6=validateBirth6(data.birth6),gender=validateGender(data.gender),pin=validatePin(data.pin);
+        this.rate(`profile:${user.id}`,5,30*60_000);
+        if(!(await verifyPassword(pin,user.password_hash))) throw new ApiError(401,'현재 PIN이 올바르지 않습니다.');
+        this.sql.exec('UPDATE users SET birth_ymd=?,gender=? WHERE id=?',birth6,gender,user.id);
+        return result({user:selfUser(this.one('SELECT * FROM users WHERE id=?',user.id))});
       }
       if (path === '/api/password' && method === 'POST') {
         const data = await jsonBody(request);
@@ -320,7 +362,7 @@ export class DeskRoom {
         if (!currentUser || currentUser.password_hash !== user.password_hash) throw new ApiError(401, '인증 정보가 변경되었습니다. 다시 로그인해 주세요.');
         this.sql.exec('UPDATE users SET password_hash=?,must_change_password=0 WHERE id=?', passwordHash, user.id);
         this.closeSessions(user.id, sessionHash);
-        return result({ user: publicUser(this.one('SELECT * FROM users WHERE id=?', user.id)) });
+        return result({ user: selfUser(this.one('SELECT * FROM users WHERE id=?', user.id)) });
       }
       if (user.must_change_password) throw new ApiError(403, '임시 비밀번호를 먼저 변경해 주세요.');
       if (user.auth_mode === 'pin' && (path === '/api/ws' || path.startsWith('/api/chat/'))) throw new ApiError(403, '대화방은 초대 계정으로 이용할 수 있습니다.');
