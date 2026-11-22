@@ -3588,3 +3588,32 @@ td strong {
   .overview-section-intro h2{font-size:15px}
   .overview-section-intro p{font-size:11px}
 }
+
+/* Readable category dividers inside the complete market table */
+.market-table-section td{
+  padding:0!important;
+  border-bottom:1px solid #c7d7e7!important;
+  border-top:2px solid #b5cadf!important;
+  white-space:normal;
+  background:#e9f0f8!important;
+}
+.market-table-section-inner{
+  display:flex;align-items:center;flex-wrap:wrap;gap:9px 14px;
+  padding:13px 18px;
+  color:#3d5975;
+  font-size:11.5px;
+}
+.market-table-section-inner strong{
+  color:#173852;font-size:14px;font-weight:800;
+}
+.market-table-section-inner small{
+  margin-left:auto;font-size:10.5px;color:#5f7387;
+  background:#fff;border:1px solid #cbd9e8;border-radius:12px;
+  padding:4px 9px;font-weight:650;
+}
+.market-table-section + tr td{border-top:0}
+@media(max-width:540px){
+  .market-table-section-inner{padding:13px 12px;gap:5px 9px}
+  .market-table-section-inner strong{font-size:13px}
+  .market-table-section-inner small{margin-left:0}
+}
