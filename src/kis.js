@@ -300,7 +300,7 @@ export async function collectKisOverseas(env) {
 function rateQuoteByName(rows,id,years) {
   const matches=(Array.isArray(rows)?rows:[]).filter(row=>{
     const label=String(row?.hts_kor_isnm||'').replace(/\s+/g,'');
-    const isKoreanSovereign=/(국고채|국고채권|국채|KTB|Korea(?:n)?Treasury)/i.test(label);
+    const isKoreanSovereign=/(국고채|대한민국국채|한국국채|KTB|Korea(?:n)?Treasury)/i.test(label) && !/(미국|선물|futures|future|ETF)/i.test(label);
     const maturity = years===3 ? /(3년|3Y|3YR|3YEAR)/i : /(10년|10Y|10YR|10YEAR)/i;
     return isKoreanSovereign && maturity.test(label);
   }).map(row=>{
@@ -331,8 +331,8 @@ async function probeKisRates(env,token) {
     FID_DIV_CLS_CODE:cls,FID_DIV_CLS_CODE1:'',
   }));
   const responses=await Promise.all(calls);
-  const rows=responses.flatMap(data=>[...(Array.isArray(data?.output1)?data.output1:[]),
-    ...(Array.isArray(data?.output2)?data.output2:[])]);
+  const normalize=output=>Array.isArray(output)?output:output&&typeof output==='object'?[output]:[];
+  const rows=responses.flatMap(data=>[...normalize(data?.output1),...normalize(data?.output2)]);
   return [rateQuoteByName(rows,'kr3y',3),rateQuoteByName(rows,'kr10y',10)].filter(Boolean);
 }
 
@@ -383,9 +383,9 @@ let macroPending = null;
 export async function collectKisMacro(env) {
   if(!kisConfigured(env))return [];
   const key=env.KIS_APP_KEY;
-  if(macroCache?.appKey===key && Date.now()<macroCache.expiresAt)
+  if(macroCache?.appKey===key && macroCache.secret===env.KIS_APP_SECRET && Date.now()<macroCache.expiresAt)
     return structuredClone(macroCache.result);
-  if(macroPending?.appKey===key)return structuredClone(await macroPending.promise);
+  if(macroPending?.appKey===key && macroPending.secret===env.KIS_APP_SECRET)return structuredClone(await macroPending.promise);
   const task=(async()=>{
     const token=await tokenFor(env);
     if(!token)return [];
@@ -396,10 +396,10 @@ export async function collectKisMacro(env) {
     const result=[...rates,...(dxy?[dxy]:[])];
     // Negative probes are deliberately cached too: no repeated blind requests
     // for an unsupported code every five-minute market refresh.
-    macroCache={appKey:key,expiresAt:Date.now()+60*60000,result};
+    macroCache={appKey:key,secret:env.KIS_APP_SECRET,expiresAt:Date.now()+60*60000,result};
     return result;
   })();
-  macroPending={appKey:key,promise:task};
+  macroPending={appKey:key,secret:env.KIS_APP_SECRET,promise:task};
   try{return structuredClone(await task)}
   finally{if(macroPending?.promise===task)macroPending=null}
 }
