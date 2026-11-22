@@ -124,11 +124,16 @@ async function indexQuote(env,token,id,iscd) {
   return canonicalQuote(id,data?.output2,'bstp_nmix_prpr');
 }
 async function investorQuote(env,token,id,iscd,market) {
-  const from=fromKstDaysAgo(21),until=todayKst();
+  // KIS reference requires FID_INPUT_DATE_1 and _2 to be the SAME date.
+  // Weekends use the previous business weekday; official holidays may yield
+  // no rows, which must remain missing rather than inventing a flow.
+  const ymd = todayKst();
+  const weekday = new Date(`${ymd.slice(0,4)}-${ymd.slice(4,6)}-${ymd.slice(6,8)}T00:00:00Z`).getUTCDay();
+  const date = fromKstDaysAgo(weekday === 0 ? 2 : weekday === 6 ? 1 : 0);
   const data=await kisGet(env,token,'/uapi/domestic-stock/v1/quotations/inquire-investor-daily-by-market',
     'FHPTJ04040000',{
-      FID_COND_MRKT_DIV_CODE:'U',FID_INPUT_ISCD:iscd,FID_INPUT_DATE_1:from,
-      FID_INPUT_DATE_2:until,FID_INPUT_ISCD_1:market,FID_INPUT_ISCD_2:iscd,
+      FID_COND_MRKT_DIV_CODE:'U',FID_INPUT_ISCD:iscd,FID_INPUT_DATE_1:date,
+      FID_INPUT_DATE_2:date,FID_INPUT_ISCD_1:market,FID_INPUT_ISCD_2:iscd,
     });
   // API may refuse a market/plan. Never replace actual flow with synthetic data.
   return canonicalQuote(id,data?.output,'frgn_ntby_tr_pbmn',100);
