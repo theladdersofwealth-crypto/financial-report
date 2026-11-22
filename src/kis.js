@@ -277,6 +277,9 @@ export async function collectKisOverseas(env) {
   ];
   const results=[];
   for(let i=0;i<tasks.length;i+=4) {
+    // Domestic KIS uses the same key. Pace overseas batches so concurrent
+    // domestic D/W/M requests do not exhaust the account's per-second limit.
+    await new Promise(resolve=>setTimeout(resolve,350));
     const batch=await Promise.all(tasks.slice(i,i+4).map(task=>task().catch(()=>null)));
     results.push(...batch.filter(Boolean));
   }
