@@ -509,10 +509,15 @@ function selectKisFirst(previous,kisItems) {
 
 export async function collectMarket(env, backup = []) {
   const { readURL, failures } = createMarketReader();
-  const [initialQuotes, fx, kis, overseas, macro] = await Promise.all([
-    Promise.all(INSTRUMENTS.map((instrument) => instrument.fred ? fredQuote(instrument, env, readURL) : instrument.metalSpot ? metalSpotQuote(instrument, readURL) : instrument.ecos ? ecosQuote(instrument, env, readURL) : instrument.crypto ? cryptoQuote(instrument, readURL) : Promise.resolve(missing(instrument)))),
-    fxQuotes(readURL), collectKis(env), collectKisOverseas(env), collectKisMacro(env),
-  ]);
+  // Start other providers in parallel, but serialize KIS stages:
+  // Korean foreign net flows -> domestic index charts -> US securities -> optional
+  // macro probes. Competing KIS bursts previously risked missing net-flow data.
+  const initialTask=Promise.all(INSTRUMENTS.map((instrument) => instrument.fred ? fredQuote(instrument, env, readURL) : instrument.metalSpot ? metalSpotQuote(instrument, readURL) : instrument.ecos ? ecosQuote(instrument, env, readURL) : instrument.crypto ? cryptoQuote(instrument, readURL) : Promise.resolve(missing(instrument))));
+  const fxTask=fxQuotes(readURL);
+  const kis=await collectKis(env);
+  const overseas=await collectKisOverseas(env);
+  const macro=await collectKisMacro(env);
+  const [initialQuotes, fx]=await Promise.all([initialTask,fxTask]);
   // Actual request priority: KIS FIRST. Ask paid Finnhub only for
   // securities that KIS did not return as valid observations.
   const overseasSectorIds = new Set(overseas.sectors.filter(validQuote).map(q=>q.id));
