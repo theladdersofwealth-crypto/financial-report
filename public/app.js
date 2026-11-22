@@ -1,3 +1,5 @@
+import { chartSeries, chartPeriod, chartPeriodChange } from './chart-data.js';
+
 const app = document.querySelector('#app');
 const state = {
   user: null, demo: false, status: null, view: 'overview', horizon: 'day',
@@ -442,17 +444,145 @@ function renderQuotes() {
       E('span', {class: 'loss'}, '● 순매도·하락'),
       '　외국인 수급은 해당 일자의 순매수액이며, 등락률이 아닙니다. 관측일과 데이터 출처를 확인하세요.'));
 }
+const CHART_INDEX_IDS = new Set(['kospi','kosdaq','sp500','nasdaq','nasdaqcom','sox','dxy','broadusd','vix']);
+function hasIndexChart(quote) { return CHART_INDEX_IDS.has(quote?.id) && !state.demo; }
 function quoteCard(quote) {
   const available = hasValue(quote);
+  const chartable = hasIndexChart(quote);
   const flow = quote.id === 'kr_foreign_kospi' || quote.id === 'kr_foreign_kosdaq';
   const observed = quote.timestampPrecision === 'month' && quote.observedAt ? `${String(quote.observedAt).slice(0, 7)} 월간 평균` : quote.timestampPrecision === 'day' && quote.observedAt ? String(quote.observedAt).slice(0, 10) : dateText(quote.observedAt);
   const changeText = flow ? Number(quote.value) < 0 ? '외국인 순매도' : Number(quote.value) > 0 ? '외국인 순매수' : '외국인 순매수 0' : formatChange(quote);
   const tone = flow ? changeClass(quote.value) : changeClass(quote.change);
-  return E('article', {class: 'quote-card', title: `${quote.name} · ${state.demo ? '체험용 예시 데이터' : `${sourceName(quote.source)} · ${observed}${quote.basis ? ` · ${quote.basis}` : ''}${quote.reason ? ` · ${quote.reason}` : ''}`}`},
-    E('div', {class: 'quote-top'}, E('h3', {class: 'quote-name'}, quote.name), E('span', {class: 'quote-group'}, groupName(quote.group))),
+  return E('article', {class: `quote-card${chartable ? ' quote-card-clickable' : ''}`,
+    role: chartable ? 'button' : null,
+    tabindex: chartable ? 0 : null,
+    'aria-label': chartable ? `${quote.name} 과거 지수 차트 열기` : null,
+    onClick: chartable ? () => openIndexChart(quote) : null,
+    onKeydown: chartable ? event => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openIndexChart(quote); }
+    } : null,
+    title: `${quote.name} · ${state.demo ? '체험용 예시 데이터' : `${sourceName(quote.source)} · ${observed}${quote.basis ? ` · ${quote.basis}` : ''}${quote.reason ? ` · ${quote.reason}` : ''}`}`},
+    E('div', {class: 'quote-top'}, E('h3', {class: 'quote-name'}, quote.name), E('span', {class: 'quote-group'}, chartable ? '차트 보기' : groupName(quote.group))),
     E('div', {class: 'quote-value-row'}, E('span', {class: 'quote-value'}, formatValue(quote)), E('span', {class: 'quote-unit'}, quote.unit || '')),
     E('div', {class: 'quote-bottom'}, available ? E('span', {class: `quote-change ${tone}`}, changeText) : E('span', {class: 'quote-missing'}, '데이터 연결 필요'), available && !flow ? sparkline(quote) : null),
     E('div', {class: 'quote-source'}, state.demo ? '체험용 예시' : available ? `${quote.status === 'stale' ? '⚠ 오래된 관측 · ' : quote.status === 'monthly' ? '월간 통계 · ' : ''}${sourceName(quote.source)} · ${observed}` : '— 데이터 연결 필요'));
+}
+
+// Observed index history only: daily closes are not intraday or candlestick data.
+function openIndexChart(quote) {
+  const observations = chartSeries(quote.history);
+  const isIndexStale = quote.status === 'stale' || quote.deploymentBackup;
+  showModal(`${quote.name} · 지수 추이`,
+    `${sourceName(quote.source)} · 일별 관측 데이터 · ${observations.length}개 관측일`,
+    body => {
+      const ranges = [
+        ['1m','1개월'],
+        ['3m','3개월'],
+        ['all','전체 보유'],
+      ];
+      const menu = E('div', {class:'market-chart-ranges',role:'group','aria-label':'차트 기간 선택'});
+      const headline = E('div', {class:'market-chart-summary'});
+      const plot = E('div', {class:'market-chart-container'});
+      const foot = E('div', {class:'market-chart-footnote'});
+      let activePeriod = '3m';
+      const buttons = ranges.map(([value, label]) => E('button', {
+        type:'button',class:'market-chart-range',onClick: () => {
+          activePeriod = value;
+          redraw();
+        },
+      }, label));
+      menu.append(...buttons);
+      body.append(menu, headline, plot, foot);
+      function redraw() {
+        buttons.forEach((button,i) => {
+          const active = ranges[i][0] === activePeriod;
+          button.classList.toggle('active',active);
+          button.setAttribute('aria-pressed',String(active));
+        });
+        const series = chartPeriod(observations,activePeriod);
+        plot.replaceChildren();
+        const change = chartPeriodChange(series);
+        const last = series.at(-1);
+        const changeText = change === null ? '기간 변동률 산출 불가' :
+          `${change > 0 ? '+' : ''}${change.toFixed(2)}% (선택 기간 첫 관측 대비)`;
+        headline.replaceChildren(
+          E('div', {}, E('strong', {class:'market-chart-current'}, last ?
+            `${last.value.toLocaleString('ko-KR',{maximumFractionDigits:2})} ${quote.unit || 'pt'}` : '—'),
+            E('p', {class:'market-chart-date'}, last ? `${last.date} 종가` : '조회된 날짜 없음')),
+          E('span', {class:`market-chart-change ${changeClass(change)}`}, changeText));
+        if (series.length < 2) {
+          plot.append(E('div',{class:'market-chart-empty'}, '해당 기간에 연결된 과거 관측값이 2개 미만입니다. 차트를 임의로 생성하지 않습니다.'));
+        } else {
+          const dims = {w:760,h:300,left:72,right:22,top:20,bottom:44};
+          const width=dims.w-dims.left-dims.right, height=dims.h-dims.top-dims.bottom;
+          const allValues=series.map(p=>p.value), minimum=Math.min(...allValues), maximum=Math.max(...allValues);
+          const padding=Math.max((maximum-minimum)*0.10,Math.abs(maximum)*0.002,0.01);
+          const low=minimum-padding,high=maximum+padding;
+          const firstTime=Date.parse(series[0].date+'T00:00:00Z');
+          const lastTime=Date.parse(series.at(-1).date+'T00:00:00Z');
+          const periodMs=Math.max(1,lastTime-firstTime);
+          const xx=d=>dims.left+(Date.parse(d+'T00:00:00Z')-firstTime)/periodMs*width;
+          const yy=v=>dims.top+(high-v)/(high-low)*height;
+          const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+          svg.setAttribute('viewBox',`0 0 ${dims.w} ${dims.h}`);
+          svg.setAttribute('role','img');
+          svg.setAttribute('aria-label',`${quote.name} ${series[0].date}부터 ${series.at(-1).date}까지 실제 일별 지수 종가 추이`);
+          svg.setAttribute('class',`market-chart-svg ${changeClass(change)}`);
+          const draw=(tag,attributes={},content=null)=>{
+            const node=document.createElementNS(svg.namespaceURI,tag);
+            for(const [key,value] of Object.entries(attributes))node.setAttribute(key,String(value));
+            if(content!==null)node.textContent=String(content);
+            svg.append(node);
+            return node;
+          };
+          for(let tick=0;tick<=4;tick++){
+            const value=low+(high-low)*tick/4, y=yy(value);
+            draw('line',{x1:dims.left,x2:dims.w-dims.right,y1:y,y2:y,class:'market-chart-gridline'});
+            draw('text',{x:dims.left-10,y:y+4,'text-anchor':'end',class:'market-chart-axis'},value.toLocaleString('ko-KR',{maximumFractionDigits:2}));
+          }
+          const path=series.map((row,i)=>`${i?'L':'M'}${xx(row.date).toFixed(1)},${yy(row.value).toFixed(1)}`).join(' ');
+          draw('path',{d:path,class:'market-chart-path',fill:'none','stroke-linecap':'round','stroke-linejoin':'round'});
+          const labelledDates=[series[0],series[Math.floor((series.length-1)/2)],series.at(-1)];
+          labelledDates.forEach((row,i)=>{
+            draw('text',{x:xx(row.date),y:dims.h-13,'text-anchor':i===0?'start':i===2?'end':'middle',class:'market-chart-axis'},row.date.slice(5));
+          });
+          const vertical=draw('line',{class:'market-chart-crosshair'});
+          const dot=draw('circle',{r:5,class:'market-chart-marker'});
+          const reading=E('div',{class:'market-chart-reading','aria-live':'polite'});
+          const selector=E('input',{type:'range',class:'market-chart-scrubber',
+            min:0,max:series.length-1,value:series.length-1,step:1,
+            'aria-label':'날짜별 지수 종가 확인',
+            onInput:event=>highlight(Number(event.target.value))});
+          function highlight(index) {
+            const row=series[Math.max(0,Math.min(series.length-1,index))];
+            const x=xx(row.date),y=yy(row.value);
+            for(const [key,value] of Object.entries({x1:x,x2:x,y1:dims.top,y2:dims.h-dims.bottom}))vertical.setAttribute(key,String(value));
+            dot.setAttribute('cx',String(x));dot.setAttribute('cy',String(y));
+            reading.textContent=`${row.date} · ${row.value.toLocaleString('ko-KR',{maximumFractionDigits:2})} ${quote.unit||'pt'}`;
+            selector.value=String(index);
+            selector.setAttribute('aria-valuetext',reading.textContent);
+          }
+          svg.addEventListener('pointermove',event=>{
+            const rect=svg.getBoundingClientRect();
+            if(!rect.width)return;
+            const rel=(event.clientX-rect.left)/rect.width*dims.w;
+            let best=0,distance=Infinity;
+            series.forEach((row,i)=>{
+              const diff=Math.abs(xx(row.date)-rel);
+              if(diff<distance){best=i;distance=diff;}
+            });
+            highlight(best);
+          });
+          plot.append(svg,selector,reading);
+          highlight(series.length-1);
+        }
+        foot.replaceChildren(
+          E('p',{},`출처: ${sourceName(quote.source)} · 과거 데이터 ${observations.length}개 관측일 중 선택 구간만 표시 · 일별 종가이며 장중 실시간 차트가 아닙니다.`),
+          isIndexStale ? E('p',{class:'market-chart-stale'},'⚠ 현재 관측값이 오래됐거나 배포 시 저장한 값입니다. 최근 시세로 해석하지 마세요.') : null,
+          quote.sourceUrl ? link('원자료 확인',quote.sourceUrl) : null);
+      }
+      redraw();
+    },{className:'market-history-modal'});
 }
 
 function sparkline(quote) {
@@ -663,7 +793,7 @@ function showModal(title, description, build, options = {}) {
   const root = document.querySelector('#modal-root');
   const previous = document.activeElement;
   const body = E('div', {class: 'modal-body'});
-  const dialog = E('section', {class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'modal-title'}, E('div', {class: 'modal-head'}, E('div', {}, E('h2', {id: 'modal-title'}, title), description ? E('p', {}, description) : null), options.required ? null : iconButton('close', '창 닫기', () => close())), body);
+  const dialog = E('section', {class: `modal ${options.className || ''}`, role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'modal-title'}, E('div', {class: 'modal-head'}, E('div', {}, E('h2', {id: 'modal-title'}, title), description ? E('p', {}, description) : null), options.required ? null : iconButton('close', '창 닫기', () => close())), body);
   const overlay = E('div', {class: 'modal-backdrop', onClick: event => { if (event.target === overlay && !options.required) close(); }, onKeydown: event => {
     if (event.key === 'Escape' && !options.required) close();
     if (event.key === 'Tab') { const focusable = [...dialog.querySelectorAll('button:not(:disabled),input:not(:disabled),select,textarea,a[href]')]; const first = focusable[0], last = focusable.at(-1); if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); } }
