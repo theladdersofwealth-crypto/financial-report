@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
-import {chartSeries,chartPeriod,chartPeriodChange} from '../public/chart-data.js';
+import {chartSeries,chartPeriod,chartPeriodChange,chartFrequency,candleSeries} from '../public/chart-data.js';
 import {readFile} from 'node:fs/promises';
 import {parseHTML} from 'linkedom';
 import {setTimeout as nativeTimeout,clearTimeout as nativeClearTimeout} from 'node:timers';
@@ -16,7 +16,7 @@ test('standalone demo renders every destination without accessing member APIs',a
   const window={document,location,setTimeout:localTimer,clearTimeout:nativeClearTimeout,setInterval:()=>0,clearInterval(){},scrollTo(){},addEventListener:domWindow.addEventListener.bind(domWindow),matchMedia:()=>({matches:false,addEventListener(){}}),innerWidth:1200};
   const context={
     document,window,Node:domWindow.Node,HTMLElement:domWindow.HTMLElement,Element:domWindow.Element,
-    chartSeries,chartPeriod,chartPeriodChange,
+    chartSeries,chartPeriod,chartPeriodChange,chartFrequency,candleSeries,
     location,navigator:{onLine:true},console,Intl,Date,URL,URLSearchParams,TextEncoder,queueMicrotask,
     setTimeout:localTimer,clearTimeout,setInterval:()=>0,clearInterval:()=>{},
     requestAnimationFrame:fn=>localTimer(fn,0),cancelAnimationFrame:clearTimeout,
