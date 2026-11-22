@@ -43,8 +43,9 @@ const INSTRUMENTS = [
   { id: 'btc', name: '비트코인', group: 'crypto', unit: 'USD', crypto: 'BTC', basis: '거래소 BTC/USD 현물' },
   { id: 'eth', name: '이더리움', group: 'crypto', unit: 'USD', crypto: 'ETH', basis: '거래소 ETH/USD 현물' },
   { id: 'sol', name: '솔라나', group: 'crypto', unit: 'USD', crypto: 'SOL', basis: '거래소 SOL/USD 현물' },
-  { id: 'kospi', name: '코스피', group: 'korea', unit: 'pt', required: 'KRX 또는 증권사 시세 공급자 연결 필요' },
-  { id: 'kosdaq', name: '코스닥', group: 'korea', unit: 'pt', required: 'KRX 또는 증권사 시세 공급자 연결 필요' },
+  { id: 'kospi', name: '코스피', group: 'korea', unit: 'pt', ecos: '0001000', ecosTable: '802Y001', required: '한국은행 ECOS API 인증키 연결 필요', basis: '한국거래소 작성 · 한국은행 ECOS 주식시장(일) · 일별 종가' },
+  { id: 'kosdaq', name: '코스닥', group: 'korea', unit: 'pt', ecos: '0089000', ecosTable: '802Y001', required: '한국은행 ECOS API 인증키 연결 필요', basis: '한국거래소 작성 · 한국은행 ECOS 주식시장(일) · 일별 종가' },
+  { id: 'kr_foreign_kospi', name: '외국인 순매수 (코스피)', group: 'korea', unit: '억원', flow: true, ecos: '0030000', ecosTable: '802Y001', required: '한국은행 ECOS API 인증키 연결 필요', basis: '유가증권시장 외국인 당일 순매수금액 · 실제 매매자료 · 일별, 단위 억원' },
   { id: 'kr3y', name: '한국 국채 3년', group: 'korea', unit: '%', ecos: '010200000', required: 'ECOS_API_KEY 연결 필요', basis: '한국은행 ECOS 시장금리(일별) · 국고채 3년' },
   { id: 'kr10y', name: '한국 국채 10년', group: 'korea', unit: '%', ecos: '010210000', required: 'ECOS_API_KEY 연결 필요', basis: '한국은행 ECOS 시장금리(일별) · 국고채 10년' },
 ];
@@ -141,7 +142,7 @@ async function readProvider(url, format, headers, failures) {
 function missing(instrument, reason = instrument.required || '공급자 응답을 확인할 수 없습니다') {
   return {
     id: instrument.id, name: instrument.name, group: instrument.group, value: null,
-    unit: instrument.unit, change: null, changeUnit: instrument.group === 'rates' || instrument.id === 'hyspread' || instrument.ecos ? 'bp' : '%',
+    unit: instrument.unit, change: null, changeUnit: instrument.flow ? '억원' : instrument.group === 'rates' || instrument.id === 'hyspread' || (instrument.ecos && !instrument.ecosTable) ? 'bp' : '%',
     source: instrument.fred ? `${instrument.origin} / FRED` : '미연결',
     sourceUrl: instrument.fred ? `https://fred.stlouisfed.org/series/${instrument.fred}` : null,
     observedAt: null, retrievedAt: null, status: 'missing', reason,
@@ -156,13 +157,13 @@ function fromHistory(instrument, entries, metadata) {
   if (!history.length) return missing(instrument, '유효한 최신 관측값이 없습니다');
   const last = history.at(-1);
   const previous = history.at(-2);
-  const isRate = instrument.group === 'rates' || instrument.id === 'hyspread' || Boolean(instrument.ecos);
-  const change = previous ? (isRate ? rounded((last.value - previous.value) * 100) : pct(last.value, previous.value)) : null;
+  const isRate = instrument.group === 'rates' || instrument.id === 'hyspread' || Boolean(instrument.ecos && !instrument.ecosTable);
+  const change = previous ? (instrument.flow ? rounded(last.value - previous.value) : isRate ? rounded((last.value - previous.value) * 100) : pct(last.value, previous.value)) : null;
   const stale = Date.now() - Date.parse(`${last.date}T23:59:59Z`) > 7 * 86400000;
   return {
     ...missing(instrument), ...metadata, value: last.value, change,
-    changeUnit: isRate ? 'bp' : '%', observedAt: last.date, timestampPrecision: 'day',
-    comparisonAt: previous?.date || null, changeBasis: '직전 유효 관측일 대비',
+    changeUnit: instrument.flow ? '억원' : isRate ? 'bp' : '%', observedAt: last.date, timestampPrecision: 'day',
+    comparisonAt: previous?.date || null, changeBasis: instrument.flow ? '직전 관측일 순매수금액 대비 증감(당일 순매수액 자체와 다름)' : '직전 유효 관측일 대비',
     status: stale ? 'stale' : 'daily', reason: stale ? '관측일이 7일 이상 지났습니다' : null,
     history: history.slice(-65), delay: '일별 자료 · 장중 실시간 시세 아님',
   };
@@ -223,7 +224,7 @@ async function treasuryFallback(quotes, readURL) {
 }
 
 async function ecosQuote(instrument, env, readURL) {
-  // ECOS 817Y002: daily market yields. No network call without an API key.
+  // ECOS 817Y002 daily yields and 802Y001 daily stock market; never access without a key.
   const token = env.ECOS_API_KEY;
   if (typeof token !== 'string' || !/^[A-Za-z0-9]{8,128}$/.test(token)) {
     return missing(instrument, '한국은행 ECOS 인증키가 연결되지 않았습니다');
@@ -231,14 +232,15 @@ async function ecosQuote(instrument, env, readURL) {
   const ymd = (date) => date.replace(/-/g, '');
   const from = ymd(daysAgo(100)), until = ymd(daysAgo(0));
   // ECOS requires the API key in the path; never log the URL or response body.
-  const url = `https://ecos.bok.or.kr/api/StatisticSearch/${token}/json/kr/1/100/817Y002/D/${from}/${until}/${instrument.ecos}`;
+  const table = instrument.ecosTable || '817Y002';
+  const url = `https://ecos.bok.or.kr/api/StatisticSearch/${token}/json/kr/1/100/${table}/D/${from}/${until}/${instrument.ecos}`;
   const result = await readURL(url);
   const entries = result?.data?.StatisticSearch?.row;
   if (!Array.isArray(entries)) return missing(instrument, '한국은행 ECOS 응답 또는 이용권한을 확인할 수 없습니다');
-  const history = entries.filter(row => row?.STAT_CODE === '817Y002' && row?.ITEM_CODE1 === instrument.ecos && /^\d{8}$/.test(String(row?.TIME || '')))
+  const history = entries.filter(row => row?.STAT_CODE === table && row?.ITEM_CODE1 === instrument.ecos && /^\d{8}$/.test(String(row?.TIME || '')))
     .map(row => ({ date: `${row.TIME.slice(0, 4)}-${row.TIME.slice(4, 6)}-${row.TIME.slice(6, 8)}`, value: row.DATA_VALUE }));
   return fromHistory(instrument, history, {
-    provider: 'ecos', source: '한국은행 ECOS',
+    provider: 'ecos', source: instrument.ecosTable ? '한국은행 ECOS / 한국거래소' : '한국은행 ECOS',
     sourceUrl: 'https://ecos.bok.or.kr/', retrievedAt: result.retrievedAt,
   });
 }
