@@ -24,3 +24,16 @@ test('KIS Korea indexes and signed foreign flows are rendered before global indi
   assert.match(code, /quote\.id\?\.startsWith\('kr_foreign_'\) \? 2/,
     'foreign flow values in KRW 100M should retain two fractional digits');
 });
+
+test('market status reports exact observed coverage, and opens source diagnostics', async () => {
+  const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+  const market = await readFile(new URL('../src/market.js', import.meta.url), 'utf8');
+  const status = app.slice(app.indexOf('function dataState()'), app.indexOf('async function refreshCurrent()'));
+  assert.match(status,/\`지표 \${good\.length}\/\${quotes\.length} 정상 수신\`/);
+  assert.match(status,/\['daily', 'delayed', 'live', 'monthly'\]/);
+  assert.match(status,/onClick: \(\) => navigate\('sources'\)/);
+  assert.match(status,/type: 'button'/);
+  assert.doesNotMatch(status,/일부 데이터 연결/);
+  assert.match(market,/healthy === quotes\.length \? 'live' : 'partial'/);
+  assert.match(market,/\['live', 'delayed', 'daily', 'monthly'\]/);
+});
