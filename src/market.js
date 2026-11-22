@@ -171,7 +171,7 @@ function fromHistory(instrument, entries, metadata) {
     comparisonAt: previous?.date || null, changeBasis: instrument.flow ? '직전 관측일 순매수금액 대비 증감(당일 순매수액 자체와 다름)' : '직전 유효 관측일 대비',
     status: stale ? 'stale' : instrument.monthly ? 'monthly' : 'daily',
     reason: stale ? (instrument.monthly ? '월간 기준일이 오래되었습니다' : '관측일이 7일 이상 지났습니다') : null,
-    history: history.slice(-65), delay: instrument.monthly ? '월간 평균값 · 장중 가격 아님 · 발표 시차 존재' : '일별 자료 · 장중 실시간 시세 아님',
+    history: history.slice(-65), delay: instrument.monthly ? '월간 평균값 · 실시간 시세 아님 · 발표 시차 존재' : '일별 자료 · 장중 실시간 시세 아님',
   };
 }
 
