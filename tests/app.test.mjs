@@ -29,7 +29,7 @@ test('private desk authentication, member management and real-time room',async t
     let r=await request('/api/status');
     assert.equal(r.status,200);
     const status=await r.json();assert.equal(status.initialized,false);assert.equal(status.setupAvailable,true);
-    r=await request('/api/pin-login',{method:'POST',body:{nickname:'첫방문',pin:'0123'}});assert.equal(r.status,503);
+    r=await request('/api/pin-register',{method:'POST',body:{nickname:'첫방문',pin:'0123',birth6:'950705',gender:'남'}});assert.equal(r.status,503);
     r=await request('/api/me');assert.equal(r.status,401);
     r=await request('/api/setup',{method:'POST',body:{token:'wrong',username:'owner',name:'관리자',password:adminPassword}});
     assert.ok([401,403].includes(r.status));
@@ -64,39 +64,70 @@ test('private desk authentication, member management and real-time room',async t
     const changedCookie=r.headers.get('Set-Cookie')?.split(';')[0];if(changedCookie)memberCookie=changedCookie;
     r=await request('/api/me',{cookie:memberCookie});assert.equal((await r.json()).user.mustChangePassword,false);
   });
-  await t.test('nickname and PIN create a restricted session, and cannot replace existing credentials', async () => {
-    const submit = (nickname, pin, headers) => request('/api/pin-login', {method:'POST', body:{nickname,pin}, headers});
-    assert.equal((await submit('새손님', 1234)).status, 400);
-    assert.equal((await submit('새손님', '12345')).status, 400);
-    assert.equal((await submit('owner', '0123')).status, 401);
-    const responses = await Promise.all([submit('한글 닉네임', '0123'), submit('한글  닉네임', '0123')]);
-    const users = [];
-    for (const response of responses) {
-      assert.equal(response.status, 200, await response.clone().text());
-      const {user} = await response.json();
-      assert.equal(user.pinLogin, true);
-      assert.equal(user.mustChangePassword, false);
-      assert.equal(user.role, 'member');
-      users.push(user);
-    }
-    assert.equal(users[0].id, users[1].id);
-    const firstCookie = responses[0].headers.get('Set-Cookie').split(';')[0];
-    assert.equal((await request('/api/me',{cookie:firstCookie})).status, 200);
-    assert.equal((await request('/api/chat/history',{cookie:firstCookie})).status, 403);
-    assert.equal((await request('/api/ws',{cookie:firstCookie,headers:{Upgrade:'websocket'}})).status, 403);
-    assert.equal((await request('/api/admin/users',{cookie:firstCookie})).status, 403);
-    assert.equal((await request('/api/login',{method:'POST',body:{username:'한글 닉네임',password:'0123'}})).status, 401);
-    const changed = await request('/api/password',{method:'POST',cookie:firstCookie,body:{currentPassword:'0123',newPassword:'0042'}});
-    assert.equal(changed.status, 200);
-    assert.equal((await submit('한글 닉네임', '0123')).status, 401);
-    const loggedIn = await submit('한글 닉네임', '0042');
-    assert.equal(loggedIn.status, 200);
-    assert.equal((await loggedIn.json()).user.id, users[0].id);
-    for (let i = 0; i < 5; i++) assert.equal((await submit('한글 닉네임', '1111', {'CF-Connecting-IP': `198.51.${i}.20`})).status, 401);
-    assert.equal((await submit('한글 닉네임', '1111', {'CF-Connecting-IP': '203.0.113.20'})).status, 429);
-    assert.equal((await request('/api/admin/users/'+users[0].id,{method:'PATCH',cookie:adminCookie,body:{disabled:true}})).status, 200);
-    assert.equal((await request('/api/me',{cookie:firstCookie})).status, 401);
+  await t.test('member enrollment requires nickname, real YYMMDD, gender and PIN; legacy password accounts stay distinct',async()=>{
+    const submit=(nickname,pin,headers)=>request('/api/pin-login',{method:'POST',body:{nickname,pin},headers});
+    const register=(nickname,pin,birth6='950705',gender='남',headers)=>request('/api/pin-register',{
+      method:'POST',body:{nickname,pin,birth6,gender},headers
+    });
+    assert.equal((await submit('새손님',1234)).status,400);
+    assert.equal((await submit('새손님','12345')).status,400);
+    assert.equal((await submit('새손님','0123')).status,401,'no automatic nickname registration');
+    assert.equal((await submit('owner','0123')).status,401,'admin account cannot be overwritten with PIN');
+    assert.equal((await register('가입검사','0123','990229','남')).status,400,'invalid leap day');
+    assert.equal((await register('가입검사','0123','951332','남')).status,400,'invalid month/day');
+    assert.equal((await register('가입검사','0123','950705','X')).status,400,'only selected two gender options');
+    assert.equal((await register('가입검사','0123','950705',undefined)).status,400);
+    assert.equal((await register('가입검사',1234)).status,400);
+    assert.equal((await register('가입검사','0000', '000229','여')).status,200,'2000 leap date allowed');
+
+    // Duplicate nickname is refused; registration cannot silently login as
+    // another account with matching nickname, even if PIN happens to match.
+    const responses=await Promise.all([
+      register('한글 닉네임','0123','950705','남'),
+      register('한글  닉네임','0123','950705','남'),
+    ]);
+    assert.deepEqual(responses.map(r=>r.status).sort(),[200,409]);
+    const created=responses.find(r=>r.status===200);
+    const {user}=await created.clone().json();
+    assert.equal(user.pinLogin,true);
+    assert.equal(user.mustChangePassword,false);
+    assert.equal(user.role,'member');
+    assert.equal(user.birth6,'950705');
+    assert.equal(user.gender,'남');
+    const firstCookie=created.headers.get('Set-Cookie').split(';')[0];
+    let r=await request('/api/me',{cookie:firstCookie});
+    assert.equal(r.status,200);
+    assert.equal((await r.json()).user.birth6,'950705');
+    r=await request('/api/admin/users',{cookie:adminCookie});
+    const adminList=await r.json();
+    const entry=adminList.users.find(x=>x.id===user.id);
+    assert.ok(entry);
+    assert.equal(entry.birth6,undefined,'birthdate must not appear in admin/member lists');
+    assert.equal(entry.gender,undefined,'gender must not appear in admin/member lists');
+    assert.doesNotMatch(JSON.stringify(adminList),/950705/);
+    assert.equal((await request('/api/chat/history',{cookie:firstCookie})).status,403);
+    assert.equal((await request('/api/ws',{cookie:firstCookie,headers:{Upgrade:'websocket'}})).status,403);
+    assert.equal((await request('/api/admin/users',{cookie:firstCookie})).status,403);
+    assert.equal((await request('/api/login',{method:'POST',body:{username:'한글 닉네임',password:'0123'}})).status,401);
+    assert.equal((await request('/api/profile',{method:'PATCH',cookie:adminCookie,body:{birth6:'900101',gender:'여',pin:'0123'}})).status,403);
+    assert.equal((await request('/api/profile',{method:'PATCH',cookie:firstCookie,body:{birth6:'951332',gender:'여',pin:'0123'}})).status,400);
+    assert.equal((await request('/api/profile',{method:'PATCH',cookie:firstCookie,body:{birth6:'960222',gender:'여',pin:'5678'}})).status,401);
+    r=await request('/api/profile',{method:'PATCH',cookie:firstCookie,body:{birth6:'960222',gender:'여',pin:'0123'}});
+    assert.equal(r.status,200,await r.clone().text());
+    assert.equal((await r.json()).user.gender,'여');
+    assert.equal((await request('/api/me',{cookie:firstCookie}).then(x=>x.json())).user.birth6,'960222');
+    const changed=await request('/api/password',{method:'POST',cookie:firstCookie,body:{currentPassword:'0123',newPassword:'0042'}});
+    assert.equal(changed.status,200);
+    assert.equal((await submit('한글 닉네임','0123')).status,401);
+    const loggedIn=await submit('한글  닉네임','0042');
+    assert.equal(loggedIn.status,200);
+    assert.equal((await loggedIn.json()).user.id,user.id);
+    for(let i=0;i<5;i++)assert.equal((await submit('한글 닉네임','1111',{'CF-Connecting-IP':`198.51.${i}.20`})).status,401);
+    assert.equal((await submit('한글 닉네임','1111',{'CF-Connecting-IP':'203.0.113.20'})).status,429);
+    assert.equal((await request('/api/admin/users/'+user.id,{method:'PATCH',cookie:adminCookie,body:{disabled:true}})).status,200);
+    assert.equal((await request('/api/me',{cookie:firstCookie})).status,401);
   });
+
   const sockets=[];
   t.after(()=>sockets.forEach(s=>{try{s.ws.close()}catch{}}));
   async function connect(cookie){
