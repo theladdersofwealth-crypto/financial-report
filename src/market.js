@@ -335,7 +335,7 @@ async function finnhubList(entries, group, env, readURL) {
 }
 
 function fact(quote) {
-  if (!quote || quote.value === null) return null;
+  if (!quote || quote.value === null || quote.deploymentBackup || quote.status === 'stale') return null;
   const change = quote.change === null ? '등락 자료 없음' : `${quote.change > 0 ? '+' : ''}${quote.change.toFixed(2)}${quote.changeUnit}`;
   return `${quote.name} ${quote.value.toLocaleString('en-US', { maximumFractionDigits: 2 })}${quote.unit} / ${change} (${quote.observedAt}, ${quote.source})`;
 }
@@ -349,7 +349,7 @@ function buildAnalysis(quotes) {
   function pairConditions(firstId, secondId, firstLabel, secondLabel, secondInverse = false) {
     const first = byId[firstId];
     const second = byId[secondId];
-    const valid = (quote) => quote && quote.value !== null && quote.change !== null && quote.status !== 'stale' && quote.status !== 'missing';
+    const valid = (quote) => quote && quote.value !== null && quote.change !== null && quote.status !== 'stale' && quote.status !== 'missing' && !quote.deploymentBackup;
     if (!valid(first) || !valid(second)) return { state: '판단 보류', text: '비교할 최근 관측 자료가 부족해 개장 전 외부 여건 판단을 보류합니다.' };
     const a = Math.sign(first.change);
     const b = Math.sign(second.change) * (secondInverse ? -1 : 1);
@@ -385,22 +385,48 @@ function buildAnalysis(quotes) {
   };
 }
 
-function sourceList(quotes, sectors, leaders, env) {
+function sourceList(quotes, sectors, leaders, env, failures = new Map()) {
   const all = [...quotes, ...sectors, ...leaders];
-  return [
-    ['fred', 'FRED / 각 원자료 제공기관', 'https://fred.stlouisfed.org/', '일별 자료. 시리즈별 원천 이용조건·출처 표기 확인 필요', true],
-    ['treasury', '미국 재무부', 'https://home.treasury.gov/policy-issues/financing-the-government/interest-rate-statistics/', '일별 수익률 곡선. FRED 금리 자료 실패 시 대체', true],
-    ['frankfurter', 'ECB / Frankfurter', 'https://frankfurter.dev/', 'ECB 일별 기준환율. 실시간 현물환이 아님', true],
-    ['bitstamp', 'Bitstamp', 'https://www.bitstamp.net/api/', '거래소 현물 스냅샷 및 24시간 등락', true],
-    ['coinbase', 'Coinbase Spot', 'https://docs.cdp.coinbase.com/coinbase-app/docs/api-prices', 'Bitstamp 실패 시 대체. 수집시각 표시, 24시간 등락 미제공', true],
-    ['finnhub', 'Finnhub', 'https://finnhub.io/docs/api/quote', '가입 권한에 따라 시세 지연·이용 범위가 다름. 섹터는 ETF 대용지표', Boolean(env.FINNHUB_API_KEY)],
-    ['ecos', '한국은행 ECOS', 'https://ecos.bok.or.kr/', '국고채 3년·10년 금리(일별). 키 발급 및 이용조건 확인 필요', Boolean(env.ECOS_API_KEY)],
-  ].map(([id, name, url, delay, enabled]) => ({
-    id, name, url, delay, enabled,
-    status: all.some((quote) => quote.provider === id && quote.value !== null && !quote.deploymentBackup) ? 'connected'
-      : all.some((quote) => quote.provider === id && quote.deploymentBackup) ? 'backup'
-      : ['treasury', 'coinbase'].includes(id) ? 'standby' : enabled ? 'no_data' : 'unconfigured',
-  }));
+  const definitions = [
+    ['fred', 'FRED / 각 원자료 제공기관', 'https://fred.stlouisfed.org/', '일별 자료 · 원천 이용조건 확인 필요', true, ['api.stlouisfed.org', 'fred.stlouisfed.org']],
+    ['treasury', '미국 재무부', 'https://home.treasury.gov/policy-issues/financing-the-government/interest-rate-statistics/', 'FRED 금리 실패 시 공식 대체 자료', true, ['home.treasury.gov']],
+    ['frankfurter', 'ECB / Frankfurter', 'https://frankfurter.dev/', 'ECB 일별 기준환율 우선 · 누락 통화는 혼합 기준환율로 대체', true, ['api.frankfurter.dev']],
+    ['bitstamp', 'Bitstamp', 'https://www.bitstamp.net/api/', '거래소 현물 스냅샷 · 실패 시 Coinbase 시도', true, ['www.bitstamp.net']],
+    ['coinbase', 'Coinbase Spot', 'https://docs.cdp.coinbase.com/coinbase-app/docs/api-prices', 'Bitstamp 실패 시 현물 대체 (24시간 등락 미제공)', true, ['api.coinbase.com']],
+    ['finnhub', 'Finnhub', 'https://finnhub.io/docs/api/quote', '미국 섹터 ETF·대표 종목 · API 키 필요 · 등락 시각과 가입 권한 확인', Boolean(env.FINNHUB_API_KEY), ['finnhub.io']],
+    ['ecos', '한국은행 ECOS', 'https://ecos.bok.or.kr/', '한국 주가지수·외국인 순매수·국채금리 일별 자료 · API 키 필요', Boolean(env.ECOS_API_KEY), ['ecos.bok.or.kr']],
+  ];
+  const expected = {
+    fred: INSTRUMENTS.filter(x => x.fred).length,
+    frankfurter: INSTRUMENTS.filter(x => x.fx).length,
+    bitstamp: INSTRUMENTS.filter(x => x.crypto).length,
+    finnhub: SECTORS.length + LEADERS.length,
+    ecos: INSTRUMENTS.filter(x => x.ecos).length,
+  };
+  return definitions.map(([id, name, url, note, enabled, hosts]) => {
+    const records = all.filter(quote => quote.provider === id);
+    const valid = records.filter(quote => Number.isFinite(quote.value) && ['live', 'delayed', 'daily'].includes(quote.status) && !quote.deploymentBackup);
+    const backups = records.filter(quote => quote.deploymentBackup === true);
+    const stale = records.filter(quote => quote.status === 'stale' && !quote.deploymentBackup);
+    const errors = [...failures].filter(([key]) => {
+      const [host, code] = key.split(' ');
+      return hosts.includes(host) && code !== 'response_received';
+    }).map(([key, count]) => {
+      const code = key.slice(key.indexOf(' ') + 1);
+      return { code, count };
+    });
+    const state = !enabled ? 'unconfigured'
+      : valid.length ? ((stale.length || backups.length || records.some(q => q.value === null)) ? 'partial' : 'connected')
+      : backups.length ? 'backup'
+      : stale.length ? 'stale'
+      : ['treasury', 'coinbase'].includes(id) ? 'standby' : 'no_data';
+    return {
+      id, name, url, note, enabled, status: state,
+      received: valid.length, expected: expected[id] || null,
+      stale: stale.length, backup: backups.length, missing: records.filter(q => q.value === null).length,
+      failures: errors.slice(0, 8),
+    };
+  });
 }
 
 function useDeploymentBackup(quotes, backup, now = Date.now()) {
@@ -464,7 +490,7 @@ export async function collectMarket(env, backup = []) {
   const mode = available === 0 ? 'unconfigured' : available === quotes.length && quotes.every((quote) => quote.status === 'live') ? 'live' : 'partial';
   return {
     asOf: new Date().toISOString(), mode, quotes, sectors, leaders, impact, events: [],
-    summary, outlooks, sources: sourceList(quotes, sectors, leaders, env),
+    summary, outlooks, sources: sourceList(quotes, sectors, leaders, env, failures),
     analysis: { kind: 'rules', status: 'ready', label: '규칙 기반 · 조건부 점검' },
     cacheSeconds: TTL / 1000,
   };
