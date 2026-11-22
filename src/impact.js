@@ -70,9 +70,31 @@ function theme(indexed, id, title, positive, negative, now, inverse = false) {
     evidence: describe(quote, quote.name || quote.id), source: quote.source || null,
   };
 }
+// Domestic closes and net purchases are observed results, never forecast inputs.
+function domesticQuote(quote, now) {
+  if (!quote || !STATUS_OK.has(quote.status) || quote.deploymentBackup) return null;
+  if (typeof quote.value !== 'number' || !Number.isFinite(quote.value)) return null;
+  const age = now - Date.parse(quote.observedAt);
+  if (!Number.isFinite(age) || age < -5 * 60000 || age > MAX_AGE_MS) return null;
+  const expectedUnit = quote.id === 'kr_foreign_kospi' ? '억원' : '%';
+  if (quote.change !== null && quote.change !== undefined &&
+      (typeof quote.change !== 'number' || !Number.isFinite(quote.change) || quote.changeUnit !== expectedUnit)) return null;
+  return {
+    id: quote.id, name: quote.name, value: quote.value, unit: quote.unit,
+    change: quote.change ?? null, changeUnit: quote.changeUnit,
+    changeBasis: quote.changeBasis || null, observedAt: quote.observedAt,
+    source: quote.source || null, status: quote.status,
+    basis: quote.basis || null,
+  };
+}
 export function buildImpact(market, now = Date.now()) {
   const indexed = new Map((Array.isArray(market?.quotes) ? market.quotes : [])
     .filter(quote => quote && typeof quote.id === 'string').map(quote => [quote.id, quote]));
+  const domestic = {
+    kospi: domesticQuote(indexed.get('kospi'), now),
+    kosdaq: domesticQuote(indexed.get('kosdaq'), now),
+    foreignKospi: domesticQuote(indexed.get('kr_foreign_kospi'), now),
+  };
   const kospi = marketImpact('코스피', FACTORS.kospi, indexed, now);
   const kosdaq = marketImpact('코스닥', FACTORS.kosdaq, indexed, now);
   const rate = valid(indexed.get('usreal10y'), now) ? 'usreal10y' : 'us10y';
@@ -93,9 +115,9 @@ export function buildImpact(market, now = Date.now()) {
   const dated = [...kospi.drivers, ...kosdaq.drivers].map(d => d.observedAt.slice(0, 10));
   return {
     method: 'weighted_directional_checklist_v1', asOf: new Date(now).toISOString(),
-    kospi, kosdaq, themes, mixedDates: new Set(dated).size > 1,
+    kospi, kosdaq, domestic, themes, mixedDates: new Set(dated).size > 1,
     cautions: [
-      '국내 외국인 수급·거래대금·기업 실적을 수집하지 않은 조건부 해외 환경 점검입니다.',
+      domestic.foreignKospi ? '국내 코스피 외국인 순매수는 확인된 일별 관측값이며, 코스닥 수급·실적은 별도 확인이 필요합니다.' : '국내 외국인 수급·거래대금·기업 실적을 확인하지 못한 조건부 해외 환경 점검입니다.',
       '일별 종가와 환율·금리의 관측일 및 비교 기준이 다르며, 지수 상승·하락 확률이 아닙니다.',
       '규칙 기반 가중치는 과거 성과로 보정된 예측모형이 아닙니다.',
     ],
