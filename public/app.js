@@ -132,7 +132,7 @@ function formatValue(quote) {
   if (!hasValue(quote)) return '—';
   const value = Number(quote.value);
   let decimals = quote.decimals;
-  if (!Number.isInteger(decimals)) decimals = ['금리', 'rates', 'yields'].includes(quote.group) || quote.unit === '%' ? 2 : Math.abs(value) >= 10000 ? 0 : 2;
+  if (!Number.isInteger(decimals)) decimals = quote.id?.startsWith('kr_foreign_') ? 2 : ['금리', 'rates', 'yields'].includes(quote.group) || quote.unit === '%' ? 2 : Math.abs(value) >= 10000 ? 0 : 2;
   return value.toLocaleString('en-US', {minimumFractionDigits: decimals, maximumFractionDigits: decimals});
 }
 function formatChange(quote) {
@@ -420,16 +420,41 @@ function renderImpact() {
 }
 function renderQuotes() {
   const allQuotes = normalizedQuotes();
-  const quotes = coreQuotes().map(core => allQuotes.find(quote => quote.id === core.id) || core);
-  // Metals beyond the static core list must be visible on the overview too.
-  quotes.push(...['silver', 'nickel'].map(id => allQuotes.find(quote => quote.id === id)).filter(Boolean));
-  return E('section', {class: 'panel'}, panelHead('글로벌 핵심 지표', '주요 자산의 방향을 가장 먼저 확인하세요', E('button', {type: 'button', class: 'text-button', onClick: () => navigate('markets')}, '전체 시장', icon('chevron'))), E('div', {class: 'market-grid'}, quotes.map(quoteCard)), E('div', {class: 'panel-foot'}, E('span', {class: 'gain'}, '● 상승'), '　', E('span', {class: 'loss'}, '● 하락'), '　색상은 증감을 나타내며 투자 유불리를 의미하지 않습니다. 자산별 기준시각과 변동 단위가 다릅니다.'));
+  // Domestic indices are primary market indicators, not a secondary outlook.
+  // Keep explicit placeholders if KIS is unavailable, without fabricating values.
+  const domestic = [
+    ['kospi', '코스피', 'pt'],
+    ['kosdaq', '코스닥', 'pt'],
+    ['kr_foreign_kospi', '코스피 외국인 순매수', '억원'],
+    ['kr_foreign_kosdaq', '코스닥 외국인 순매수', '억원'],
+  ].map(([id, name, unit]) => allQuotes.find(quote => quote.id === id) ||
+    {id, name, unit, group: 'korea', value: null, change: null, status: 'unconfigured'});
+  const global = coreQuotes().map(core => allQuotes.find(quote => quote.id === core.id) || core);
+  global.push(...['silver', 'nickel'].map(id => allQuotes.find(quote => quote.id === id)).filter(Boolean));
+  return E('section', {class: 'panel'},
+    panelHead('국내외 핵심 지표', '국내 증시를 먼저, 글로벌 시장을 이어서 확인합니다.',
+      E('button', {type: 'button', class: 'text-button', onClick: () => navigate('markets')}, '전체 시장', icon('chevron'))),
+    E('div', {class: 'market-section-label'}, '국내 증시 · 코스피 / 코스닥 / 외국인 수급'),
+    E('div', {class: 'market-grid'}, domestic.map(quoteCard)),
+    E('div', {class: 'market-section-label'}, '글로벌 시장 · 주식 / 금리 / 환율 / 원자재 / 코인'),
+    E('div', {class: 'market-grid'}, global.map(quoteCard)),
+    E('div', {class: 'panel-foot'}, E('span', {class: 'gain'}, '● 순매수·상승'), '　',
+      E('span', {class: 'loss'}, '● 순매도·하락'),
+      '　외국인 수급은 해당 일자의 순매수액이며, 등락률이 아닙니다. 관측일과 데이터 출처를 확인하세요.'));
 }
 function quoteCard(quote) {
   const available = hasValue(quote);
+  const flow = quote.id === 'kr_foreign_kospi' || quote.id === 'kr_foreign_kosdaq';
   const observed = quote.timestampPrecision === 'month' && quote.observedAt ? `${String(quote.observedAt).slice(0, 7)} 월간 평균` : quote.timestampPrecision === 'day' && quote.observedAt ? String(quote.observedAt).slice(0, 10) : dateText(quote.observedAt);
-  return E('article', {class: 'quote-card', title: `${quote.name} · ${state.demo ? '체험용 예시 데이터' : `${sourceName(quote.source)} · ${observed}${quote.basis ? ` · ${quote.basis}` : ''}${quote.reason ? ` · ${quote.reason}` : ''}`}`}, E('div', {class: 'quote-top'}, E('h3', {class: 'quote-name'}, quote.name), E('span', {class: 'quote-group'}, groupName(quote.group))), E('div', {class: 'quote-value-row'}, E('span', {class: 'quote-value'}, formatValue(quote)), E('span', {class: 'quote-unit'}, quote.unit || '')), E('div', {class: 'quote-bottom'}, available ? E('span', {class: `quote-change ${changeClass(quote.change)}`}, formatChange(quote)) : E('span', {class: 'quote-missing'}, '데이터 연결 필요'), available ? sparkline(quote) : null), E('div', {class: 'quote-source'}, state.demo ? '체험용 예시' : available ? `${quote.status === 'stale' ? '⚠ 오래된 관측 · ' : quote.status === 'monthly' ? '월간 통계 · ' : ''}${sourceName(quote.source)} · ${observed}` : '— 데이터 연결 필요'));
+  const changeText = flow ? Number(quote.value) < 0 ? '외국인 순매도' : Number(quote.value) > 0 ? '외국인 순매수' : '외국인 순매수 0' : formatChange(quote);
+  const tone = flow ? changeClass(quote.value) : changeClass(quote.change);
+  return E('article', {class: 'quote-card', title: `${quote.name} · ${state.demo ? '체험용 예시 데이터' : `${sourceName(quote.source)} · ${observed}${quote.basis ? ` · ${quote.basis}` : ''}${quote.reason ? ` · ${quote.reason}` : ''}`}`},
+    E('div', {class: 'quote-top'}, E('h3', {class: 'quote-name'}, quote.name), E('span', {class: 'quote-group'}, groupName(quote.group))),
+    E('div', {class: 'quote-value-row'}, E('span', {class: 'quote-value'}, formatValue(quote)), E('span', {class: 'quote-unit'}, quote.unit || '')),
+    E('div', {class: 'quote-bottom'}, available ? E('span', {class: `quote-change ${tone}`}, changeText) : E('span', {class: 'quote-missing'}, '데이터 연결 필요'), available && !flow ? sparkline(quote) : null),
+    E('div', {class: 'quote-source'}, state.demo ? '체험용 예시' : available ? `${quote.status === 'stale' ? '⚠ 오래된 관측 · ' : quote.status === 'monthly' ? '월간 통계 · ' : ''}${sourceName(quote.source)} · ${observed}` : '— 데이터 연결 필요'));
 }
+
 function sparkline(quote) {
   const values = (Array.isArray(quote.history) ? quote.history : []).map(x => typeof x === 'number' ? x : Number(x.value ?? x.close)).filter(Number.isFinite);
   if (values.length < 2) return null;
