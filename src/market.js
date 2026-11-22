@@ -499,7 +499,13 @@ function sameIndex(kis,fred) {
     && Math.abs(kis.value-fred.value)/fred.value <= 0.015;
 }
 function validQuote(q) {
-  return q && Number.isFinite(q.value) && q.value>0 && ['daily','delayed','live'].includes(q.status) && !q.deploymentBackup;
+  if (!q || !Number.isFinite(q.value) || !['daily','delayed','live'].includes(q.status) || q.deploymentBackup) return false;
+  // Unlike index levels, stock prices or yields, net investor BUYING is a
+  // signed amount. Negative = net selling; zero = exactly balanced flow.
+  // Both are valid KIS observations and must not be discarded by the
+  // positive-price validator used for foreign-market instruments.
+  const signedForeignFlow=q.provider==='kis' && ['kr_foreign_kospi','kr_foreign_kosdaq'].includes(q.id);
+  return signedForeignFlow || q.value>0;
 }
 function selectKisFirst(previous,kisItems) {
   const map=new Map(previous.map(q=>[q.id,q]));
