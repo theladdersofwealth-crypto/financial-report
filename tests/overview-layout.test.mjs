@@ -18,7 +18,7 @@ test('KIS Korea indexes and signed foreign flows are rendered before global indi
   for (const id of ['kospi', 'kosdaq', 'kr_foreign_kospi', 'kr_foreign_kosdaq']) {
     assert.ok(section.includes(`['${id}',`), `missing domestic indicator ${id}`);
   }
-  for (const title of ['한국 증시 · 외국인 수급','미국 증시 · 위험 심리','금리 · 환율','원자재','디지털자산']) {
+  for (const title of ['한국 증시 · 기관별 수급','미국 증시 · 위험 심리','금리 · 환율','원자재','디지털자산']) {
     assert.ok(section.includes(title), `missing topic title: ${title}`);
   }
   const groups=['metrics-korea','metrics-global','metrics-macro','metrics-commodities','metrics-crypto'];
