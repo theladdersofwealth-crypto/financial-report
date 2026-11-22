@@ -599,8 +599,13 @@ function renderQuotes() {
   const domesticPlus=take(q=>groupName(q.group)==='한국시장');
   const equities=take(q=>['sp500','nasdaq','nasdaqcom','sox','vix'].includes(q.id)
     ||groupName(q.group)==='주식'||groupName(q.group)==='변동성');
+  const fxOrder=["usdkrw","usdjpy","usdcny","usdeur","usdgbp","usdchf","usdaud","usdcad","usdsgd","usdhkd","jpykrw","cnykrw","eurkrw","gbpkrw","chfkrw","audkrw","cadkrw","sgdkrw","hkdkrw"];
   const ratesFx=take(q=>['금리','외환'].includes(groupName(q.group))
     ||['us2y','us10y','kr3y','kr10y','usdkrw','dxy','broadusd'].includes(q.id));
+  ratesFx.sort((a,b)=>{
+    const ai=fxOrder.indexOf(a.id),bi=fxOrder.indexOf(b.id);
+    return ai>=0 && bi>=0 ? ai-bi : ai>=0 ? -1 : bi>=0 ? 1 : 0;
+  });
   const commodities=take(q=>groupName(q.group)==='원자재');
   const crypto=take(q=>groupName(q.group)==='디지털자산');
   const other=take(()=>true);
