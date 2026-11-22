@@ -57,14 +57,14 @@ test('KIS index and market foreign flow are parsed, with a shared cached bearer 
     assert.equal(url.searchParams.get('FID_INPUT_DATE_1'),url.searchParams.get('FID_INPUT_DATE_2'),'KIS daily investor inquiry requires a single same-day date');
     const kospi=url.searchParams.get('FID_INPUT_ISCD_1')==='KSP';
     return Response.json({rt_cd:'0',output:[
-      {stck_bsop_date:iso(3),frgn_ntby_tr_pbmn:kospi?'-5000':'2000'},
-      {stck_bsop_date:iso(1),frgn_ntby_tr_pbmn:kospi?'7000':'-1000'},
+      {stck_bsop_date:iso(3),frgn_ntby_tr_pbmn:kospi?'-5000':'2000',fund_ntby_tr_pbmn:kospi?'1500':'-500'},
+      {stck_bsop_date:iso(1),frgn_ntby_tr_pbmn:kospi?'7000':'-1000',fund_ntby_tr_pbmn:kospi?'-2300':'0'},
     ]});
   });
   const {collectKis}=await fresh();
   const env={KIS_APP_KEY:'mock-app-key',KIS_APP_SECRET:'mock-app-secret'};
   const quotes=await collectKis(env);
-  assert.equal(quotes.length,4);
+  assert.equal(quotes.length,6);
   const byId=Object.fromEntries(quotes.map(q=>[q.id,q]));
   assert.equal(byId.kospi.value,3030);
   assert.equal(byId.kosdaq.value,930);
@@ -75,6 +75,10 @@ test('KIS index and market foreign flow are parsed, with a shared cached bearer 
   assert.equal(byId.kr_foreign_kosdaq.change,-30);
   assert.equal(byId.kr_foreign_kosdaq.unit,'억원');
   assert.equal(byId.kr_foreign_kosdaq.source,'한국투자증권 KIS Open API');
+  assert.equal(byId.kr_pension_kospi.value,-23);
+  assert.equal(byId.kr_pension_kospi.change,-38);
+  assert.equal(byId.kr_pension_kosdaq.value,0);
+  assert.equal(byId.kr_pension_kosdaq.change,5);
   assert.equal(byId.kospi.status,'daily');
   assert.equal(calls.filter(c=>c.path==='/oauth2/tokenP').length,1);
   assert.equal(calls.filter(c=>c.method==='GET').length,8);
@@ -111,4 +115,17 @@ test('KIS malformed output or forbidden permissions yield no artificial quotes',
   });
   const {collectKis}=await fresh();
   assert.deepEqual(await collectKis({KIS_APP_KEY:'bad-data',KIS_APP_SECRET:'bad-data-secret'}),[]);
+});
+
+test('missing fund field never becomes fabricated pension net flow',async t=>{
+  withFetch(t,async input=>{
+    const url=new URL(String(input));
+    if(url.pathname==='/oauth2/tokenP')return Response.json({access_token:'missing-pension-test-token',expires_in:86400});
+    if(url.pathname.endsWith('inquire-daily-indexchartprice'))return Response.json({rt_cd:'0',output2:[]});
+    return Response.json({rt_cd:'0',output:[{stck_bsop_date:iso(1),frgn_ntby_tr_pbmn:'0',orgn_ntby_tr_pbmn:'12345'}]});
+  });
+  const {collectKis}=await fresh();
+  const quotes=await collectKis({KIS_APP_KEY:'fund-missing-key',KIS_APP_SECRET:'fund-missing-secret'});
+  assert.equal(quotes.filter(q=>q.id.startsWith('kr_foreign_')).length,2);
+  assert.equal(quotes.filter(q=>q.id.startsWith('kr_pension_')).length,0);
 });
