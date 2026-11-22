@@ -81,3 +81,9 @@
 .market-candle-up{stroke:var(--gain);fill:var(--gain)}
 .market-candle-down{stroke:var(--loss);fill:var(--loss)}
 @media(max-width:760px){.market-chart-wick{stroke-width:1.1}.market-chart-body{stroke-width:.5}}
+
+/* Source coverage is actionable, not a blanket "partial" status. */
+.data-state-action{appearance:none;cursor:pointer;border:1px solid transparent;background:transparent;border-radius:6px;padding:7px 9px;font:inherit;font-size:10px;min-height:30px}
+.data-state-action:hover{background:#f2f6fa;border-color:var(--line)}
+.data-state-action:focus-visible{outline:2px solid #376997;outline-offset:2px}
+@media(max-width:760px){.data-state-action{padding:6px 7px;font-size:9px}}
