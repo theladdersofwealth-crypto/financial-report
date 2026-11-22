@@ -14,7 +14,8 @@ const TIMEOUT = 4000;
 const PROVIDER_CONCURRENCY = 4;
 const HOSTS = new Set([
   'fred.stlouisfed.org', 'api.stlouisfed.org', 'home.treasury.gov',
-  'api.frankfurter.dev', 'www.bitstamp.net', 'api.coinbase.com', 'finnhub.io',
+  'api.frankfurter.dev', 'data-api.binance.vision', 'api.binance.com',
+  'www.bitstamp.net', 'api.coinbase.com', 'finnhub.io',
   'www.bls.gov', 'www.federalreserve.gov', 'ecos.bok.or.kr',
   'api.gold-api.com',
 ]);
@@ -147,7 +148,7 @@ function missing(instrument, reason = instrument.required || '공급자 응답�
   return {
     id: instrument.id, name: instrument.name, group: instrument.group, value: null,
     unit: instrument.unit, change: null, changeUnit: instrument.flow ? '억원' : instrument.group === 'rates' || instrument.id === 'hyspread' || (instrument.ecos && !instrument.ecosTable) ? 'bp' : '%',
-    provider: instrument.fred ? 'fred' : instrument.metalSpot ? 'goldapi' : instrument.ecos ? 'ecos' : instrument.fx ? 'frankfurter' : instrument.crypto ? 'bitstamp' : instrument.provider || null,
+    provider: instrument.fred ? 'fred' : instrument.metalSpot ? 'goldapi' : instrument.ecos ? 'ecos' : instrument.fx ? 'frankfurter' : instrument.crypto ? 'binance' : instrument.provider || null,
     source: instrument.fred ? `${instrument.origin} / FRED` : instrument.metalSpot ? 'Gold API' : instrument.ecos ? '한국은행 ECOS' : instrument.fx ? 'ECB / Frankfurter' : instrument.crypto ? 'Bitstamp' : '미연결',
     sourceUrl: instrument.fred ? `https://fred.stlouisfed.org/series/${instrument.fred}` : instrument.metalSpot ? 'https://gold-api.com/docs' : instrument.ecos ? 'https://ecos.bok.or.kr/' : instrument.fx ? 'https://frankfurter.dev/' : null,
     observedAt: null, retrievedAt: null, status: 'missing', reason,
@@ -311,6 +312,39 @@ async function metalSpotQuote(instrument, readURL) {
 }
 
 async function cryptoQuote(instrument, readURL) {
+  // Binance Spot public market data has NONE security: no account, position or
+  // trading API keys. USDT pairs are denominated in USDT, NOT USD.
+  const symbol = `${instrument.crypto}USDT`;
+  for (const host of ['data-api.binance.vision', 'api.binance.com']) {
+    const result = await readURL(`https://${host}/api/v3/ticker/24hr?symbol=${symbol}`);
+    const row = result?.data;
+    const price = numeric(row?.lastPrice);
+    const change = numeric(row?.priceChangePercent);
+    const closeTime = numeric(row?.closeTime);
+    const count = numeric(row?.count);
+    // closeTime is the end of the 24h statistics window, not the timestamp
+    // of the last executed trade. Reject expired, future and wrong-pair data.
+    if (row?.symbol === symbol && price !== null && price > 0
+      && closeTime !== null && closeTime > 0
+      && closeTime <= Date.now() + 60000
+      && Date.now() - closeTime <= 15 * 60000
+      && (count === null || count > 0)) {
+      return {
+        ...missing(instrument), provider: 'binance', value: price, unit: 'USDT',
+        change, changeUnit: '%',
+        changeBasis: 'Binance 현물 24시간 이동창 가격 변동률',
+        source: 'Binance Spot',
+        sourceUrl: 'https://developers.binance.com/en/docs/products/spot/rest-api',
+        observedAt: new Date(closeTime).toISOString(),
+        retrievedAt: result.retrievedAt,
+        timestampPrecision: 'window_end', status: 'live', reason: null,
+        basis: `Binance ${instrument.crypto}/USDT 현물 가격 · USD 시세 또는 선물가격이 아님`,
+        delay: '24시간 통계창 종료시각(마지막 체결시각 아님) · 최대 5분 캐시',
+      };
+    }
+  }
+  // Binance unavailable or geo-restricted: retain prior exchange fallbacks,
+  // explicitly preserving their original USD denomination.
   const pair = `${instrument.crypto.toLowerCase()}usd`;
   const ticker = await readURL(`https://www.bitstamp.net/api/v2/ticker/${pair}/`);
   const price = numeric(ticker?.data?.last);
@@ -337,7 +371,7 @@ async function cryptoQuote(instrument, readURL) {
     status: 'live', reason: null, changeBasis: '24시간 등락 자료 미제공',
     delay: '현재 현물 스냅샷 · 관측시각 미제공으로 수집시각 표시 · 최대 5분 캐시',
   };
-  return missing(instrument, '거래소 공개 API 접근 제한 또는 응답 오류');
+  return missing(instrument, '바이낸스 및 대체 거래소 공개 시세 조회 실패 · 접근 제한 또는 응답 오류');
 }
 
 async function finnhubList(entries, group, env, readURL) {
@@ -424,8 +458,9 @@ function sourceList(quotes, sectors, leaders, env, failures = new Map()) {
     ['fred', 'FRED / 각 원자료 제공기관', 'https://fred.stlouisfed.org/', '일별 자료 · 원천 이용조건 확인 필요', true, ['api.stlouisfed.org', 'fred.stlouisfed.org']],
     ['treasury', '미국 재무부', 'https://home.treasury.gov/policy-issues/financing-the-government/interest-rate-statistics/', 'FRED 금리 실패 시 공식 대체 자료', true, ['home.treasury.gov']],
     ['frankfurter', 'ECB / Frankfurter', 'https://frankfurter.dev/', 'ECB 일별 기준환율 우선 · 누락 통화는 혼합 기준환율로 대체', true, ['api.frankfurter.dev']],
-    ['bitstamp', 'Bitstamp', 'https://www.bitstamp.net/api/', '거래소 현물 스냅샷 · 실패 시 Coinbase 시도', true, ['www.bitstamp.net']],
-    ['coinbase', 'Coinbase Spot', 'https://docs.cdp.coinbase.com/coinbase-app/docs/api-prices', 'Bitstamp 실패 시 현물 대체 (24시간 등락 미제공)', true, ['api.coinbase.com']],
+    ['binance', 'Binance Spot', 'https://developers.binance.com/en/docs/products/spot/rest-api', 'BTC/ETH/SOL USDT 현물 24시간 시세 · 최우선 · 키 필요 없음 · USD와 구분', true, ['data-api.binance.vision', 'api.binance.com']],
+    ['bitstamp', 'Bitstamp', 'https://www.bitstamp.net/api/', 'Binance 수신 실패 시 USD 현물 대체 · 실패 시 Coinbase', true, ['www.bitstamp.net']],
+    ['coinbase', 'Coinbase Spot', 'https://docs.cdp.coinbase.com/coinbase-app/docs/api-prices', 'Binance·Bitstamp 모두 실패할 때 USD 현물 대체 (24시간 등락 미제공)', true, ['api.coinbase.com']],
     ['goldapi', 'Gold API', 'https://gold-api.com/docs', '금·은·구리 참고 현물가격 · 구리는 USD/파운드 · 키 불필요', true, ['api.gold-api.com']],
     ['finnhub', 'Finnhub', 'https://finnhub.io/docs/api/quote', '미국 섹터 ETF·대표 종목 · API 키 필요 · 등락 시각과 가입 권한 확인', Boolean(env.FINNHUB_API_KEY), ['finnhub.io']],
     ['ecos', '한국은행 ECOS', 'https://ecos.bok.or.kr/', 'KIS 수신 실패 시 일부 지수·수급 대체 · 국고채 금리 일별 자료', Boolean(env.ECOS_API_KEY), ['ecos.bok.or.kr']],
@@ -434,6 +469,7 @@ function sourceList(quotes, sectors, leaders, env, failures = new Map()) {
   const expected = {
     fred: INSTRUMENTS.filter(x => x.fred).length,
     frankfurter: INSTRUMENTS.filter(x => x.fx).length,
+    binance: INSTRUMENTS.filter(x => x.crypto).length,
     bitstamp: INSTRUMENTS.filter(x => x.crypto).length,
     finnhub: SECTORS.length + LEADERS.length,
     goldapi: INSTRUMENTS.filter(x => x.metalSpot).length,
@@ -456,7 +492,7 @@ function sourceList(quotes, sectors, leaders, env, failures = new Map()) {
       : valid.length ? ((stale.length || backups.length || records.some(q => q.value === null) || (expected[id] && valid.length < expected[id])) ? 'partial' : 'connected')
       : backups.length ? 'backup'
       : stale.length ? 'stale'
-      : ['treasury', 'coinbase'].includes(id) ? 'standby' : 'no_data';
+      : ['treasury', 'coinbase', 'bitstamp'].includes(id) ? 'standby' : 'no_data';
     return {
       id, name, url, note, enabled, status: state,
       received: valid.length, expected: expected[id] || null,
