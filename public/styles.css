@@ -3558,3 +3558,33 @@ td strong {
   .metric-section .quote-card:nth-last-child(-n+4){min-height:140px;padding:13px 11px}
   .metric-section .quote-value{font-size:21px}
 }
+
+/* Topic hierarchy beyond quote cards */
+.nav-group-label{
+  margin:18px 11px 5px;
+  font-size:10px;line-height:1.4;font-weight:800;
+  color:#596e82;letter-spacing:.4px;
+}
+.nav-list .nav-group-label:first-child{margin-top:1px}
+.overview-section-intro{
+  display:flex;align-items:center;gap:14px;
+  padding:18px 20px;
+  border-radius:12px;
+  background:#e9eef5;
+  border:1px solid #cdd9e7;
+  border-left:5px solid #2b5a88;
+}
+.overview-section-mark{
+  display:grid;place-items:center;
+  width:40px;height:40px;flex:none;
+  color:#1b527e;border-radius:10px;
+  background:#fff;border:1px solid #cfdae7;
+}
+.overview-section-mark .icon{width:21px;height:21px}
+.overview-section-intro h2{font-size:17px;font-weight:800;letter-spacing:-.3px;color:#16344f}
+.overview-section-intro p{margin-top:4px;font-size:12px;line-height:1.6;color:#50677d}
+@media(max-width:600px){
+  .overview-section-intro{padding:15px 14px}
+  .overview-section-intro h2{font-size:15px}
+  .overview-section-intro p{font-size:11px}
+}
