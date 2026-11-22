@@ -876,6 +876,36 @@ function renderMarketRows() {
   hasIndexChart(q) ? E('button', {type:'button',class:'market-table-chart-link',
     'aria-label':`${q.name} 과거 지수 차트 열기`,onClick:()=>openIndexChart(q)},q.name, icon('chart')) : q.name,
   E('small', {}, q.basis || groupName(q.group)))), E('td', {class: 'num mono'}, E('strong', {}, formatValue(q)), E('div', {class: 'tiny muted'}, q.unit || '')), E('td', {class: `num mono ${changeClass(q.change)}`}, hasValue(q) ? formatChange(q) : '—'), E('td', {}, E('div', {}, state.demo ? '예시 · 실제 시각 아님' : q.timestampPrecision === 'day' && q.observedAt ? String(q.observedAt).slice(0, 10) : q.observedAt ? `${dateText(q.observedAt)} KST` : '—'), E('div', {class: 'tiny muted'}, q.delay || (state.demo ? '가상 데이터' : ''))), E('td', {}, q.sourceUrl ? link(sourceName(q.source), q.sourceUrl) : E('span', {}, state.demo ? '체험용 예시' : sourceName(q.source)), E('div', {class: 'tiny muted', title: q.reason || ''}, state.demo ? '예시 데이터' : q.status === 'stale' ? '관측 지연 · 최신성 주의' : hasValue(q) ? q.status === 'live' ? '공급자 스냅샷' : '최근 유효 관측' : q.reason || '— 데이터 연결 필요')))));
+  if (rows.length) {
+    // Retain every existing row/quote link, but add strong category dividers.
+    const byCategory=new Map();
+    [...tbody.children].forEach((row,index)=>{
+      const category=groupName(rows[index].group);
+      if(!byCategory.has(category))byCategory.set(category,[]);
+      byCategory.get(category).push(row);
+    });
+    const order=['한국시장','주식','변동성','금리','외환','원자재','디지털자산','기타'];
+    const descriptions={
+      '한국시장':'국내 주가지수와 외국인 순매수액',
+      '주식':'미국 등 해외 대표 주가지수',
+      '변동성':'시장 위험 및 불안 심리',
+      '금리':'국채금리와 채권시장 지표',
+      '외환':'달러·원 환율과 달러 지수',
+      '원자재':'원유·금속 등 실물자산 가격',
+      '디지털자산':'가상자산 현물 가격',
+    };
+    const ordered=[...byCategory.keys()].sort((a,b)=>
+      (order.indexOf(a)<0?99:order.indexOf(a))-(order.indexOf(b)<0?99:order.indexOf(b)));
+    const content=ordered.flatMap(name=>[
+      E('tr',{class:'market-table-section'},
+        E('td',{colspan:5},
+          E('div',{class:'market-table-section-inner'},
+            E('strong',{},name),E('span',{},descriptions[name]||'시장 관측 지표'),
+            E('small',{},`${byCategory.get(name).length}개 지표`)))),
+      ...byCategory.get(name),
+    ]);
+    tbody.replaceChildren(...content);
+  }
   if (!rows.length) tbody.append(E('tr', {}, E('td', {colspan: 5}, E('div', {class: 'empty-state'}, '검색 조건에 맞는 지표가 없습니다.'))));
 }
 function renderEquityTable(title, rows) {
