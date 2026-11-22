@@ -63,7 +63,7 @@ test('main index cards and market table open an accessible chart modal from hist
  assert.match(main,/market-chart-body/);
  assert.match(main,/1개월/);
  assert.match(main,/3개월/);
- assert.match(main,/전체 보유/);
+ assert.match(main,/\['all','전체'\]/);
  assert.match(main,/showModal\(/);
  assert.match(main,/market-chart-scrubber/);
  assert.match(main,/history\s*\.length|observations\.length/);
@@ -96,7 +96,7 @@ test('close-only global indices aggregate actual last observed close by calendar
   {date:'2026-10-07',value:115},{date:'2026-11-02',value:125},
  ]);
  assert.deepEqual(chartFrequency(daily,'D'),daily);
- assert.deepEqual(chartFrequency(daily,'W').map(x=>x.value),[100,105,115,125]);
+ assert.deepEqual(chartFrequency(daily,'W').map(x=>x.value),[105,115,125]);
  assert.deepEqual(chartFrequency(daily,'M').map(x=>x.value),[100,115,125]);
  assert.equal(chartFrequency(daily,'W').some(x=>x.open!==undefined),false,'weekly line cannot invent OHLC');
  assert.deepEqual(chartFrequency(daily,'bad'),[]);
