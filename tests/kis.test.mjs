@@ -46,6 +46,7 @@ test('KIS index and market foreign flow are parsed, with a shared cached bearer 
       ]});
     }
     assert.equal(opts.headers.tr_id,'FHPTJ04040000');
+    assert.equal(url.searchParams.get('FID_INPUT_DATE_1'),url.searchParams.get('FID_INPUT_DATE_2'),'KIS daily investor inquiry requires a single same-day date');
     const kospi=url.searchParams.get('FID_INPUT_ISCD_1')==='KSP';
     return Response.json({rt_cd:'0',output:[
       {stck_bsop_date:iso(3),frgn_ntby_tr_pbmn:kospi?'-5000':'2000'},
