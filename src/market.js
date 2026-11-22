@@ -5,6 +5,8 @@
  * before opening the desk beyond the intended private audience.
  */
 import deploymentSnapshot from './market-deploy-snapshot.js';
+import { buildImpact } from './impact.js';
+import { validateHistoricalImpact } from './validation.js';
 
 const TTL = 5 * 60 * 1000;
 const TIMEOUT = 4000;
@@ -12,7 +14,8 @@ const PROVIDER_CONCURRENCY = 4;
 const HOSTS = new Set([
   'fred.stlouisfed.org', 'api.stlouisfed.org', 'home.treasury.gov',
   'api.frankfurter.dev', 'www.bitstamp.net', 'api.coinbase.com', 'finnhub.io',
-  'www.bls.gov', 'www.federalreserve.gov',
+  'www.bls.gov', 'www.federalreserve.gov', 'ecos.bok.or.kr',
+  'api.gold-api.com',
 ]);
 const snapshots = new Map();
 const pending = new Map();
@@ -33,19 +36,20 @@ const INSTRUMENTS = [
   { id: 'broadusd', name: '연준 광의달러지수', group: 'fx', unit: 'pt', fred: 'DTWEXBGS', origin: 'Federal Reserve', basis: '일별 무역가중 광의달러지수 · ICE DXY와 다른 지수' },
   { id: 'wti', name: 'WTI 현물', group: 'energy', unit: 'USD/bbl', fred: 'DCOILWTICO', origin: 'U.S. EIA', basis: '쿠싱 현물 일별 가격 · 선물 아님' },
   { id: 'brent', name: '브렌트 현물', group: 'energy', unit: 'USD/bbl', fred: 'DCOILBRENTEU', origin: 'U.S. EIA', basis: '유럽 브렌트 현물 일별 가격 · 선물 아님' },
-  { id: 'gold', name: '금', group: 'metals', unit: 'USD/oz', required: '금 현물 또는 월물이 확인되는 선물 시세 공급자 연결 필요' },
-  { id: 'silver', name: '은', group: 'metals', unit: 'USD/oz', required: '은 현물 또는 월물이 확인되는 선물 시세 공급자 연결 필요' },
-  { id: 'copper', name: '구리', group: 'metals', unit: 'USD/t', required: 'LME 등 거래소·현물/선물 기준이 확인되는 공급자 연결 필요' },
-  { id: 'nickel', name: '니켈', group: 'metals', unit: 'USD/t', required: 'LME 등 거래소·현물/선물 기준이 확인되는 공급자 연결 필요' },
+  { id: 'gold', name: '금 현물', group: 'metals', unit: 'USD/oz', metalSpot: 'XAU', basis: '금 1트로이온스당 USD 참고 현물가격 · 거래소 결제가격 아님' },
+  { id: 'silver', name: '은 현물', group: 'metals', unit: 'USD/oz', metalSpot: 'XAG', basis: '은 1트로이온스당 USD 참고 현물가격 · 거래소 결제가격 아님' },
+  { id: 'copper', name: '구리 참고 현물', group: 'metals', unit: 'USD/lb', metalSpot: 'HG', basis: '구리 1파운드당 USD 참고 가격 · COMEX 선물 또는 LME 공식 가격과 다름' },
+  { id: 'nickel', name: '니켈 (월간 평균)', group: 'metals', unit: 'USD/t', fred: 'PNICKUSDM', monthly: true, origin: 'IMF Primary Commodity Prices', basis: 'IMF 세계 니켈 월간 평균 가격(USD/톤) · 실시간 시세가 아님' },
   { id: 'vix', name: 'VIX 기대변동성', group: 'risk', unit: 'pt', fred: 'VIXCLS', origin: 'Cboe', basis: '일별 종가 · SPX 옵션 기반 30일 기대변동성의 연율화 수치' },
   { id: 'hyspread', name: '미 하이일드 스프레드', group: 'risk', unit: '%', fred: 'BAMLH0A0HYM2', origin: 'ICE Data Indices', basis: '일별 옵션조정 신용스프레드' },
   { id: 'btc', name: '비트코인', group: 'crypto', unit: 'USD', crypto: 'BTC', basis: '거래소 BTC/USD 현물' },
   { id: 'eth', name: '이더리움', group: 'crypto', unit: 'USD', crypto: 'ETH', basis: '거래소 ETH/USD 현물' },
   { id: 'sol', name: '솔라나', group: 'crypto', unit: 'USD', crypto: 'SOL', basis: '거래소 SOL/USD 현물' },
-  { id: 'kospi', name: '코스피', group: 'korea', unit: 'pt', required: 'KRX 또는 증권사 시세 공급자 연결 필요' },
-  { id: 'kosdaq', name: '코스닥', group: 'korea', unit: 'pt', required: 'KRX 또는 증권사 시세 공급자 연결 필요' },
-  { id: 'kr3y', name: '한국 국채 3년', group: 'korea', unit: '%', required: '한국 국채 수익률 공급자 연결 필요' },
-  { id: 'kr10y', name: '한국 국채 10년', group: 'korea', unit: '%', required: '한국 국채 수익률 공급자 연결 필요' },
+  { id: 'kospi', name: '코스피', group: 'korea', unit: 'pt', ecos: '0001000', ecosTable: '802Y001', required: '한국은행 ECOS API 인증키 연결 필요', basis: '한국거래소 작성 · 한국은행 ECOS 주식시장(일) · 일별 종가' },
+  { id: 'kosdaq', name: '코스닥', group: 'korea', unit: 'pt', ecos: '0089000', ecosTable: '802Y001', required: '한국은행 ECOS API 인증키 연결 필요', basis: '한국거래소 작성 · 한국은행 ECOS 주식시장(일) · 일별 종가' },
+  { id: 'kr_foreign_kospi', name: '외국인 순매수 (코스피)', group: 'korea', unit: '억원', flow: true, ecos: '0030000', ecosTable: '802Y001', required: '한국은행 ECOS API 인증키 연결 필요', basis: '유가증권시장 외국인 당일 순매수금액 · 실제 매매자료 · 일별, 단위 억원' },
+  { id: 'kr3y', name: '한국 국채 3년', group: 'korea', unit: '%', ecos: '010200000', required: 'ECOS_API_KEY 연결 필요', basis: '한국은행 ECOS 시장금리(일별) · 국고채 3년' },
+  { id: 'kr10y', name: '한국 국채 10년', group: 'korea', unit: '%', ecos: '010210000', required: 'ECOS_API_KEY 연결 필요', basis: '한국은행 ECOS 시장금리(일별) · 국고채 10년' },
 ];
 
 const SECTORS = [
@@ -140,9 +144,10 @@ async function readProvider(url, format, headers, failures) {
 function missing(instrument, reason = instrument.required || '공급자 응답을 확인할 수 없습니다') {
   return {
     id: instrument.id, name: instrument.name, group: instrument.group, value: null,
-    unit: instrument.unit, change: null, changeUnit: instrument.group === 'rates' || instrument.id === 'hyspread' ? 'bp' : '%',
-    source: instrument.fred ? `${instrument.origin} / FRED` : '미연결',
-    sourceUrl: instrument.fred ? `https://fred.stlouisfed.org/series/${instrument.fred}` : null,
+    unit: instrument.unit, change: null, changeUnit: instrument.flow ? '억원' : instrument.group === 'rates' || instrument.id === 'hyspread' || (instrument.ecos && !instrument.ecosTable) ? 'bp' : '%',
+    provider: instrument.fred ? 'fred' : instrument.metalSpot ? 'goldapi' : instrument.ecos ? 'ecos' : instrument.fx ? 'frankfurter' : instrument.crypto ? 'bitstamp' : instrument.provider || null,
+    source: instrument.fred ? `${instrument.origin} / FRED` : instrument.metalSpot ? 'Gold API' : instrument.ecos ? '한국은행 ECOS' : instrument.fx ? 'ECB / Frankfurter' : instrument.crypto ? 'Bitstamp' : '미연결',
+    sourceUrl: instrument.fred ? `https://fred.stlouisfed.org/series/${instrument.fred}` : instrument.metalSpot ? 'https://gold-api.com/docs' : instrument.ecos ? 'https://ecos.bok.or.kr/' : instrument.fx ? 'https://frankfurter.dev/' : null,
     observedAt: null, retrievedAt: null, status: 'missing', reason,
     basis: instrument.basis || '', history: [],
   };
@@ -155,20 +160,23 @@ function fromHistory(instrument, entries, metadata) {
   if (!history.length) return missing(instrument, '유효한 최신 관측값이 없습니다');
   const last = history.at(-1);
   const previous = history.at(-2);
-  const isRate = instrument.group === 'rates' || instrument.id === 'hyspread';
-  const change = previous ? (isRate ? rounded((last.value - previous.value) * 100) : pct(last.value, previous.value)) : null;
-  const stale = Date.now() - Date.parse(`${last.date}T23:59:59Z`) > 7 * 86400000;
+  const isRate = instrument.group === 'rates' || instrument.id === 'hyspread' || Boolean(instrument.ecos && !instrument.ecosTable);
+  const change = previous ? (instrument.flow ? rounded(last.value - previous.value) : isRate ? rounded((last.value - previous.value) * 100) : pct(last.value, previous.value)) : null;
+  const monthlyEnd = Date.UTC(Number(last.date.slice(0, 4)), Number(last.date.slice(5, 7)), 0, 23, 59, 59);
+  const stale = instrument.monthly ? Date.now() - monthlyEnd > 100 * 86400000
+    : Date.now() - Date.parse(`${last.date}T23:59:59Z`) > 7 * 86400000;
   return {
     ...missing(instrument), ...metadata, value: last.value, change,
-    changeUnit: isRate ? 'bp' : '%', observedAt: last.date, timestampPrecision: 'day',
-    comparisonAt: previous?.date || null, changeBasis: '직전 유효 관측일 대비',
-    status: stale ? 'stale' : 'daily', reason: stale ? '관측일이 7일 이상 지났습니다' : null,
-    history: history.slice(-65), delay: '일별 자료 · 장중 실시간 시세 아님',
+    changeUnit: instrument.flow ? '억원' : isRate ? 'bp' : '%', observedAt: last.date, timestampPrecision: instrument.monthly ? 'month' : 'day',
+    comparisonAt: previous?.date || null, changeBasis: instrument.flow ? '직전 관측일 순매수금액 대비 증감(당일 순매수액 자체와 다름)' : '직전 유효 관측일 대비',
+    status: stale ? 'stale' : instrument.monthly ? 'monthly' : 'daily',
+    reason: stale ? (instrument.monthly ? '월간 기준일이 오래되었습니다' : '관측일이 7일 이상 지났습니다') : null,
+    history: history.slice(-65), delay: instrument.monthly ? '월간 평균값 · 실시간 시세 아님 · 발표 시차 존재' : '일별 자료 · 장중 실시간 시세 아님',
   };
 }
 
 async function fredQuote(instrument, env, readURL) {
-  const start = daysAgo(100);
+  const start = daysAgo(instrument.monthly ? 460 : 100);
   let result;
   let entries;
   if (env.FRED_API_KEY) {
@@ -176,15 +184,19 @@ async function fredQuote(instrument, env, readURL) {
       file_type: 'json', observation_start: start, sort_order: 'asc' });
     result = await readURL(`https://api.stlouisfed.org/fred/series/observations?${query}`);
     entries = result?.data?.observations?.map((row) => ({ date: row.date, value: row.value }));
-  } else {
-    // One series per request. FRED may return a ZIP for a multi-series CSV URL.
-    result = await readURL(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=${instrument.fred}&cosd=${start}`, 'text');
-    const rows = result?.data?.trim().split(/\r?\n/);
-    if (rows?.[0]?.replace(/^\uFEFF/, '') === `observation_date,${instrument.fred}` || rows?.[0] === `DATE,${instrument.fred}`) {
+  }
+  // The graph download is a keyless fallback if the authenticated endpoint fails.
+  // Never interpret HTML, ZIP, or provider errors as a successful price.
+  if (!Array.isArray(entries) || !entries.some((row) => isoDay(row.date) && numeric(row.value) !== null)) {
+    const csv = await readURL(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=${instrument.fred}&cosd=${start}`, 'text');
+    const rows = csv?.data?.trim().split(/\r?\n/);
+    const header = rows?.[0]?.replace(/^\uFEFF/, '');
+    if (header === `observation_date,${instrument.fred}` || header === `DATE,${instrument.fred}`) {
       entries = rows.slice(1).map((line) => {
         const [date, value] = line.split(',');
         return { date, value };
       });
+      result = csv;
     }
   }
   if (!Array.isArray(entries)) return missing(instrument, env.FRED_API_KEY ? 'FRED 인증·이용권한 또는 공급자 응답을 확인해 주세요' : 'FRED 공개 일별 자료 응답을 확인할 수 없습니다');
@@ -221,15 +233,79 @@ async function treasuryFallback(quotes, readURL) {
   return results.flat().filter((quote) => quote.value !== null);
 }
 
+async function ecosQuote(instrument, env, readURL) {
+  // ECOS 817Y002 daily yields and 802Y001 daily stock market; never access without a key.
+  const token = env.ECOS_API_KEY;
+  if (typeof token !== 'string' || !/^[A-Za-z0-9]{8,128}$/.test(token)) {
+    return missing(instrument, '한국은행 ECOS 인증키가 연결되지 않았습니다');
+  }
+  const ymd = (date) => date.replace(/-/g, '');
+  const from = ymd(daysAgo(100)), until = ymd(daysAgo(0));
+  // ECOS requires the API key in the path; never log the URL or response body.
+  const table = instrument.ecosTable || '817Y002';
+  const url = `https://ecos.bok.or.kr/api/StatisticSearch/${token}/json/kr/1/100/${table}/D/${from}/${until}/${instrument.ecos}`;
+  const result = await readURL(url);
+  const entries = result?.data?.StatisticSearch?.row;
+  if (!Array.isArray(entries)) return missing(instrument, '한국은행 ECOS 응답 또는 이용권한을 확인할 수 없습니다');
+  const history = entries.filter(row => row?.STAT_CODE === table && row?.ITEM_CODE1 === instrument.ecos && /^\d{8}$/.test(String(row?.TIME || '')))
+    .map(row => ({ date: `${row.TIME.slice(0, 4)}-${row.TIME.slice(4, 6)}-${row.TIME.slice(6, 8)}`, value: row.DATA_VALUE }));
+  return fromHistory(instrument, history, {
+    provider: 'ecos', source: instrument.ecosTable ? '한국은행 ECOS / 한국거래소' : '한국은행 ECOS',
+    sourceUrl: 'https://ecos.bok.or.kr/', retrievedAt: result.retrievedAt,
+  });
+}
+
 async function fxQuotes(readURL) {
-  const result = await readURL(`https://api.frankfurter.dev/v2/rates?base=USD&quotes=KRW,JPY,CNY&providers=ECB&from=${daysAgo(100)}`);
-  return INSTRUMENTS.filter((item) => item.fx).map((instrument) => {
-    if (!Array.isArray(result?.data)) return missing(instrument, 'ECB/Frankfurter 일별 기준환율 응답을 확인할 수 없습니다');
-    return fromHistory(instrument, result.data.filter((row) => row.base === 'USD' && row.quote === instrument.fx)
-      .map((row) => ({ date: row.date, value: row.rate })), {
-      provider: 'frankfurter', source: 'ECB / Frankfurter', sourceUrl: 'https://frankfurter.dev/', retrievedAt: result.retrievedAt,
+  const base = `https://api.frankfurter.dev/v2/rates?base=USD&quotes=KRW,JPY,CNY&from=${daysAgo(100)}`;
+  const pinned = await readURL(`${base}&providers=ECB`);
+  const primary = Array.isArray(pinned?.data) ? pinned.data : [];
+  const quotes = INSTRUMENTS.filter((item) => item.fx);
+  const validRows = (rows, quote) => rows.filter((row) => row.base === 'USD' && row.quote === quote && isoDay(row.date) && numeric(row.rate) !== null);
+  // If a pinned provider omits a pair, fall back to the documented blended
+  // central-bank series, with clear attribution rather than claiming ECB.
+  const absent = quotes.some((instrument) => !validRows(primary, instrument.fx).length);
+  const fallback = absent ? await readURL(base) : null;
+  const blended = Array.isArray(fallback?.data) ? fallback.data : [];
+  return quotes.map((instrument) => {
+    const ecbRows = validRows(primary, instrument.fx);
+    const useEcb = ecbRows.length > 0;
+    const rows = useEcb ? ecbRows : validRows(blended, instrument.fx);
+    if (!rows.length) return missing(instrument, 'Frankfurter 일별 기준환율 응답에 해당 통화가 없습니다');
+    return fromHistory(instrument, rows.map((row) => ({ date: row.date, value: row.rate })), {
+      provider: 'frankfurter',
+      source: useEcb ? 'ECB / Frankfurter' : '중앙은행 혼합 / Frankfurter',
+      sourceUrl: 'https://frankfurter.dev/',
+      retrievedAt: useEcb ? pinned.retrievedAt : fallback.retrievedAt,
+      basis: useEcb ? instrument.basis : '여러 중앙은행의 혼합 일별 기준환율 · ECB 단독 기준 아님',
     });
   });
+}
+
+async function metalSpotQuote(instrument, readURL) {
+  // Gold API keyless indicative spot endpoints. Validate original timestamps;
+  // a successful HTTP response must never count as a new market observation.
+  const result = await readURL(`https://api.gold-api.com/price/${instrument.metalSpot}`);
+  const row = result?.data;
+  const value = numeric(row?.price);
+  const observedMs = Date.parse(row?.updatedAt);
+  const age = Date.now() - observedMs;
+  if (!row || row.symbol !== instrument.metalSpot || row.currency !== 'USD'
+      || value === null || value <= 0
+      || !Number.isFinite(observedMs) || age < -5 * 60000) {
+    return missing(instrument, '금속 가격 API 응답·통화·기준시각을 검증하지 못했습니다');
+  }
+  const stale = age > 3 * 86400000;
+  return {
+    ...missing(instrument), provider: 'goldapi',
+    value, change: null, changeUnit: '%',
+    changeBasis: '비교 종가 미제공 · 전일 대비 등락 산출 안 함',
+    source: 'Gold API', sourceUrl: 'https://gold-api.com/docs',
+    observedAt: new Date(observedMs).toISOString(),
+    retrievedAt: result.retrievedAt, timestampPrecision: 'second',
+    status: stale ? 'stale' : 'delayed',
+    reason: stale ? '가격 제공자의 관측시각이 3일을 초과했습니다' : null,
+    delay: '가격 API 참고 현물 시세 · 공급자 시각 기준 · 거래소 공식 결제시세 아님',
+  };
 }
 
 async function cryptoQuote(instrument, readURL) {
@@ -265,7 +341,7 @@ async function cryptoQuote(instrument, readURL) {
 async function finnhubList(entries, group, env, readURL) {
   if (!env.FINNHUB_API_KEY) return [];
   return Promise.all(entries.map(async ([symbol, name]) => {
-    const instrument = { id: symbol.toLowerCase(), name, group, unit: 'USD' };
+    const instrument = { id: symbol.toLowerCase(), name, group, unit: 'USD', provider: 'finnhub' };
     const query = new URLSearchParams({ symbol });
     // Finnhub accepts an API token header. Keep it out of URLs and logs.
     const result = await readURL(`https://finnhub.io/api/v1/quote?${query}`, 'json', {
@@ -290,7 +366,7 @@ async function finnhubList(entries, group, env, readURL) {
 }
 
 function fact(quote) {
-  if (!quote || quote.value === null) return null;
+  if (!quote || quote.value === null || quote.deploymentBackup || quote.status === 'stale') return null;
   const change = quote.change === null ? '등락 자료 없음' : `${quote.change > 0 ? '+' : ''}${quote.change.toFixed(2)}${quote.changeUnit}`;
   return `${quote.name} ${quote.value.toLocaleString('en-US', { maximumFractionDigits: 2 })}${quote.unit} / ${change} (${quote.observedAt}, ${quote.source})`;
 }
@@ -304,7 +380,7 @@ function buildAnalysis(quotes) {
   function pairConditions(firstId, secondId, firstLabel, secondLabel, secondInverse = false) {
     const first = byId[firstId];
     const second = byId[secondId];
-    const valid = (quote) => quote && quote.value !== null && quote.change !== null && quote.status !== 'stale' && quote.status !== 'missing';
+    const valid = (quote) => quote && quote.value !== null && quote.change !== null && quote.status !== 'stale' && quote.status !== 'missing' && !quote.deploymentBackup;
     if (!valid(first) || !valid(second)) return { state: '판단 보류', text: '비교할 최근 관측 자료가 부족해 개장 전 외부 여건 판단을 보류합니다.' };
     const a = Math.sign(first.change);
     const b = Math.sign(second.change) * (secondInverse ? -1 : 1);
@@ -340,21 +416,51 @@ function buildAnalysis(quotes) {
   };
 }
 
-function sourceList(quotes, sectors, leaders, env) {
+function sourceList(quotes, sectors, leaders, env, failures = new Map()) {
   const all = [...quotes, ...sectors, ...leaders];
-  return [
-    ['fred', 'FRED / 각 원자료 제공기관', 'https://fred.stlouisfed.org/', '일별 자료. 시리즈별 원천 이용조건·출처 표기 확인 필요', true],
-    ['treasury', '미국 재무부', 'https://home.treasury.gov/policy-issues/financing-the-government/interest-rate-statistics/', '일별 수익률 곡선. FRED 금리 자료 실패 시 대체', true],
-    ['frankfurter', 'ECB / Frankfurter', 'https://frankfurter.dev/', 'ECB 일별 기준환율. 실시간 현물환이 아님', true],
-    ['bitstamp', 'Bitstamp', 'https://www.bitstamp.net/api/', '거래소 현물 스냅샷 및 24시간 등락', true],
-    ['coinbase', 'Coinbase Spot', 'https://docs.cdp.coinbase.com/coinbase-app/docs/api-prices', 'Bitstamp 실패 시 대체. 수집시각 표시, 24시간 등락 미제공', true],
-    ['finnhub', 'Finnhub', 'https://finnhub.io/docs/api/quote', '가입 권한에 따라 시세 지연·이용 범위가 다름. 섹터는 ETF 대용지표', Boolean(env.FINNHUB_API_KEY)],
-  ].map(([id, name, url, delay, enabled]) => ({
-    id, name, url, delay, enabled,
-    status: all.some((quote) => quote.provider === id && quote.value !== null && !quote.deploymentBackup) ? 'connected'
-      : all.some((quote) => quote.provider === id && quote.deploymentBackup) ? 'backup'
-      : ['treasury', 'coinbase'].includes(id) ? 'standby' : enabled ? 'no_data' : 'unconfigured',
-  }));
+  const definitions = [
+    ['fred', 'FRED / 각 원자료 제공기관', 'https://fred.stlouisfed.org/', '일별 자료 · 원천 이용조건 확인 필요', true, ['api.stlouisfed.org', 'fred.stlouisfed.org']],
+    ['treasury', '미국 재무부', 'https://home.treasury.gov/policy-issues/financing-the-government/interest-rate-statistics/', 'FRED 금리 실패 시 공식 대체 자료', true, ['home.treasury.gov']],
+    ['frankfurter', 'ECB / Frankfurter', 'https://frankfurter.dev/', 'ECB 일별 기준환율 우선 · 누락 통화는 혼합 기준환율로 대체', true, ['api.frankfurter.dev']],
+    ['bitstamp', 'Bitstamp', 'https://www.bitstamp.net/api/', '거래소 현물 스냅샷 · 실패 시 Coinbase 시도', true, ['www.bitstamp.net']],
+    ['coinbase', 'Coinbase Spot', 'https://docs.cdp.coinbase.com/coinbase-app/docs/api-prices', 'Bitstamp 실패 시 현물 대체 (24시간 등락 미제공)', true, ['api.coinbase.com']],
+    ['goldapi', 'Gold API', 'https://gold-api.com/docs', '금·은·구리 참고 현물가격 · 구리는 USD/파운드 · 키 불필요', true, ['api.gold-api.com']],
+    ['finnhub', 'Finnhub', 'https://finnhub.io/docs/api/quote', '미국 섹터 ETF·대표 종목 · API 키 필요 · 등락 시각과 가입 권한 확인', Boolean(env.FINNHUB_API_KEY), ['finnhub.io']],
+    ['ecos', '한국은행 ECOS', 'https://ecos.bok.or.kr/', '한국 주가지수·외국인 순매수·국채금리 일별 자료 · API 키 필요', Boolean(env.ECOS_API_KEY), ['ecos.bok.or.kr']],
+  ];
+  const expected = {
+    fred: INSTRUMENTS.filter(x => x.fred).length,
+    frankfurter: INSTRUMENTS.filter(x => x.fx).length,
+    bitstamp: INSTRUMENTS.filter(x => x.crypto).length,
+    finnhub: SECTORS.length + LEADERS.length,
+    goldapi: INSTRUMENTS.filter(x => x.metalSpot).length,
+    ecos: INSTRUMENTS.filter(x => x.ecos).length,
+  };
+  return definitions.map(([id, name, url, note, enabled, hosts]) => {
+    const records = all.filter(quote => quote.provider === id);
+    const valid = records.filter(quote => Number.isFinite(quote.value) && ['live', 'delayed', 'daily', 'monthly'].includes(quote.status) && !quote.deploymentBackup);
+    const backups = records.filter(quote => quote.deploymentBackup === true);
+    const stale = records.filter(quote => quote.status === 'stale' && !quote.deploymentBackup);
+    const errors = [...failures].filter(([key]) => {
+      const [host, code] = key.split(' ');
+      return hosts.includes(host) && code !== 'response_received';
+    }).map(([key, count]) => {
+      const code = key.slice(key.indexOf(' ') + 1);
+      return { code, count };
+    });
+    const state = !enabled ? 'unconfigured'
+      : valid.length ? ((stale.length || backups.length || records.some(q => q.value === null)) ? 'partial' : 'connected')
+      : backups.length ? 'backup'
+      : stale.length ? 'stale'
+      : ['treasury', 'coinbase'].includes(id) ? 'standby' : 'no_data';
+    return {
+      id, name, url, note, enabled, status: state,
+      received: valid.length, expected: expected[id] || null,
+      monthly: valid.filter(quote => quote.status === 'monthly').length,
+      stale: stale.length, backup: backups.length, missing: records.filter(q => q.value === null).length,
+      failures: errors.slice(0, 8),
+    };
+  });
 }
 
 function useDeploymentBackup(quotes, backup, now = Date.now()) {
@@ -380,7 +486,7 @@ function useDeploymentBackup(quotes, backup, now = Date.now()) {
 export async function collectMarket(env, backup = []) {
   const { readURL, failures } = createMarketReader();
   const [initialQuotes, fx, sectors, leaders] = await Promise.all([
-    Promise.all(INSTRUMENTS.map((instrument) => instrument.fred ? fredQuote(instrument, env, readURL) : instrument.crypto ? cryptoQuote(instrument, readURL) : Promise.resolve(missing(instrument)))),
+    Promise.all(INSTRUMENTS.map((instrument) => instrument.fred ? fredQuote(instrument, env, readURL) : instrument.metalSpot ? metalSpotQuote(instrument, readURL) : instrument.ecos ? ecosQuote(instrument, env, readURL) : instrument.crypto ? cryptoQuote(instrument, readURL) : Promise.resolve(missing(instrument)))),
     fxQuotes(readURL), finnhubList(SECTORS, 'sector', env, readURL), finnhubList(LEADERS, 'equity', env, readURL),
   ]);
   const treasury = await treasuryFallback(initialQuotes, readURL);
@@ -389,6 +495,8 @@ export async function collectMarket(env, backup = []) {
   const quotes = useDeploymentBackup(obtained, backup);
   const available = quotes.filter((quote) => quote.value !== null).length;
   const { summary, outlooks } = buildAnalysis(quotes);
+  const impact = buildImpact({ quotes });
+  impact.validation = validateHistoricalImpact({ quotes });
   const restored = quotes.filter(quote => quote.deploymentBackup).length;
   if (restored) {
     summary.points.unshift(`실시간 공급자 요청 실패로 ${restored}개 지표에 배포 시 저장한 관측값을 표시합니다. 각 지표의 출처와 관측 시각을 확인하세요.`);
@@ -415,15 +523,15 @@ export async function collectMarket(env, backup = []) {
   }
   const mode = available === 0 ? 'unconfigured' : available === quotes.length && quotes.every((quote) => quote.status === 'live') ? 'live' : 'partial';
   return {
-    asOf: new Date().toISOString(), mode, quotes, sectors, leaders, events: [],
-    summary, outlooks, sources: sourceList(quotes, sectors, leaders, env),
+    asOf: new Date().toISOString(), mode, quotes, sectors, leaders, impact, events: [],
+    summary, outlooks, sources: sourceList(quotes, sectors, leaders, env, failures),
     analysis: { kind: 'rules', status: 'ready', label: '규칙 기반 · 조건부 점검' },
     cacheSeconds: TTL / 1000,
   };
 }
 
 async function configKey(env) {
-  const identity = JSON.stringify([env.FRED_API_KEY || '', env.FINNHUB_API_KEY || '']);
+  const identity = JSON.stringify([env.FRED_API_KEY || '', env.FINNHUB_API_KEY || '', env.ECOS_API_KEY || '']);
   if (!configHashes.has(identity)) {
     if (configHashes.size > 8) configHashes.clear();
     configHashes.set(identity, crypto.subtle.digest('SHA-256', new TextEncoder().encode(identity)).then((digest) =>

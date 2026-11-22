@@ -11,7 +11,7 @@ const memberPassword='Member-test-2026!';
 
 test('private desk authentication, member management and real-time room',async t=>{
   const mf=new Miniflare(convertV4MiniflareOptions({
-    modules:['worker','room','market','market-deploy-snapshot','analysis','calendar'].map(name=>({type:'ESModule',path:resolve(`src/${name}.js`)})),
+    modules:['worker','room','market','impact','validation','market-deploy-snapshot','analysis','calendar'].map(name=>({type:'ESModule',path:resolve(`src/${name}.js`)})),
     compatibilityDate:'2026-11-01',
     durableObjects:{DESK:{className:'DeskRoom',useSQLite:true}},
     bindings:{BOOTSTRAP_TOKEN_SHA256:createHash('sha256').update(setupToken).digest('hex')},

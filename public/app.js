@@ -326,9 +326,9 @@ function renderView() {
   const refresh = B(E('span', {class: 'button-label'}, '새로고침'), event => busy(event.currentTarget, refreshCurrent), 'small', 'refresh', {'aria-label': '현재 화면 새로고침'});
   document.querySelector('#page-header').replaceChildren(E('div', {class: 'page-header'}, E('div', {}, E('p', {class: 'eyebrow'}, item.english), E('h1', {}, item.title), E('p', {class: 'page-subtitle'}, item.subtitle)), E('div', {class: 'header-actions'}, dataState(), refresh)));
   const main = document.querySelector('#main-column');
-  if (state.view === 'overview') main.replaceChildren(renderBrief(), renderQuotes(), E('div', {class: 'section-pair'}, renderSectors(), renderLeaders()), renderOutlook(), renderEvents(true));
+  if (state.view === 'overview') main.replaceChildren(renderBrief(), renderImpact(), renderQuotes(), E('div', {class: 'section-pair'}, renderSectors(), renderLeaders()), renderOutlook(), renderEvents(true));
   if (state.view === 'markets') main.replaceChildren(renderMarketTable(), renderEquityTable('미국 섹터 · ETF 대용지표', state.market?.sectors || []), renderEquityTable('미국 대표 종목', state.market?.leaders || []));
-  if (state.view === 'outlooks') main.replaceChildren(renderOutlook(), methodologyPanel());
+  if (state.view === 'outlooks') main.replaceChildren(renderImpact(), renderOutlook(), methodologyPanel());
   if (state.view === 'calendar') main.replaceChildren(renderEvents(false));
   if (state.view === 'sources') main.replaceChildren(renderSources());
   if (state.view === 'users') main.replaceChildren(renderUsers());
@@ -354,15 +354,80 @@ function renderBrief() {
   const analysisNote = analysis?.status === 'unavailable' ? `분석 미생성 · ${analysis.reason || '근거 또는 연결 상태를 확인해 주세요.'}` : analysis?.generatedAt ? `분석 생성 ${dateText(analysis.generatedAt)} KST${analysis.dataAsOf ? ` · 분석 기준 ${dateText(analysis.dataAsOf)} KST` : ''}` : '관측 사실과 전망을 구분합니다. 자세한 근거는 기간별 전망에서 확인하세요.';
   return E('section', {class: 'panel brief-panel'}, E('div', {class: 'panel-head'}, E('p', {class: 'brief-label'}, icon('brief'), state.demo ? 'TODAY’S BRIEF · EXAMPLE' : 'TODAY’S BRIEF'), badge(state.demo ? '예시 시나리오' : state.market?.mode === 'unconfigured' ? '데이터 대기' : analysisLabel, state.demo ? 'amber' : 'blue')), E('div', {class: 'brief-content'}, E('h2', {}, summary.headline || '확인된 데이터를 기다리고 있습니다.'), E('div', {class: 'brief-points'}, (summary.points || []).slice(0, 3).map((point, i) => E('div', {class: 'brief-point'}, E('span', {class: 'point-number'}, `0${i + 1}`), E('span', {}, typeof point === 'string' ? point : point.text || point.title || ''))))), E('div', {class: 'brief-footer'}, E('span', {class: 'brief-foot-note'}, icon('info'), state.demo ? '화면 설명을 위한 가상 해석입니다. 투자 판단에 사용하지 마세요.' : analysisNote), E('span', {}, state.demo ? '예시 데이터' : state.market?.asOf ? `데스크 갱신 ${dateText(state.market.asOf)} KST` : '분석 데이터 미연결')));
 }
+function renderBacktest(review) {
+  const outer = E('div', {class:'source-cards'});
+  for (const [name,item] of [['KOSPI',review.kospi],['KOSDAQ',review.kosdaq]]) {
+    const body = E('div',{class:'source-body'});
+    body.append(E('h3',{class:'source-name'}, name+' · '+(item.status==='exploratory'?'표본 확보':'표본 부족')));
+    body.append(E('p',{class:'source-description'},item.agreementRate===null?('판정 가능한 '+item.classifiedDays+'거래일 · 최소 '+review.minimumClassifiedDays+'일 필요'):('과거 종가 방향 일치 '+item.agreementRate+'% · '+item.classifiedDays+'거래일')));
+    body.append(E('p',{class:'tiny muted'},(item.from||'—')+' ~ '+(item.until||'—')+' · 미래 적중률을 뜻하지 않습니다.'));
+    outer.append(E('div',{class:'source-card'},body));
+  }
+  return outer;
+}
+function renderImpact() {
+  const impact = state.demo ? null : state.market?.impact;
+  const section = E('section', {class: 'panel', id: 'korea-impact'},
+    panelHead('글로벌 → 한국 증시 영향', '해외 지표로 국내 시장의 외부 여건을 점검합니다. 실제 지수 등락 예측은 아닙니다.', badge('OBSERVED FACTORS', 'blue'), 'globe'));
+  if (!impact) {
+    section.append(empty('글로벌 영향 분석 대기', state.demo ? '체험용 예시는 실제 분석을 표시하지 않습니다.' : '연결된 지표를 확인하는 중입니다.', 'chart'));
+    return section;
+  }
+  const cards = [['KOSPI', impact.kospi], ['KOSDAQ', impact.kosdaq]].map(([name, item]) => {
+    const headline = `${name} · ${item.state}`;
+    return E('div', {class: 'source-card'},
+      E('div', {class: 'source-body'},
+        E('h3', {class: 'source-name'}, headline),
+        E('p', {class: 'source-description'}, item.summary),
+        E('p', {class: 'tiny muted'}, `반영 근거 ${item.available}/${item.total}개 · 가중치 커버리지 ${Math.round(item.coverage * 100)}% (예측 확률 아님)`),
+        E('ul', {class: 'reason-list'}, item.drivers.slice(0, 4).map(driver =>
+          E('li', {}, `${driver.text} · ${driver.stance} · ${sourceName(driver.source)}`)))));
+  });
+  section.append(E('div', {class: 'source-cards'}, cards));
+  const domestic = impact.domestic || {};
+  const domesticItems = [
+    ['코스피 일별 종가', domestic.kospi],
+    ['코스닥 일별 종가', domestic.kosdaq],
+    ['코스피 외국인 순매수', domestic.foreignKospi],
+  ];
+  section.append(E('div', {class: 'panel-foot'}, E('strong', {}, '국내 시장 관측 · 실제 종가와 수급'),
+    E('span', {}, ' · 일별 확정 자료이며 위 해외 환경 판단의 적중률이 아닙니다.')));
+  section.append(E('div', {class: 'source-cards'}, domesticItems.map(([name, quote]) =>
+    E('div', {class: 'source-card'}, E('div', {class: 'source-body'},
+      E('h3', {class: 'source-name'}, name),
+      quote ? E('p', {class: 'source-description'},
+        `${Number(quote.value).toLocaleString('ko-KR', {maximumFractionDigits: 2})} ${quote.unit || ''} · ${String(quote.observedAt).slice(0, 10)} 기준`) :
+        E('p', {class: 'source-description'}, '데이터 미연결 또는 최신 관측값 부족'),
+      quote?.change !== null && quote?.change !== undefined
+        ? E('p', {class: 'tiny muted'}, `직전 관측 대비 ${quote.change > 0 ? '+' : ''}${quote.change}${quote.changeUnit || ''} · ${quote.changeBasis || '전일 대비'}`) : null,
+      quote?.source ? E('p', {class: 'tiny muted'}, sourceName(quote.source)) : null)))));
+
+  if (impact.validation) {
+    section.append(E('div', {class:'panel-foot'}, '과거 방향 일치 점검 · 탐색적 통계'), renderBacktest(impact.validation),
+      E('div', {class:'source-disclaimer'}, (impact.validation.limitations || []).join(' ')));
+  }
+  const themes = (impact.themes || []).map(theme =>
+    E('div', {class: 'source-card'},
+      E('div', {class: 'source-body'},
+        E('h3', {class: 'source-name'}, `${theme.title} · ${theme.state}`),
+        E('p', {class: 'source-description'}, theme.reason),
+        theme.evidence ? E('p', {class: 'tiny muted'}, theme.evidence) : null)));
+  section.append(E('div', {class: 'source-cards'}, themes));
+  section.append(E('div', {class: 'source-disclaimer'},
+    `${impact.mixedDates ? '관측 날짜가 다른 지표가 섞여 있습니다. ' : ''}${(impact.cautions || []).join(' ')}`));
+  return section;
+}
 function renderQuotes() {
   const allQuotes = normalizedQuotes();
   const quotes = coreQuotes().map(core => allQuotes.find(quote => quote.id === core.id) || core);
+  // Metals beyond the static core list must be visible on the overview too.
+  quotes.push(...['silver', 'nickel'].map(id => allQuotes.find(quote => quote.id === id)).filter(Boolean));
   return E('section', {class: 'panel'}, panelHead('글로벌 핵심 지표', '주요 자산의 방향을 가장 먼저 확인하세요', E('button', {type: 'button', class: 'text-button', onClick: () => navigate('markets')}, '전체 시장', icon('chevron'))), E('div', {class: 'market-grid'}, quotes.map(quoteCard)), E('div', {class: 'panel-foot'}, E('span', {class: 'gain'}, '● 상승'), '　', E('span', {class: 'loss'}, '● 하락'), '　색상은 증감을 나타내며 투자 유불리를 의미하지 않습니다. 자산별 기준시각과 변동 단위가 다릅니다.'));
 }
 function quoteCard(quote) {
   const available = hasValue(quote);
-  const observed = quote.timestampPrecision === 'day' && quote.observedAt ? String(quote.observedAt).slice(0, 10) : dateText(quote.observedAt);
-  return E('article', {class: 'quote-card', title: `${quote.name} · ${state.demo ? '체험용 예시 데이터' : `${sourceName(quote.source)} · ${observed}${quote.reason ? ` · ${quote.reason}` : ''}`}`}, E('div', {class: 'quote-top'}, E('h3', {class: 'quote-name'}, quote.name), E('span', {class: 'quote-group'}, groupName(quote.group))), E('div', {class: 'quote-value-row'}, E('span', {class: 'quote-value'}, formatValue(quote)), E('span', {class: 'quote-unit'}, quote.unit || '')), E('div', {class: 'quote-bottom'}, available ? E('span', {class: `quote-change ${changeClass(quote.change)}`}, formatChange(quote)) : E('span', {class: 'quote-missing'}, '데이터 연결 필요'), available ? sparkline(quote) : null), E('div', {class: 'quote-source'}, state.demo ? '체험용 예시' : available ? `${quote.status === 'stale' ? '⚠ 지연 · ' : ''}${sourceName(quote.source)} · ${observed}` : '— 데이터 연결 필요'));
+  const observed = quote.timestampPrecision === 'month' && quote.observedAt ? `${String(quote.observedAt).slice(0, 7)} 월간 평균` : quote.timestampPrecision === 'day' && quote.observedAt ? String(quote.observedAt).slice(0, 10) : dateText(quote.observedAt);
+  return E('article', {class: 'quote-card', title: `${quote.name} · ${state.demo ? '체험용 예시 데이터' : `${sourceName(quote.source)} · ${observed}${quote.basis ? ` · ${quote.basis}` : ''}${quote.reason ? ` · ${quote.reason}` : ''}`}`}, E('div', {class: 'quote-top'}, E('h3', {class: 'quote-name'}, quote.name), E('span', {class: 'quote-group'}, groupName(quote.group))), E('div', {class: 'quote-value-row'}, E('span', {class: 'quote-value'}, formatValue(quote)), E('span', {class: 'quote-unit'}, quote.unit || '')), E('div', {class: 'quote-bottom'}, available ? E('span', {class: `quote-change ${changeClass(quote.change)}`}, formatChange(quote)) : E('span', {class: 'quote-missing'}, '데이터 연결 필요'), available ? sparkline(quote) : null), E('div', {class: 'quote-source'}, state.demo ? '체험용 예시' : available ? `${quote.status === 'stale' ? '⚠ 오래된 관측 · ' : quote.status === 'monthly' ? '월간 통계 · ' : ''}${sourceName(quote.source)} · ${observed}` : '— 데이터 연결 필요'));
 }
 function sparkline(quote) {
   const values = (Array.isArray(quote.history) ? quote.history : []).map(x => typeof x === 'number' ? x : Number(x.value ?? x.close)).filter(Number.isFinite);
@@ -379,11 +444,11 @@ function groupName(group) {
   return ({equities: '주식', equity: '주식', stocks: '주식', indices: '주식', rates: '금리', yields: '금리', bonds: '금리', fx: '외환', currencies: '외환', commodities: '원자재', commodity: '원자재', energy: '원자재', metals: '원자재', korea: '한국시장', crypto: '디지털자산', volatility: '변동성', risk: '변동성'})[group] || group || '기타';
 }
 function renderSectors() {
-  const sectors = state.market?.sectors || [];
+  const sectors = (state.market?.sectors || []).filter(q => hasValue(q) && q.status !== 'stale' && !q.deploymentBackup);
   return E('section', {class: 'panel'}, panelHead('섹터의 온도', '미국 주요 업종의 등락', null, 'layers'), sectors.length ? E('div', {class: 'sector-list'}, sectors.slice(0, 8).map(sector => E('div', {class: `sector-tile ${Number(sector.change) > 0 ? 'gain-bg' : Number(sector.change) < 0 ? 'loss-bg' : ''}`}, E('span', {}, sector.name || sector.sector), E('strong', {class: changeClass(sector.change)}, formatChange(sector))))) : E('div', {class: 'compact-empty'}, '— 섹터 데이터 연결 필요', E('br'), '업종별 시세가 연결되면 상승의 확산 정도를 확인할 수 있습니다.'));
 }
 function renderLeaders() {
-  const leaders = state.market?.leaders || [];
+  const leaders = (state.market?.leaders || []).filter(q => hasValue(q) && q.status !== 'stale' && !q.deploymentBackup);
   return E('section', {class: 'panel'}, panelHead('주도 종목', '시장의 움직임을 설명하는 대표 기업', null, 'chart'), leaders.length ? E('div', {class: 'leaders-list'}, leaders.slice(0, 4).map(item => E('div', {class: 'leader-row'}, E('div', {class: 'leader-monogram'}, String(item.symbol || item.name || '').slice(0, 2)), E('div', {}, E('div', {class: 'leader-title'}, item.name), E('div', {class: 'leader-symbol'}, item.symbol || item.ticker || '')), E('div', {class: 'leader-change'}, E('div', {class: changeClass(item.change)}, formatChange(item)), E('div', {class: 'leader-value'}, hasValue(item) ? `$${formatValue(item)}` : '—'))))) : E('div', {class: 'compact-empty'}, '— 종목 데이터 연결 필요', E('br'), '대표 종목의 가격과 시장 대비 움직임을 함께 제공합니다.'));
 }
 const horizons = [{id: 'day', label: '오늘', aliases: ['day', 'today', 'daily']}, {id: 'short', label: '2~3일', aliases: ['short', '2-3d', '2-3days']}, {id: 'week', label: '이번 주', aliases: ['week', 'weekly']}, {id: 'month', label: '1개월', aliases: ['month', 'monthly']}, {id: 'quarter', label: '3~6개월', aliases: ['quarter', '3-6m', 'medium']}];
@@ -443,20 +508,78 @@ function renderEquityTable(title, rows) {
   section.append(E('div', {class: 'table-wrap'}, E('table', {}, E('thead', {}, E('tr', {}, ['종목 / 지표', '가격 / 단위', '변동', '관측 시점', '출처'].map(x => E('th', {}, x)))), E('tbody', {}, rows.map(row => E('tr', {}, E('td', {}, E('strong', {}, row.name), E('div', {class: 'tiny muted'}, row.symbol || row.id || '')), E('td', {class: 'mono'}, hasValue(row) ? `${formatValue(row)} ${row.unit || ''}` : '—'), E('td', {class: changeClass(row.change)}, row.change === null || row.change === undefined ? '—' : formatChange(row)), E('td', {class: 'tiny muted'}, state.demo ? '가상 예시' : row.observedAt ? dateText(row.observedAt) : '—'), E('td', {class: 'tiny muted'}, state.demo ? '체험용 예시' : hasValue(row) ? sourceName(row.source) : row.reason || '데이터 연결 필요')))))));
   return section;
 }
+function failureLabel(code) {
+  if (/^HTTP_429$/.test(code)) return '호출 제한(429)';
+  if (/^HTTP_40[13]$/.test(code)) return '인증·접근 거부';
+  if (/^HTTP_5\d\d$/.test(code)) return '공급자 서버 오류';
+  if (/^HTTP_\d+$/.test(code)) return '공급자 응답 ' + code.slice(5);
+  return ({
+    timeout: '응답 시간 초과', dns_error: 'DNS 연결 오류',
+    tls_error: '보안 연결 오류', outbound_denied: '외부 연결 거부',
+    request_context: '요청 컨텍스트 오류', fetch_error: '요청 실패',
+    invalid_json: '응답 형식 불일치', response_too_large: '응답 크기 초과',
+    connection_lost: '연결 끊김',
+  })[code] || '수신 오류';
+}
 function renderSources() {
   const sources = state.market?.sources || [];
-  const missing = normalizedQuotes().filter(q => !hasValue(q));
-  const panel = E('section', {class: 'panel'}, panelHead('데이터 연결 현황', '연결 성공 여부와 실제 데이터 수신 여부를 구분합니다.', badge(state.demo ? '체험용 데이터' : `${normalizedQuotes().length - missing.length} / ${normalizedQuotes().length} 지표 수신`, state.demo ? 'amber' : 'blue')));
-  if (sources.length) panel.append(E('div', {class: 'source-cards'}, sources.map(source => E('article', {class: 'source-card'}, E('div', {class: 'source-icon'}, icon('source')), E('div', {class: 'source-body'}, E('h3', {class: 'source-name'}, source.name || source.provider || '데이터 공급자', badge(sourceStatus(source.status).label, sourceStatus(source.status).type)), E('p', {class: 'source-description'}, source.note || source.description || source.delay || '공급자의 관측 기준과 이용조건을 확인하세요.'), source.url ? E('div', {class: 'source-description'}, link('공식 출처 확인', source.url)) : null)))));
-  else panel.append(empty('시세 공급사 연결을 준비하고 있습니다.', '공급사 설정과 API 키는 서버에서 관리합니다. 키를 입력하는 화면이나 브라우저 저장 기능은 제공하지 않습니다.'));
-  if (missing.length && !state.demo) panel.append(E('div', {class: 'source-disclaimer'}, E('strong', {}, '추가 연결이 필요한 항목'), E('p', {}, missing.map(q => q.name).join(' · ')), E('p', {}, '자산별 시장 표에서 각 항목의 연결 필요 사유를 확인할 수 있습니다.')));
-  panel.append(E('div', {class: 'source-disclaimer'}, E('strong', {}, '시각과 지표의 기준'), E('p', {}, '데스크 갱신 시각은 데이터를 가져온 시각이며 지표의 관측 시점과 다를 수 있습니다. 일별 기준환율은 서울 현물환 종가와 다르고, 원유 현물은 선물과 다릅니다. 대용지표를 사용하는 경우 해당 기준을 표시합니다.'), E('p', {}, state.market?.asOf ? `최근 데스크 갱신: ${dateText(state.market.asOf)} KST` : '현재 실제 데이터 갱신 시각이 없습니다.')));
+  const quotes = normalizedQuotes();
+  const good = quotes.filter(q => hasValue(q) && ['daily', 'delayed', 'live', 'monthly'].includes(q.status) && !q.deploymentBackup);
+  const missing = quotes.filter(q => !hasValue(q));
+  const outdated = quotes.filter(q => q.status === 'stale' || q.deploymentBackup);
+  const panel = E('section', {class: 'panel'},
+    panelHead('데이터 연결 현황', '설정 여부와 실제 수신, 오래된 값, API 장애를 구분합니다.',
+      badge(state.demo ? '체험용 데이터' : `${good.length} / ${quotes.length} 지표 정상 수신`, state.demo ? 'amber' : 'blue')));
+  if (sources.length) {
+    panel.append(E('div', {class: 'source-cards'}, sources.map(source => {
+      const details = [];
+      if (source.expected != null) details.push(`정상 수신 ${source.received || 0}/${source.expected}`);
+      if (source.stale) details.push(`오래된 값 ${source.stale}개`);
+      if (source.monthly) details.push(`월간 평균 ${source.monthly}개 · 실시간 가격 아님`);
+      if (source.backup) details.push(`백업 값 ${source.backup}개`);
+      if (source.missing) details.push(`미수신 ${source.missing}개`);
+      const errors = (source.failures || []).filter(x => x.count > 0)
+        .map(x => `${failureLabel(x.code)} ${x.count}건`);
+      return E('article', {class: 'source-card'},
+        E('div', {class: 'source-icon'}, icon('source')),
+        E('div', {class: 'source-body'},
+          E('h3', {class: 'source-name'}, source.name || '데이터 공급자', badge(sourceStatus(source.status).label, sourceStatus(source.status).type)),
+          E('p', {class: 'source-description'}, source.note || source.description || source.delay || '관측 기준을 확인하세요.'),
+          details.length ? E('p', {class: 'source-description'}, details.join(' · ')) : null,
+          errors.length ? E('p', {class: 'source-description'}, '요청 진단: ' + errors.join(' · ')) : null,
+          source.url ? E('div', {class: 'source-description'}, link('공식 출처 확인', source.url)) : null));
+    })));
+  } else {
+    panel.append(empty('시세 공급사 연결 상태를 확인할 수 없습니다.',
+      '실제 수신 상태는 인증 후 시장 데이터를 조회해야 확인할 수 있습니다.'));
+  }
+  if (outdated.length && !state.demo) panel.append(E('div', {class: 'source-disclaimer'},
+    E('strong', {}, '오래된 데이터 또는 배포 백업값'),
+    E('p', {}, outdated.map(q => q.name).join(' · ')),
+    E('p', {}, '과거 관측값은 최근 시장 방향 분석에 사용하지 않습니다.')));
+  if (missing.length && !state.demo) panel.append(E('div', {class: 'source-disclaimer'},
+    E('strong', {}, '연결 또는 수신 확인이 필요한 항목'),
+    E('p', {}, missing.map(q => q.name).join(' · ')),
+    E('p', {}, '자산별 시장 표에서 각 항목의 실패 원인과 공급원을 확인해 주세요.')));
+  panel.append(E('div', {class: 'source-disclaimer'}, E('strong', {}, '관측 시각과 데이터 기준'),
+    E('p', {}, '수신 시각과 관측 시각은 다릅니다. ECB 기준환율은 서울 현물환이 아니며, 배포 백업값은 실시간 가격이 아닙니다.'),
+    E('p', {}, state.market?.asOf ? `최근 데스크 갱신: ${dateText(state.market.asOf)} KST` : '현재 실제 데이터 갱신 시각이 없습니다.')));
   return panel;
 }
 function sourceStatus(status) {
-  if (status === 'backup') return {label: '저장된 관측값', type: 'amber'};
-  return ({connected: {label: '데이터 수신', type: 'green'}, live: {label: '연결됨', type: 'green'}, standby: {label: '대체 소스 대기', type: ''}, no_data: {label: '설정됨 · 수신 확인 필요', type: 'amber'}, unconfigured: {label: '설정 필요', type: ''}, demo: {label: '예시 · 미연결', type: 'amber'}})[status] || {label: status || '상태 미제공', type: ''};
+  if (status === 'backup') return {label: '백업값만 존재', type: 'amber'};
+  return ({
+    connected: {label: '정상 수신', type: 'green'},
+    partial: {label: '일부만 수신', type: 'amber'},
+    stale: {label: '관측값 오래됨', type: 'amber'},
+    live: {label: '정상 수신', type: 'green'},
+    standby: {label: '대체 공급원 대기', type: ''},
+    no_data: {label: '수신 실패 · 확인 필요', type: 'amber'},
+    unconfigured: {label: '인증·설정 필요', type: ''},
+    demo: {label: '예시 · 미연결', type: 'amber'},
+  })[status] || {label: status || '상태 미제공', type: ''};
 }
+
 function renderUsers() {
   const section = E('section', {class: 'panel'}, panelHead(state.demo ? '가상 회원 관리' : '회원 계정', state.demo ? '추가·수정 내용은 이 브라우저의 체험 상태에만 반영됩니다.' : 'PIN 계정과 초대 계정을 관리합니다.', B('회원 추가', () => userModal(), 'primary small', 'plus')));
   if (!state.users.length) { section.append(E('div', {class: 'admin-empty'}, state.loading ? '회원 목록을 불러오는 중입니다.' : '회원 목록을 새로고침해 주세요.')); return section; }

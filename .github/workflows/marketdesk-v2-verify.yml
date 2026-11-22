@@ -1,0 +1,38 @@
+name: Market Desk V2 Verification
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [feat/marketdesk-v2-impact-analysis]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Check, Test, Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Syntax and application checks
+        run: npm run check
+      - name: Unit and integration tests
+        run: npm test
+      - name: Cloudflare Worker dry-run build
+        run: npm run build
+      - name: Raw commodity API connectivity (GitHub runner, diagnostic only)
+        continue-on-error: true
+        run: node scripts/probe-metals.mjs
+      - name: Public API connectivity (GitHub runner, diagnostic only)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        run: node scripts/probe-public-feeds.mjs
