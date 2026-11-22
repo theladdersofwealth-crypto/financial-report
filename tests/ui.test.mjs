@@ -35,7 +35,7 @@ test('standalone demo renders every destination without accessing member APIs',a
   assert.match(document.querySelector('.demo-banner').textContent,/예시 데이터/);
   const topics=[...document.querySelectorAll('.metric-section-title')].map(el=>el.textContent);
   assert.deepEqual(topics.slice(0,5),[
-    '한국 증시 · 기관별 수급','미국 증시 · 위험 심리','금리 · 환율','원자재','디지털자산'
+    '한국 증시 · 외국인·연기금 수급','미국 증시 · 위험 심리','금리 · 환율','원자재','디지털자산'
   ],'five distinct topic headings should be visible in order');
   assert.equal(document.querySelectorAll('.metric-jump-button').length,topics.length);
   assert.ok(document.querySelectorAll('.overview-section-intro').length>=3,
