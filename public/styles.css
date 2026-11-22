@@ -3637,3 +3637,16 @@ td strong {
  .metric-section .quote-card .quote-change{font-size:12px}
  .metric-korea .market-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
+
+/* Keep index labels visible on the first two Korea cards after live quote refresh. */
+.metric-korea .market-grid > .quote-card:nth-child(1) .quote-top::before,
+.metric-korea .market-grid > .quote-card:nth-child(2) .quote-top::before {
+  display:block;flex:1;min-width:0;font-size:15px;font-weight:800;
+  line-height:1.35;color:#263d55;
+}
+.metric-korea .market-grid > .quote-card:nth-child(1) .quote-top::before {content:'코스피'}
+.metric-korea .market-grid > .quote-card:nth-child(2) .quote-top::before {content:'코스닥'}
+.metric-korea .market-grid > .quote-card:nth-child(-n+2) .quote-top > .quote-name {display:none}
+@media(max-width:760px){
+ .metric-korea .market-grid > .quote-card:nth-child(-n+2) .quote-top::before{font-size:13px}
+}
