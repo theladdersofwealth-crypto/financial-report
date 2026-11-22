@@ -3617,3 +3617,23 @@ td strong {
   .market-table-section-inner strong{font-size:13px}
   .market-table-section-inner small{margin-left:0}
 }
+
+/* UI-only card presentation: does not change feeds, caching or chart modal. */
+.metric-section .quote-card{min-height:128px;padding:18px 16px;gap:12px;justify-content:flex-start}
+.metric-section .quote-card .quote-top{align-items:center}
+.metric-section .quote-card .quote-name{font-size:15px;line-height:1.35;font-weight:800;overflow-wrap:anywhere}
+.metric-section .quote-card .quote-value-row{margin-top:0;flex-wrap:wrap;gap:5px}
+.metric-section .quote-card .quote-value{font-size:clamp(23px,2.8vw,31px);line-height:1.15;font-variant-numeric:tabular-nums}
+.metric-section .quote-card .quote-bottom{margin-top:auto}
+.metric-section .quote-card .quote-change{font-size:13px}
+.metric-section .quote-card .quote-spark,.metric-section .quote-card .quote-source{display:none}
+.quote-drilldown{width:24px;height:24px;flex:none;display:inline-flex;align-items:center;justify-content:center;color:#386d99;background:#edf4fb;border-radius:50%}
+.quote-drilldown .icon{width:14px;height:14px}
+.metric-korea .market-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+@media(max-width:760px){
+ .metric-section .quote-card{min-height:125px;padding:15px 12px;gap:9px}
+ .metric-section .quote-card .quote-name{font-size:13px}
+ .metric-section .quote-card .quote-value{font-size:clamp(19px,4.8vw,26px)}
+ .metric-section .quote-card .quote-change{font-size:12px}
+ .metric-korea .market-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
