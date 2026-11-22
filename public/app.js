@@ -585,6 +585,8 @@ function renderQuotes() {
     ['kospi','코스피','pt'],['kosdaq','코스닥','pt'],
     ['kr_foreign_kospi','코스피 외국인 순매수','억원'],
     ['kr_foreign_kosdaq','코스닥 외국인 순매수','억원'],
+    ['kr_pension_kospi','코스피 연기금 등 순매수','억원'],
+    ['kr_pension_kosdaq','코스닥 연기금 등 순매수','억원'],
   ].map(([id,name,unit])=>{
     seen.add(id);
     return allQuotes.find(q=>q.id===id)||
@@ -603,7 +605,7 @@ function renderQuotes() {
   const crypto=take(q=>groupName(q.group)==='디지털자산');
   const other=take(()=>true);
   const groups=[
-    ['01','metrics-korea','한국 증시 · 기관별 수급','코스피·코스닥의 방향과 주체별 자금 흐름을 구분해서 확인합니다.','korea',[...domestic,...domesticPlus]],
+    ['01','metrics-korea','한국 증시 · 외국인·연기금 수급','코스피·코스닥의 방향과 외국인·연기금 자금 흐름을 확인합니다.','korea',[...domestic,...domesticPlus]],
     ['02','metrics-global','미국 증시 · 위험 심리','미국 대표 지수와 변동성 지표로 밤사이 시장 분위기를 확인합니다.','global',equities],
     ['03','metrics-macro','금리 · 환율','미국·한국 채권금리와 달러 움직임을 살펴봅니다.','macro',ratesFx],
     ['04','metrics-commodities','원자재','금·에너지·산업금속 가격을 주식시장과 구분해 비교합니다.','commodities',commodities],
