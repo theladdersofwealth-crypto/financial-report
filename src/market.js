@@ -509,9 +509,17 @@ function selectKisFirst(previous,kisItems) {
 
 export async function collectMarket(env, backup = []) {
   const { readURL, failures } = createMarketReader();
-  const [initialQuotes, fx, finnhubSectors, finnhubLeaders, kis, overseas] = await Promise.all([
+  const [initialQuotes, fx, kis, overseas] = await Promise.all([
     Promise.all(INSTRUMENTS.map((instrument) => instrument.fred ? fredQuote(instrument, env, readURL) : instrument.metalSpot ? metalSpotQuote(instrument, readURL) : instrument.ecos ? ecosQuote(instrument, env, readURL) : instrument.crypto ? cryptoQuote(instrument, readURL) : Promise.resolve(missing(instrument)))),
-    fxQuotes(readURL), finnhubList(SECTORS, 'sector', env, readURL), finnhubList(LEADERS, 'equity', env, readURL), collectKis(env), collectKisOverseas(env),
+    fxQuotes(readURL), collectKis(env), collectKisOverseas(env),
+  ]);
+  // Actual request priority: KIS FIRST. Ask paid Finnhub only for
+  // securities that KIS did not return as valid observations.
+  const overseasSectorIds = new Set(overseas.sectors.filter(validQuote).map(q=>q.id));
+  const overseasLeaderIds = new Set(overseas.leaders.filter(validQuote).map(q=>q.id));
+  const [finnhubSectors, finnhubLeaders] = await Promise.all([
+    finnhubList(SECTORS.filter(([symbol])=>!overseasSectorIds.has(symbol.toLowerCase())), 'sector', env, readURL),
+    finnhubList(LEADERS.filter(([symbol])=>!overseasLeaderIds.has(symbol.toLowerCase())), 'equity', env, readURL),
   ]);
   const treasury = await treasuryFallback(initialQuotes, readURL);
   const base = new Map(initialQuotes.map(q=>[q.id,q]));
