@@ -1326,70 +1326,49 @@ td strong {
 
 /* Brief Panel */
 .brief-panel {
-  position: relative;
-  background: var(--surface);
   border-top: 3px solid var(--navy);
+  background: var(--surface);
 }
-
-.brief-panel .panel-head {
-  padding-bottom: 0;
+.brief-summary {
+  display: grid;
+  gap: 8px;
+  padding: 18px 24px;
+  cursor: pointer;
+  list-style: none;
 }
-
-.brief-label {
+.brief-summary::-webkit-details-marker { display: none; }
+.brief-summary:focus-visible { outline: 2px solid var(--navy); outline-offset: -5px; }
+.brief-label, .brief-more {
   display: flex;
   align-items: center;
   gap: 7px;
-  color: var(--gold);
-  font-size: 11px;
-  letter-spacing: 1.5px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 750;
 }
-
-.brief-content {
-  padding: 16px 24px 22px;
-}
-
-.brief-content h2 {
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: -0.7px;
-  line-height: 1.5;
-  max-width: 740px;
+.brief-label { color: #795a26; }
+.brief-label .icon, .brief-more .icon { width: 16px; height: 16px; }
+.brief-headline {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: clamp(19px, 2.2vw, 24px);
+  font-weight: 800;
+  line-height: 1.4;
   word-break: keep-all;
-  white-space: pre-line;
 }
-
-.brief-points {
-  display: grid;
-  gap: 10px;
-  margin-top: 18px;
-}
-
-.brief-point {
-  display: flex;
-  align-items: flex-start;
-  gap: 11px;
-  font-size: 13.5px;
-  color: var(--text);
-  line-height: 1.7;
-  padding: 11px 14px;
-  background: var(--surface-alt);
-  border-radius: 10px;
-  border: 1px solid var(--line);
-}
-
-.brief-point .point-number {
-  font-family: 'DM Sans', sans-serif;
-  font-size: 11px;
-  color: var(--navy);
-  background: #e6eef7;
-  padding: 2px 7px;
-  border-radius: 6px;
-  margin-top: 2px;
-  font-weight: 700;
-  flex-shrink: 0;
-}
-
+.brief-panel[open] .brief-headline { display: block; }
+.brief-evidence { color: var(--muted); font-size: 13px; font-weight: 550; }
+.brief-more { margin-top: 4px; color: var(--navy); }
+.brief-more-open, .brief-panel[open] .brief-more-closed { display: none; }
+.brief-panel[open] .brief-more-open { display: inline; }
+.brief-panel[open] .brief-more .icon { transform: rotate(180deg); }
+.brief-details { border-top: 1px solid var(--line); }
+.brief-details > #korea-impact { border: 0; box-shadow: none; border-radius: 0; }
+.brief-content { padding: 18px 24px 10px; }
+.brief-content h2 { font-size: 16px; }
+.brief-points { display: grid; gap: 7px; padding-inline-start: 18px; margin: 10px 0 0; font-size: 13.5px; }
 .brief-footer {
   display: flex;
   justify-content: space-between;
@@ -1400,18 +1379,6 @@ td strong {
   font-size: 11.5px;
   gap: 12px;
   color: var(--muted);
-}
-
-.brief-footer .icon {
-  height: 13px;
-  width: 13px;
-  flex-shrink: 0;
-}
-
-.brief-foot-note {
-  display: flex;
-  gap: 7px;
-  align-items: center;
 }
 
 /* Impact Grids */
@@ -3102,11 +3069,11 @@ td strong {
   .quote-spark {
     width: 48px;
   }
-  .brief-content {
-    padding: 14px 16px 18px;
+  .brief-summary, .brief-content {
+    padding: 14px 16px;
   }
-  .brief-content h2 {
-    font-size: 19px;
+  .page-header-overview {
+    margin-bottom: 14px;
   }
   .brief-footer {
     padding: 11px 16px;

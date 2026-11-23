@@ -2,19 +2,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-test('market desk overview starts with indicators, before commentary and Korea impact', async () => {
+test('market desk overview starts with a collapsible briefing before market indicators', async () => {
   const code = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
   const overview = code.match(/if \(state\.view === 'overview'\) main\.replaceChildren\(([^;]+)\);/)?.[1];
   assert.ok(overview, 'overview renderer must exist');
-  assert.match(overview, /^\s*renderQuotes\(\),\s*overviewSectionIntro\(/);
-  assert.ok(overview.indexOf('renderQuotes()') < overview.indexOf('renderBrief()'));
-  assert.ok(overview.indexOf('renderBrief()') < overview.indexOf('renderImpact()'));
+  assert.match(overview, /^\s*renderBrief\(/);
+  assert.ok(overview.indexOf('renderBrief(') < overview.indexOf('renderQuotes()'));
+  const briefing = code.slice(code.indexOf('function renderBrief('),code.indexOf('function renderBacktest('));
+  assert.match(briefing,/E\('details'/);
+  assert.match(briefing,/E\('summary'/);
+  assert.match(briefing,/renderImpact\(\)/);
 });
 
 test('KIS Korea indexes and signed foreign flows are rendered before global indicators', async () => {
   const code = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
   const section = code.slice(code.indexOf('function renderQuotes()'), code.indexOf('function sparkline('));
-  assert.ok(section.includes("panelHead('시장 핵심 지표 · 주제별 현황'"));
+  assert.ok(section.includes("panelHead('시장 지표'"));
   for (const id of ['kospi', 'kosdaq', 'kr_foreign_kospi', 'kr_foreign_kosdaq', 'kr_pension_kospi', 'kr_pension_kosdaq']) {
     assert.ok(section.includes(`['${id}',`), `missing domestic indicator ${id}`);
   }

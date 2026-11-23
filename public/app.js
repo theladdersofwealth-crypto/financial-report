@@ -282,7 +282,7 @@ function enterDemo() {
 }
 
 const navigation = [
-  {id: 'overview', title: '시황 데스크', english: 'MARKET OVERVIEW', icon: 'grid', subtitle: '세계의 움직임과 한국시장의 연결고리를 한눈에.'},
+  {id: 'overview', title: '마켓데스크', icon: 'grid'},
   {id: 'markets', title: '자산별 시장', english: 'GLOBAL MARKETS', icon: 'globe', subtitle: '주식·금리·외환·원자재·가상자산의 같은 날, 다른 움직임.'},
   {id: 'fx', title: '원화 환율', english: 'EXCHANGE RATES IN KRW', icon: 'globe', subtitle: '국가·여행지·통화 코드로 찾고, 통화를 눌러 일별 환율을 확인하세요.'},
   {id: 'instrument', title: '개별 종목 검색', english: 'INSTRUMENT SEARCH', icon: 'search', subtitle: '국내 종목코드·미국 주식 티커·바이낸스 USDT 현물 시세를 직접 확인합니다.'},
@@ -369,12 +369,14 @@ function renderView() {
   const item = navigation.find(x => x.id === state.view) || navigation[0];
   document.querySelector('#breadcrumb-current').textContent = item.title;
   const refresh = B(E('span', {class: 'button-label'}, '새로고침'), event => busy(event.currentTarget, refreshCurrent), 'small', 'refresh', {'aria-label': '현재 화면 새로고침'});
-  document.querySelector('#page-header').replaceChildren(E('div', {class: 'page-header'}, E('div', {}, E('p', {class: 'eyebrow'}, item.english), E('h1', {}, item.title), E('p', {class: 'page-subtitle'}, item.subtitle)), E('div', {class: 'header-actions'}, dataState(), refresh)));
+  document.querySelector('#page-header').replaceChildren(E('div', {class: `page-header${state.view === 'overview' ? ' page-header-overview' : ''}`},
+    E('div', {}, item.english ? E('p', {class: 'eyebrow'}, item.english) : null, E('h1', {}, item.title),
+      item.subtitle ? E('p', {class: 'page-subtitle'}, item.subtitle) : null),
+    E('div', {class: 'header-actions'}, dataState(), refresh)));
   const main = document.querySelector('#main-column');
   if (state.view === 'overview') main.replaceChildren(
+    renderBrief(main.querySelector('#desk-brief')?.hasAttribute('open')),
     renderQuotes(),
-    overviewSectionIntro('시장 해석','글로벌 숫자가 국내 주식시장에 어떤 의미인지 살펴봅니다.','brief'),
-    renderBrief(), renderImpact(),
     overviewSectionIntro('업종과 주도 기업','미국 업종별 흐름과 주요 기술주가 같은 방향으로 움직이는지 확인합니다.','layers'),
     E('div', {class: 'section-pair'}, renderSectors(), renderLeaders()),
     overviewSectionIntro('앞으로 볼 변수','기간별 조건과 예정된 경제 이벤트를 분리해서 확인합니다.','calendar'),
@@ -503,12 +505,60 @@ async function refreshCurrent() {
   else await loadMarket();
   renderView();
 }
-function renderBrief() {
-  const summary = state.market?.summary || defaultMarket().summary;
-  const analysis = state.market?.analysis;
-  const analysisLabel = analysis?.kind === 'ai' ? 'AI 분석' : '지표 기반 자동 해석';
-  const analysisNote = analysis?.status === 'unavailable' ? `분석 미생성 · ${analysis.reason || '근거 또는 연결 상태를 확인해 주세요.'}` : analysis?.generatedAt ? `분석 생성 ${dateText(analysis.generatedAt)} KST${analysis.dataAsOf ? ` · 분석 기준 ${dateText(analysis.dataAsOf)} KST` : ''}` : '관측 사실과 전망을 구분합니다. 자세한 근거는 기간별 전망에서 확인하세요.';
-  return E('section', {class: 'panel brief-panel'}, E('div', {class: 'panel-head'}, E('p', {class: 'brief-label'}, icon('brief'), state.demo ? 'TODAY’S BRIEF · EXAMPLE' : 'TODAY’S BRIEF'), badge(state.demo ? '예시 시나리오' : state.market?.mode === 'unconfigured' ? '데이터 대기' : analysisLabel, state.demo ? 'amber' : 'blue')), E('div', {class: 'brief-content'}, E('h2', {}, summary.headline || '확인된 데이터를 기다리고 있습니다.'), E('div', {class: 'brief-points'}, (summary.points || []).slice(0, 3).map((point, i) => E('div', {class: 'brief-point'}, E('span', {class: 'point-number'}, `0${i + 1}`), E('span', {}, typeof point === 'string' ? point : point.text || point.title || ''))))), E('div', {class: 'brief-footer'}, E('span', {class: 'brief-foot-note'}, icon('info'), state.demo ? '화면 설명을 위한 가상 해석입니다. 투자 판단에 사용하지 마세요.' : analysisNote), E('span', {}, state.demo ? '예시 데이터' : state.market?.asOf ? `데스크 갱신 ${dateText(state.market.asOf)} KST` : '분석 데이터 미연결')));
+function briefSignals(market) {
+  const impact = market?.impact;
+  if (!impact?.kospi || !impact?.kosdaq) return {headline: '', evidence: ''};
+  const {kospi, kosdaq} = impact;
+  const shared = {
+    '우호': '해외 지표가 국내 증시에 우호적입니다',
+    '부담': '해외 지표가 국내 증시에 부담을 주는 흐름입니다',
+    '혼재': '해외 지표의 신호가 엇갈립니다',
+    '판단 보류': '국내 증시 여건을 판단하기엔 근거가 부족합니다',
+  };
+  const headline = kospi.state === kosdaq.state ? shared[kospi.state]
+    : `해외 여건은 코스피 ${kospi.state} · 코스닥 ${kosdaq.state}`;
+  const drivers = new Map();
+  for (const driver of [...(kospi.drivers || []), ...(kosdaq.drivers || [])]) {
+    if (!drivers.has(driver.id) || driver.weight > drivers.get(driver.id).weight) drivers.set(driver.id, driver);
+  }
+  const ranked = [...drivers.values()].filter(driver => driver.stance !== '중립').sort((a, b) => b.weight - a.weight);
+  const mixed = kospi.state !== kosdaq.state || kospi.state === '혼재';
+  const preferred = mixed ? null : kospi.state;
+  const lead = ranked.find(driver => driver.stance === preferred) || ranked[0];
+  const nextStance = mixed ? (lead?.stance === '부담' ? '우호' : '부담') : lead?.stance;
+  const second = lead && (ranked.find(driver => driver.id !== lead.id && driver.stance === nextStance)
+    || ranked.find(driver => driver.id !== lead.id));
+  const evidence = [lead, second].filter(Boolean).map(driver => {
+    const quote = market.quotes?.find(quote => quote.id === driver.id);
+    if (!Number.isFinite(quote?.change)) return driver.name;
+    return `${driver.name} ${formatChange(quote)}`;
+  }).join(' · ');
+  return {headline, evidence};
+}
+function renderBrief(expanded = false) {
+  const market = state.market;
+  const summary = market?.summary;
+  const analysis = market?.analysis;
+  const signals = state.demo ? {} : briefSignals(market);
+  const hasAnalysis = analysis?.kind === 'ai' && analysis.status === 'ready';
+  const headline = hasAnalysis || state.demo ? summary?.headline : signals.headline;
+  const title = headline || (market?.asOf ? '최근 지표가 부족해 시장 판단을 보류합니다' : '브리핑을 불러오는 중입니다');
+  const points = (summary?.points || []).map(point => typeof point === 'string' ? point : point?.text || point?.title).filter(Boolean);
+  const note = state.demo ? '화면 체험용 예시' : hasAnalysis ? 'AI 해석' : '관측 지표 기반';
+  const timing = hasAnalysis ? analysis.dataAsOf || analysis.generatedAt : market?.asOf;
+  return E('details', {class: 'panel brief-panel', id: 'desk-brief', open: expanded || null},
+    E('summary', {class: 'brief-summary'},
+      E('span', {class: 'brief-label'}, icon('brief'), '오늘의 브리핑', state.demo ? badge('예시', 'amber') : null),
+      E('span', {class: 'brief-headline'}, title),
+      signals.evidence ? E('span', {class: 'brief-evidence'}, signals.evidence) : null,
+      E('span', {class: 'brief-more'}, E('span', {class: 'brief-more-closed'}, '근거·상세 보기'),
+        E('span', {class: 'brief-more-open'}, '상세 접기'), icon('down'))),
+    E('div', {class: 'brief-details'},
+      points.length ? E('div', {class: 'brief-content'}, E('h2', {}, '브리핑 근거'),
+        E('ul', {class: 'brief-points'}, points.map(point => E('li', {}, point)))) : null,
+      renderImpact(),
+      E('div', {class: 'brief-footer'}, E('span', {}, timing ? `${note} · 자료 기준 ${dateText(timing)} KST` : note),
+        E('button', {type: 'button', class: 'text-button', onClick: () => navigate('outlooks')}, '기간별 전망', icon('chevron')))));
 }
 function renderBacktest(review) {
   const outer = E('div', {class:'source-cards'});
@@ -686,8 +736,7 @@ function renderQuotes() {
       onClick:()=>document.getElementById(id)?.scrollIntoView({behavior:'smooth',block:'start'})},
       number,E('span',{},title.split(' · ')[0]))));
   return E('section', {class:'panel quote-overview-panel'},
-    panelHead('시장 핵심 지표 · 주제별 현황',
-      '먼저 국내 증시를 보고, 미국 증시 → 금리·환율 → 원자재 → 코인 순으로 읽으세요.',
+    panelHead('시장 지표', null,
       E('button',{type:'button',class:'text-button',onClick:()=>navigate('markets')},'전체 시장',icon('chevron'))),
     jump,
     E('div',{class:'metric-sections'},
@@ -1430,6 +1479,8 @@ async function autoRefreshMarket() {
     if(state.view==='overview') {
       const current=document.querySelector('.quote-overview-panel');
       if(current) current.replaceWith(renderQuotes());
+      const brief = document.querySelector('#desk-brief');
+      if (brief && !brief.hasAttribute('open') && !brief.contains(document.activeElement)) brief.replaceWith(renderBrief());
     } else if(state.view==='markets') {
       // Avoid replacing an open index-chart dialog or interrupting navigation.
       if(!document.querySelector('[role="dialog"]')) renderView();

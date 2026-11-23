@@ -35,13 +35,32 @@ test('standalone demo renders every destination without accessing member APIs',a
     vm.runInContext('enterDemo()',ctx);
   }
   assert.match(document.querySelector('.demo-banner').textContent,/예시 데이터/);
+  const overview = document.querySelector('#main-column');
+  const brief = overview.firstElementChild;
+  assert.equal(brief.localName, 'details');
+  assert.equal(brief.id, 'desk-brief');
+  assert.equal(brief.hasAttribute('open'), false);
+  assert.match(brief.querySelector('.brief-label').textContent, /오늘의 브리핑/);
+  assert.equal(brief.querySelector('.brief-more-closed').textContent, '근거·상세 보기');
+  assert.ok(brief.querySelector('.brief-details #korea-impact'));
+  brief.setAttribute('open', '');
+  vm.runInContext('renderView()',ctx);
+  assert.ok(overview.firstElementChild.hasAttribute('open'));
+  const contrasts = vm.runInContext(`briefSignals({
+    impact: {kospi: {state: '혼재', drivers: [{id: 'sox', name: '미국 반도체', stance: '우호', weight: 3}]},
+      kosdaq: {state: '혼재', drivers: [{id: 'usreal10y', name: '미 실질금리', stance: '부담', weight: 2}]}},
+    quotes: [{id: 'sox', change: 1.25, changeUnit: '%'}, {id: 'usreal10y', change: 3, changeUnit: 'bp'}],
+  })`,ctx);
+  assert.equal(contrasts.headline, '해외 지표의 신호가 엇갈립니다');
+  assert.equal(contrasts.evidence, '미국 반도체 +1.25% · 미 실질금리 +3.0bp');
+
   const topics=[...document.querySelectorAll('.metric-section-title')].map(el=>el.textContent);
   assert.deepEqual(topics.slice(0,6),[
     '한국 증시 · 외국인·연기금 수급','미국 증시 · 위험 심리','금리','원화 환율','원자재','디지털자산'
   ],'six distinct topic headings should be visible in order');
   assert.equal(document.querySelectorAll('.metric-jump-button').length,topics.length);
-  assert.ok(document.querySelectorAll('.overview-section-intro').length>=3,
-    'interpretation, sector and forecast panels must have section titles');
+  assert.equal(document.querySelectorAll('.overview-section-intro').length, 2,
+    'sector and outlook sections keep their own headings');
   for (const section of document.querySelectorAll('.metric-section')) {
     if (section.id !== 'metrics-korea') assert.ok(section.querySelector('.metric-section-description')?.textContent.trim());
     else assert.equal(section.querySelector('.metric-section-description'),null);
