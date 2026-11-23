@@ -5,7 +5,7 @@ import {usFutures, futuresPeriods} from './futures-config.js';
 const app = document.querySelector('#app');
 const state = {
   user: null, demo: false, status: null, view: 'overview', horizon: 'day',
-  market: null, futuresQuotes: null, marketFilter: '전체', marketSearch: '', fxRegion: '전체', fxSearch: '', users: [], activity: null,
+  market: null, futuresQuotes: null, futuresIssue: null, marketFilter: '전체', marketSearch: '', fxRegion: '전체', fxSearch: '', users: [], activity: null,
   instrumentMarket: 'KR', instrumentQuery: '', instrumentResult: null, instrumentLoading: false,
   online: [], onlineCount: 0, threshold: 2, messages: [], chatDraft: '',
   ws: null, connected: false, reconnect: null, lastActivity: Date.now(),
@@ -149,11 +149,15 @@ function formatChange(quote) {
 const fxById = new Map(fxCurrencies.map(currency => [currency.id, currency]));
 const futuresById = new Map(usFutures.map(product => [product.id, product]));
 const cashUSIndexes = new Set(['sp500', 'nasdaq', 'nasdaqcom', 'sox', 'vix']);
+const futuresIssueLabels = {
+  configuration: '한투 선물 연결 설정 필요', token: '한투 API 인증 실패', permission: '한투 해외선물 시세 권한 확인 필요',
+  rate_limit: '한투 조회 한도 도달', network: '한투 응답 지연 또는 연결 실패', no_quote: '한투가 해당 계약의 시세를 제공하지 않음',
+};
 function futuresRows() {
   const byId = new Map((state.futuresQuotes || []).map(quote => [quote.id, quote]));
   return usFutures.map(product => byId.get(product.id) || {id: product.id, name: product.name, group: 'futures',
     unit: 'pt', value: null, change: null, status: 'missing', source: '한국투자증권 KIS 해외선물',
-    reason: state.demo ? '체험 화면' : state.futuresQuotes === null ? '선물 시세 확인 중' : '한투 선물 시세 미수신 · 차트에서 외부 시세 확인',
+    reason: state.demo ? '체험 화면' : state.futuresQuotes === null ? '선물 시세 확인 중' : futuresIssueLabels[state.futuresIssue] || '한투 선물 시세 미수신',
     basis: `${product.root} · ${product.exchange} 지수선물`});
 }
 function normalizedQuotes() {
@@ -205,6 +209,7 @@ function renderWelcome(mode = 'pin') {
   state.user = null;
   state.calendar = null;
   state.futuresQuotes = null;
+  state.futuresIssue = null;
   const story = E('section', {class: 'welcome-story'}, brand(), E('div', {class: 'story-copy'}, E('p', {class: 'eyebrow'}, 'A WIDER VIEW. A CLEARER DECISION.'), E('h1', {}, '세계의 움직임을,', E('br'), E('span', {}, '투자의 시선으로.')), E('p', {class: 'story-description'}, '밤사이의 미국 증시부터 오늘의 한국시장까지.', E('br'), '흩어진 숫자와 흐름을 연결하는 당신의 금융 데스크.'), E('div', {class: 'story-visual'}, E('div', {class: 'story-line'}, E('span', {}, 'GLOBAL → KOREA'), E('span', {}, 'CONTEXT MATTERS')), storyIllustration(), E('div', {class: 'story-tags'}, ['글로벌 시장', '한국시장 영향', '기간별 시나리오'].map(x => E('span', {}, x))))), E('div', {class: 'story-foot'}, E('span', {}, 'A DESK FOR THE THOUGHTFUL INVESTOR'), E('span', {}, 'SEOUL · GLOBAL')), E('div', {class: 'story-decoration', 'aria-hidden': 'true'}));
   const setup = mode === 'setup';
   const pinMode = mode === 'pin';
@@ -777,6 +782,8 @@ function quoteStatus(quote) {
   if (quote.savedFrom === 'cache') return ['최근 저장값', 'saved'];
   if (quote.savedFrom === 'build' || quote.deploymentBackup) return ['배포 저장값', 'saved'];
   if (quote.status === 'stale') return ['오래된 관측', 'saved'];
+  if (quote.fallbackPeriod === '5min') return ['최근 5분봉 종가', 'saved'];
+  if (quote.fallbackPeriod === 'D') return ['최근 일봉 종가', 'saved'];
   if (quote.status === 'monthly') return ['월간 평균', ''];
   if (quote.status === 'daily' && fxById.has(quote.id)) return ['일별 기준환율', ''];
   if (quote.status === 'daily') return [quote.group === 'equity' || ['kospi', 'kosdaq'].includes(quote.id) ? '일별 종가' : '일별', ''];
@@ -904,7 +911,7 @@ function openIndexChart(quote) {
             E('p',{class:'market-chart-date'},last ? `${last.date} · ${currency ? observationLabel : `${label} ${observationLabel}`}`:'해당 주기의 관측값 없음')),
           E('span',{class:`market-chart-change ${changeClass(change)}`},changeText));
         if (!series.length || (!candleMode && series.length<2)) {
-          plot.append(E('div',{class:'market-chart-empty'}, future ? (futureFrame ? '한투에서 해당 선물의 봉을 받지 못했습니다.' : '선물 봉을 불러오는 중입니다.') : candleMode ?
+          plot.append(E('div',{class:'market-chart-empty'}, future ? (futureFrame ? (futureFrame.reason === 'auth' ? '한투 API 인증이 필요합니다.' : '한투에서 해당 선물의 봉을 받지 못했습니다.') : '선물 봉을 불러오는 중입니다.') : candleMode ?
             `연결된 ${label} 시가·고가·저가·종가가 없습니다. 실제 응답이 확인될 때까지 봉을 생성하지 않습니다.` :
             `해당 기간의 ${observationLabel} 관측값이 2개 미만입니다.`));
         } else {
@@ -1469,9 +1476,13 @@ async function loadFutures() {
   futuresRefreshRunning = true;
   try {
     const data = await api('/api/futures');
-    if (generation === state.sessionGeneration) state.futuresQuotes = Array.isArray(data.quotes) ? data.quotes : [];
+    if (generation === state.sessionGeneration) {
+      state.futuresQuotes = Array.isArray(data.quotes) ? data.quotes : [];
+      state.futuresIssue = data.reason;
+    }
   } catch {
     if (generation === state.sessionGeneration) {
+      state.futuresIssue = 'network';
       state.futuresQuotes = (state.futuresQuotes || []).map(quote => ({...quote, status: 'stale', savedFrom: 'cache'}));
     }
   } finally { futuresRefreshRunning = false; }

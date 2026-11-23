@@ -36,25 +36,33 @@ export function kisConfigured(env) {
     typeof env?.KIS_APP_SECRET==='string' && env.KIS_APP_SECRET.trim());
 }
 
-async function jsonRequest(url, init, fetchProvider = fetch) {
+async function jsonRequest(url, init, fetchProvider = fetch, report) {
   const controller = new AbortController();
   const timer = setTimeout(()=>controller.abort(), TIMEOUT_MS);
   try {
     const res=await fetchProvider(url,{...init,redirect:'manual',signal:controller.signal});
-    if (!res.ok || Number(res.headers.get('content-length'))>1000000) {
+    if (Number(res.headers.get('content-length'))>1000000) {
+      await res.body?.cancel().catch(()=>{});
+      report?.({http:res.status,reason:'response_size'});
+      return null;
+    }
+    if (!res.ok && !report) {
       await res.body?.cancel().catch(()=>{});
       return null;
     }
-    const data=await res.json();
-    return data && typeof data==='object' ? data : null;
+    const data=await res.json().catch(()=>null);
+    const code = typeof data?.msg_cd === 'string' && /^[A-Z]{2,5}[0-9]{3,10}$/.test(data.msg_cd) ? data.msg_cd : undefined;
+    report?.({http:res.status,code,reason:!res.ok ? 'http' : !data || typeof data!=='object' ? 'response_format' : undefined});
+    return res.ok && data && typeof data==='object' ? data : null;
   } catch {
+    report?.({reason:controller.signal.aborted ? 'timeout' : 'network'});
     return null;
   } finally {
     clearTimeout(timer);
   }
 }
 
-async function tokenFor(env) {
+async function tokenFor(env, report) {
   if (!kisConfigured(env)) return null;
   const appKey=env.KIS_APP_KEY, secret=env.KIS_APP_SECRET;
   if (tokenCache?.appKey === appKey && tokenCache.secret === secret && Date.now()<tokenCache.expiresAt) return tokenCache.token;
@@ -63,7 +71,7 @@ async function tokenFor(env) {
     const data=await jsonRequest(BASE+'/oauth2/tokenP', {
       method:'POST',headers:{'content-type':'application/json'},
       body:JSON.stringify({grant_type:'client_credentials',appkey:appKey,appsecret:secret}),
-    }, env.fetchProvider);
+    }, env.fetchProvider, report);
     if (typeof data?.access_token!=='string' || !data.access_token) return null;
     const secs=Number(data.expires_in);
     const ttl = Number.isFinite(secs) && secs>60 ? Math.min(secs-300, 23*3600) : 3600;
@@ -74,18 +82,18 @@ async function tokenFor(env) {
   try {return await task;} finally {if(pendingToken?.promise===task)pendingToken=null;}
 }
 
-async function kisGet(env, token, path, trId, parameters) {
+async function kisGet(env, token, path, trId, parameters, report) {
   const params=new URLSearchParams(parameters);
   const request = async accessToken=>jsonRequest(BASE+path+'?'+params.toString(),{
     method:'GET',
     headers:{accept:'application/json','content-type':'application/json',authorization:'Bearer '+accessToken,
       appkey:env.KIS_APP_KEY,appsecret:env.KIS_APP_SECRET,tr_id:trId,custtype:'P'},
-  }, env.fetchProvider);
+  }, env.fetchProvider, report);
   let data=await request(token);
   // A known expired token can be invalidated and refreshed only once.
   if (data?.msg_cd==='EGW00123') {
     tokenCache=null;
-    const refreshed=await tokenFor(env);
+    const refreshed=await tokenFor(env, report);
     data=refreshed?await request(refreshed):null;
   }
   return data?.rt_cd==='0' ? data : null;
@@ -559,9 +567,15 @@ function futuresSession(now) {
   return '거래 시간대 · 휴일 일정 별도';
 }
 
+function futuresDate(value) {
+  return dateOf(String(value ?? '').trim().replaceAll('-', ''));
+}
+
 function providerStamp(day, clock) {
-  const date = dateOf(day), time = String(clock || '').padStart(6, '0');
-  if (!date || !/^([01]\d|2[0-3])[0-5]\d[0-5]\d$/.test(time) || !String(clock || '').trim()) return null;
+  const date = futuresDate(day);
+  const rawTime = String(clock ?? '').trim().replaceAll(':', '');
+  const time = rawTime.padStart(6, '0');
+  if (!date || !rawTime || !/^([01]\d|2[0-3])[0-5]\d[0-5]\d$/.test(time)) return null;
   return `${date} ${time.slice(0, 2)}:${time.slice(2, 4)}:${time.slice(4)}`;
 }
 
@@ -569,32 +583,66 @@ function validFuturesDate(date, now) {
   return date && Date.parse(`${date.slice(0, 10)}T00:00:00Z`) - now <= 86400000;
 }
 
-function futuresQuote(row, product, contract, now) {
-  const value = val(row?.last_price);
-  const returnedContract = String(row?.srs_cd || contract).trim();
-  const observedAt = providerStamp(row?.proc_date, row?.proc_time);
-  if (!(value > 0) || returnedContract !== contract || (row?.crc_cd && row.crc_cd.trim() !== 'USD') || !validFuturesDate(observedAt, now)) return null;
-  const previous = val(row.prev_price);
-  const stale = now - Date.parse(`${observedAt.slice(0, 10)}T23:59:59Z`) > 3 * 86400000;
-  return {id: product.id, name: product.name, group: 'futures', contract, exchange: row.exch_cd?.trim() || product.exchange,
-    value, change: previous > 0 ? (value - previous) / previous * 100 : null, changeUnit: '%', unit: 'pt',
-    source: futuresQuoteSource, sourceUrl: futuresSourceUrl, observedAt, timestampPrecision: 'provider_clock',
-    expiresOn: dateOf(row.expr_date) || null, status: stale ? 'stale' : 'delayed', session: futuresSession(now),
-    basis: '선물 계약 현재가 · 전일종가 대비', delay: 'KIS 제공 시각 기준 · 지연 가능'};
+function futuresIdentity(row, contract) {
+  const returned = String(row?.srs_cd || contract).trim().toUpperCase();
+  const currency = String(row?.crc_cd || 'USD').trim().toUpperCase();
+  return returned === contract && currency === 'USD';
 }
 
-export async function collectKisFutures(env, now = Date.now()) {
-  if (!kisConfigured(env)) return [];
-  const token = await tokenFor(env);
-  if (!token) return [];
+function futuresQuote(row, product, contract, now) {
+  const value = val(row?.last_price);
+  if (!(value > 0) || !futuresIdentity(row, contract)) return null;
+  const date = futuresDate(row?.proc_date);
+  if (date && !validFuturesDate(date, now)) return null;
+  const timestamp = providerStamp(row?.proc_date, row?.proc_time);
+  const observedAt = timestamp || date;
+  const previous = val(row.prev_price);
+  const stale = date && now - Date.parse(`${date}T23:59:59Z`) > 3 * 86400000;
+  return {id: product.id, name: product.name, group: 'futures', contract, exchange: String(row.exch_cd || '').trim() || product.exchange,
+    value, change: previous > 0 ? (value - previous) / previous * 100 : null, changeUnit: '%', unit: 'pt',
+    source: futuresQuoteSource, sourceUrl: futuresSourceUrl, observedAt, retrievedAt: new Date(now).toISOString(),
+    timestampPrecision: timestamp ? 'provider_clock' : date ? 'day' : 'retrieval',
+    expiresOn: futuresDate(row.expr_date) || null, status: stale ? 'stale' : 'delayed', session: futuresSession(now),
+    basis: '선물 계약 현재가 · 전일종가 대비', delay: timestamp ? 'KIS 제공 시각 기준 · 지연 가능' : '체결 시각 미제공 · 확인 가능한 날짜 또는 조회 시각 표시'};
+}
+
+function futuresQuoteFromBars(product, contract, result, period, now) {
+  if (result.status !== 'ready') return null;
+  const latest = result.bars.at(-1);
+  const previous = result.bars.at(-2);
+  if (!latest || now - Date.parse(`${latest.date.slice(0, 10)}T23:59:59Z`) > 3 * 86400000) return null;
+  const daily = period === 'D';
+  return {id: product.id, name: product.name, group: 'futures', contract, exchange: product.exchange,
+    value: latest.close, change: daily && previous ? (latest.close - previous.close) / previous.close * 100 : null,
+    changeUnit: '%', unit: 'pt', source: futuresQuoteSource, sourceUrl: futuresSourceUrl,
+    observedAt: latest.date, timestampPrecision: daily ? 'day' : 'provider_clock', status: daily ? 'daily' : 'delayed',
+    session: futuresSession(now), basis: daily ? '동일 계약의 최근 일봉 종가' : '동일 계약의 최근 5분봉 종가',
+    fallbackPeriod: period, delay: '한투 현재가 조회 실패 시 같은 선물 계약의 관측 봉 사용'};
+}
+
+export async function collectKisFutures(env, now = Date.now(), report = () => {}) {
+  if (!kisConfigured(env)) { report({stage:'token',reason:'missing_configuration'}); return []; }
+  const token = await tokenFor(env, event => report({stage:'token',...event}));
+  if (!token) { report({stage:'token',reason:'no_token'}); return []; }
   const rows = await Promise.all(usFutures.map(async product => {
     const contract = futuresContract(product.root, now);
     const key = `${env.KIS_APP_KEY}:${contract}`;
     const saved = futuresQuotes.get(key);
     if (saved && now - saved.time < 60000) return {...saved.quote, session: futuresSession(now)};
-    const data = await kisGet(env, token, futuresBase + 'inquire-price', 'HHDFC55010000', {SRS_CD: contract});
-    const row = Array.isArray(data?.output1) ? data.output1[0] : data?.output1;
-    const quote = futuresQuote(row, product, contract, now);
+    const data = await kisGet(env, token, futuresBase + 'inquire-price', 'HHDFC55010000', {SRS_CD: contract},
+      event => report({stage:'quote',...event}));
+    const candidates = [data?.output1, data?.output, data?.output2].flat().filter(Boolean);
+    const row = candidates.find(item => item.last_price != null);
+    const canUseBars = !row || futuresIdentity(row, contract);
+    let quote = futuresQuote(row, product, contract, now);
+    if (!quote && canUseBars) {
+      if (data) report({stage:'quote',reason:'no_price'});
+      for (const period of ['5min', 'D']) {
+        const result = await loadKisFuturesChart(env, product.id, period, now, report);
+        quote = futuresQuoteFromBars(product, contract, result, period, now);
+        if (quote) break;
+      }
+    }
     if (!quote) return saved && now - saved.time < 36 * 3600000
       ? {...saved.quote, status: 'stale', savedFrom: 'cache', session: futuresSession(now)} : null;
     if (futuresQuotes.size >= 24) futuresQuotes.clear();
@@ -609,7 +657,7 @@ function priceBars(data, intraday, now) {
   const rows = [...[data?.output1, data?.output2].flat()].filter(Boolean);
   const bars = new Map();
   for (const row of rows) {
-    const date = intraday ? providerStamp(row.data_date, row.data_time) : dateOf(row.data_date);
+    const date = intraday ? providerStamp(row.data_date, row.data_time) : futuresDate(row.data_date);
     const [open, high, low, close] = [row.open_price, row.high_price, row.low_price, row.last_price].map(val);
     if (!validFuturesDate(date, now) || ![open, high, low, close].every(x => x > 0) || high < Math.max(open, close) || low > Math.min(open, close)) continue;
     bars.set(date, {date, open, high, low, close, value: close});
@@ -644,12 +692,12 @@ function regroupFuturesBars(bars, period) {
   return [...grouped.values()];
 }
 
-export async function loadKisFuturesChart(env, id, period, now = Date.now()) {
+export async function loadKisFuturesChart(env, id, period, now = Date.now(), report = () => {}) {
   const product = usFutures.find(item => item.id === id);
   if (!product || !futuresPeriods.some(([key]) => key === period)) return {status: 'invalid', bars: []};
   const contract = futuresContract(product.root, now);
   const token = await tokenFor(env);
-  if (!token) return {status: 'unavailable', contract, bars: []};
+  if (!token) return {status: 'unavailable', contract, bars: [], reason: 'auth'};
   const key = `${env.KIS_APP_KEY}:${contract}:${period}`;
   const saved = futuresCharts.get(key);
   if (saved && now - saved.time < 60000) return saved.result;
@@ -659,10 +707,12 @@ export async function loadKisFuturesChart(env, id, period, now = Date.now()) {
   const data = await kisGet(env, token, futuresBase + (intraday ? 'inquire-time-futurechartprice' : 'daily-ccnl'),
     intraday ? 'HHDFC55020400' : 'HHDFC55020100', {SRS_CD: contract, EXCH_CD: knownQuote?.exchange || product.exchange,
       START_DATE_TIME: '', CLOSE_DATE_TIME: todayKst(), QRY_TP: 'Q', QRY_CNT: intraday ? '120' : '100',
-      QRY_GAP: intraday ? gap : '', INDEX_KEY: ''});
+      QRY_GAP: intraday ? gap : '', INDEX_KEY: ''}, event => report({stage:intraday ? 'intraday' : 'daily',...event}));
   const bars = regroupFuturesBars(priceBars(data, intraday, now), period);
   if (!bars.length && saved && now - saved.time < 36 * 3600000) return {...saved.result, status: 'stale'};
-  const result = {status: bars.length ? 'ready' : 'unavailable', bars, contract, source: futuresQuoteSource, sourceUrl: futuresSourceUrl};
+  if (!bars.length && data) report({stage:intraday ? 'intraday' : 'daily',reason:'no_bars'});
+  const result = {status: bars.length ? 'ready' : 'unavailable', bars, contract, source: futuresQuoteSource, sourceUrl: futuresSourceUrl,
+    ...(bars.length ? {} : {reason: data ? 'no_bars' : 'supplier'})};
   if (futuresCharts.size >= 60) futuresCharts.clear();
   if (bars.length) futuresCharts.set(key, {time: now, result});
   return result;

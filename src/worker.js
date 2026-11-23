@@ -4,6 +4,7 @@ import { getCalendar } from './calendar.js';
 import { enrichAnalysis } from './analysis.js';
 import { searchInstrument } from './instrument-search.js';
 import { collectKisFutures, loadKisFuturesChart } from './kis.js';
+import {usFutures} from '../public/futures-config.js';
 
 export { DeskRoom };
 
@@ -21,6 +22,30 @@ function protect(response, isApi) {
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) headers.set(name, value);
   if (isApi) headers.set('Cache-Control', 'no-store');
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+const FUTURES_CHECK_CRON = '*/5 * * * *';
+
+async function futuresSnapshot(env, reportSuccess = false) {
+  const events = [];
+  const quotes = await collectKisFutures(env, Date.now(), event => events.push(event));
+  const details = [...new Map(events.filter(event => event.reason || event.code && !['MCA00000', 'EGW00000'].includes(event.code))
+    .map(event => [JSON.stringify(event), event])).values()];
+  const reason = events.some(event => event.reason === 'missing_configuration') ? 'configuration'
+    : events.some(event => event.reason === 'no_token') ? 'token'
+    : details.some(event => event.http === 401 || event.http === 403) ? 'permission'
+    : details.some(event => event.http === 429) ? 'rate_limit'
+    : details.some(event => ['network','timeout'].includes(event.reason)) ? 'network'
+    : 'no_quote';
+  if (reportSuccess || quotes.length < usFutures.length || details.length) {
+    const sources = quotes.reduce((counts, quote) => {
+      const source = quote.status === 'stale' ? 'saved' : quote.fallbackPeriod || 'quote';
+      counts[source] = (counts[source] || 0) + 1;
+      return counts;
+    }, {});
+    console.info('Futures upstream status', {received: quotes.length, sources, details});
+  }
+  return {quotes, reason: quotes.length < usFutures.length ? reason : null};
 }
 
 export default {
@@ -46,7 +71,7 @@ export default {
           if (url.pathname === '/api/futures') {
             const id = url.searchParams.get('id');
             const period = url.searchParams.get('period');
-            const result = id !== null || period !== null ? await loadKisFuturesChart(env, id, period) : {quotes: await collectKisFutures(env)};
+            const result = id !== null || period !== null ? await loadKisFuturesChart(env, id, period) : await futuresSnapshot(env);
             return protect(Response.json(result, {status: result.status === 'invalid' ? 400 : 200}), true);
           }
           if (url.pathname === '/api/calendar') return protect(Response.json(await getCalendar()), true);
@@ -74,7 +99,11 @@ export default {
       return protect(Response.json({ error: '요청 처리 중 문제가 발생했습니다. 잠시 후 다시 시도해 주세요.' }, { status: 500 }), isApi);
     }
   },
-  async scheduled(_controller, env, ctx) {
+  async scheduled(controller, env, ctx) {
+    if (controller.cron === FUTURES_CHECK_CRON) {
+      ctx.waitUntil(futuresSnapshot(env, true));
+      return;
+    }
     const refresh = refreshMarket(env).then(market => enrichAnalysis(market, env));
     ctx.waitUntil(refresh);
   }

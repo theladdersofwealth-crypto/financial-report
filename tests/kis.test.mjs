@@ -164,3 +164,39 @@ test('CME futures roll on the regular expiry-week opening and serve validated co
   assert.deepEqual(monthly.bars,[{date:'2026-11-20',open:6999,high:7010,low:6998,close:7009,value:7009}]);
   assert.equal((await loadKisFuturesChart(env,'es','5min',now)).status,'invalid');
 });
+
+test('futures use a valid untimed quote or the same contract’s observed candle closes', async t => {
+  const {collectKisFutures} = await fresh();
+  const now = Date.parse('2026-11-23T09:00:00Z');
+  const env = {KIS_APP_KEY:'futures-fallback', KIS_APP_SECRET:'fixture-not-for-logs'};
+  withFetch(t, async input => {
+    const u = new URL(input);
+    if (u.pathname === '/oauth2/tokenP') return Response.json({access_token:'fixture-token'});
+    const contract = u.searchParams.get('SRS_CD');
+    if (u.pathname.endsWith('inquire-price')) {
+      if (contract==='ESZ26') return Response.json({rt_cd:'0',output:{srs_cd:contract,last_price:'7000.25'}});
+      return Response.json({rt_cd:'1',msg_cd:'OPSP1234',msg1:'fixture-not-for-logs'}, {status:403});
+    }
+    if (u.pathname.endsWith('inquire-time-futurechartprice') && contract==='NQZ26') {
+      return Response.json({rt_cd:'0',output2:[{data_date:'2026-11-23',data_time:'08:55:00',open_price:'24000',high_price:'24400',low_price:'23900',last_price:'24310'}]});
+    }
+    if (u.pathname.endsWith('daily-ccnl') && contract==='YMZ26') {
+      return Response.json({rt_cd:'0',output1:[{data_date:'20261121',open_price:'40000',high_price:'40400',low_price:'39900',last_price:'40310'}]});
+    }
+    return Response.json({rt_cd:'1',msg_cd:'OPSP1234'}, {status:403});
+  });
+  const diagnostics=[];
+  const quotes=await collectKisFutures(env,now,event=>diagnostics.push(event));
+  const byId=Object.fromEntries(quotes.map(quote=>[quote.id,quote]));
+  assert.equal(byId.fut_es.value,7000.25);
+  assert.equal(byId.fut_es.observedAt,null);
+  assert.equal(byId.fut_es.timestampPrecision,'retrieval');
+  assert.equal(byId.fut_nq.value,24310);
+  assert.equal(byId.fut_nq.fallbackPeriod,'5min');
+  assert.equal(byId.fut_nq.change,null);
+  assert.equal(byId.fut_ym.fallbackPeriod,'D');
+  assert.equal(byId.fut_ym.status,'daily');
+  assert.equal(byId.fut_rty,undefined);
+  assert.ok(diagnostics.some(event=>event.stage==='quote' && event.http===403 && event.code==='OPSP1234'));
+  assert.doesNotMatch(JSON.stringify(diagnostics),/fixture/);
+});
