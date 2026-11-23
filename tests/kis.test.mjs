@@ -181,6 +181,7 @@ test('futures use a valid untimed quote or the same contract’s observed candle
       return Response.json({rt_cd:'0',output2:[{data_date:'2026-11-23',data_time:'08:55:00',open_price:'24000',high_price:'24400',low_price:'23900',last_price:'24310'}]});
     }
     if (u.pathname.endsWith('daily-ccnl') && contract==='YMZ26') {
+      assert.equal(u.searchParams.get('EXCH_CD'),'CME');
       return Response.json({rt_cd:'0',output1:[{data_date:'20261121',open_price:'40000',high_price:'40400',low_price:'39900',last_price:'40310'}]});
     }
     return Response.json({rt_cd:'1',msg_cd:'OPSP1234'}, {status:403});
@@ -196,6 +197,7 @@ test('futures use a valid untimed quote or the same contract’s observed candle
   assert.equal(byId.fut_nq.change,null);
   assert.equal(byId.fut_ym.fallbackPeriod,'D');
   assert.equal(byId.fut_ym.status,'daily');
+  assert.equal(byId.fut_ym.exchange,'CBOT');
   assert.equal(byId.fut_rty,undefined);
   assert.ok(diagnostics.some(event=>event.stage==='quote' && event.http===403 && event.code==='OPSP1234'));
   assert.doesNotMatch(JSON.stringify(diagnostics),/fixture/);

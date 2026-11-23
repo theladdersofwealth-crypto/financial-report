@@ -51,7 +51,8 @@ async function jsonRequest(url, init, fetchProvider = fetch, report) {
       return null;
     }
     const data=await res.json().catch(()=>null);
-    const code = typeof data?.msg_cd === 'string' && /^[A-Z]{2,5}[0-9]{3,10}$/.test(data.msg_cd) ? data.msg_cd : undefined;
+    const responseCode = data?.msg_cd || data?.error_code;
+    const code = typeof responseCode === 'string' && /^[A-Z]{2,5}[0-9]{3,10}$/.test(responseCode) ? responseCode : undefined;
     report?.({http:res.status,code,reason:!res.ok ? 'http' : !data || typeof data!=='object' ? 'response_format' : undefined});
     return res.ok && data && typeof data==='object' ? data : null;
   } catch {
@@ -598,7 +599,7 @@ function futuresQuote(row, product, contract, now) {
   const observedAt = timestamp || date;
   const previous = val(row.prev_price);
   const stale = date && now - Date.parse(`${date}T23:59:59Z`) > 3 * 86400000;
-  return {id: product.id, name: product.name, group: 'futures', contract, exchange: String(row.exch_cd || '').trim() || product.exchange,
+  return {id: product.id, name: product.name, group: 'futures', contract, exchange: product.exchange,
     value, change: previous > 0 ? (value - previous) / previous * 100 : null, changeUnit: '%', unit: 'pt',
     source: futuresQuoteSource, sourceUrl: futuresSourceUrl, observedAt, retrievedAt: new Date(now).toISOString(),
     timestampPrecision: timestamp ? 'provider_clock' : date ? 'day' : 'retrieval',
@@ -703,9 +704,10 @@ export async function loadKisFuturesChart(env, id, period, now = Date.now(), rep
   if (saved && now - saved.time < 60000) return saved.result;
   const intraday = period.endsWith('min');
   const gap = period === '3min' ? '1' : period === '240min' ? '60' : period.replace('min', '');
-  const knownQuote = futuresQuotes.get(`${env.KIS_APP_KEY}:${contract}`)?.quote;
+  // KIS's official overseas futures master uses CME for its Mini Dow contracts as well.
+  const kisExchange = product.root === 'YM' ? 'CME' : product.exchange;
   const data = await kisGet(env, token, futuresBase + (intraday ? 'inquire-time-futurechartprice' : 'daily-ccnl'),
-    intraday ? 'HHDFC55020400' : 'HHDFC55020100', {SRS_CD: contract, EXCH_CD: knownQuote?.exchange || product.exchange,
+    intraday ? 'HHDFC55020400' : 'HHDFC55020100', {SRS_CD: contract, EXCH_CD: kisExchange,
       START_DATE_TIME: '', CLOSE_DATE_TIME: todayKst(), QRY_TP: 'Q', QRY_CNT: intraday ? '120' : '100',
       QRY_GAP: intraday ? gap : '', INDEX_KEY: ''}, event => report({stage:intraday ? 'intraday' : 'daily',...event}));
   const bars = regroupFuturesBars(priceBars(data, intraday, now), period);
