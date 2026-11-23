@@ -152,6 +152,31 @@ async function intradayIndexQuote(env,token,id,iscd) {
     status:'delayed',delay:'KIS 장중 현재 지수 · 화면 최대 5분 간격 조회',
     basis:'KIS 국내 업종지수 현재가 · 장중 조회',reason:null};
 }
+// KIS index minute OHLC; never infer intraday bars from daily closes.
+function indexMinuteCandles(rows) {
+  const seen=new Map();
+  for(const row of Array.isArray(rows)?rows:[]) {
+    const raw=String(row?.stck_bsop_date||'');
+    const time=String(row?.stck_cntg_hour||'').padStart(6,'0');
+    const date=dateOf(raw);
+    if(!date || !/^\\d{6}$/.test(time)) continue;
+    const hh=Number(time.slice(0,2)),mm=Number(time.slice(2,4)),ss=Number(time.slice(4));
+    if(hh<9 || hh>15 || mm>59 || ss>59 || hh===15 && mm>30)continue;
+    const open=val(row.bstp_nmix_oprc),high=val(row.bstp_nmix_hgpr);
+    const low=val(row.bstp_nmix_lwpr),close=val(row.bstp_nmix_prpr);
+    if([open,high,low,close].some(x=>x===null||x<=0) || high<Math.max(open,close) || low>Math.min(open,close))continue;
+    const stamp=`${date}T${time.slice(0,2)}:${time.slice(2,4)}:00+09:00`;
+    if(Number.isNaN(Date.parse(stamp)))continue;
+    seen.set(stamp,{date:stamp,open,high,low,close,value:close});
+  }
+  return [...seen.values()].sort((a,b)=>a.date.localeCompare(b.date)).slice(-500);
+}
+async function indexMinuteQuote(env,token,iscd) {
+  const data=await kisGet(env,token,'/uapi/domestic-stock/v1/quotations/inquire-time-indexchartprice',
+    'FHKUP03500200',{FID_COND_MRKT_DIV_CODE:'U',FID_ETC_CLS_CODE:'0',
+      FID_INPUT_ISCD:iscd,FID_INPUT_HOUR_1:'60',FID_PW_DATA_INCU_YN:'Y'});
+  return indexMinuteCandles(data?.output2);
+}
 async function indexQuote(env,token,id,iscd) {
   // KIS FHKUP03500100 supports actual D/W/M periods and complete OHLC.
   const timeframes = [
@@ -159,6 +184,7 @@ async function indexQuote(env,token,id,iscd) {
     ['W', 1095],
     ['M', 3650],
   ];
+  const minutePromise=indexMinuteQuote(env,token,iscd);
   const replies = await Promise.all(timeframes.map(([period,days]) =>
     kisGet(env,token,'/uapi/domestic-stock/v1/quotations/inquire-daily-indexchartprice',
       'FHKUP03500100',{
@@ -166,13 +192,15 @@ async function indexQuote(env,token,id,iscd) {
         FID_INPUT_DATE_1:fromKstDaysAgo(days),FID_INPUT_DATE_2:todayKst(),
         FID_PERIOD_DIV_CODE:period,
       })));
+  const minuteCandles=await minutePromise;
   const quote = canonicalQuote(id,replies[0]?.output2,'bstp_nmix_prpr');
   if (!quote) return null;
   return {
     ...quote,
     // Missing or invalid periods stay empty; the browser never fabricates candles.
     chartPeriods: Object.fromEntries(timeframes.map(([period],i) => [period,indexCandles(replies[i]?.output2)])),
-    chartBasis: 'KIS 공식 일봉·주봉·월봉별 시가·고가·저가·종가',
+    chartBasis: 'KIS 공식 일봉·주봉·월봉 및 조회된 1분 OHLC',
+    minuteCandles,
   };
 }
 async function investorQuotes(env,token,iscd,market,suffix) {
@@ -209,7 +237,7 @@ export async function collectKis(env) {
   const byId=new Map();
   for(const quote of fetched.flat().filter(Boolean)) {
     const prior=byId.get(quote.id);
-    byId.set(quote.id,prior ? {...prior,...quote,chartPeriods:prior.chartPeriods,chartBasis:prior.chartBasis,history:prior.history} : quote);
+    byId.set(quote.id,prior ? {...prior,...quote,chartPeriods:prior.chartPeriods,chartBasis:prior.chartBasis,minuteCandles:prior.minuteCandles,history:prior.history} : quote);
   }
   return [...byId.values()];
 }
