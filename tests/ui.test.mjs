@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {chartSeries,chartPeriod,chartPeriodChange,chartFrequency,candleSeries,minuteFrequencies,intradayMinutes,aggregateIndexMinutes} from '../public/chart-data.js';
 import {fxCurrencies, featuredFxCodes} from '../public/fx-currencies.js';
+import {usFutures, futuresPeriods} from '../public/futures-config.js';
 import {readFile} from 'node:fs/promises';
 import {parseHTML} from 'linkedom';
 import {setTimeout as nativeTimeout,clearTimeout as nativeClearTimeout} from 'node:timers';
@@ -18,7 +19,7 @@ test('standalone demo renders every destination without accessing member APIs',a
   const context={
     document,window,Node:domWindow.Node,HTMLElement:domWindow.HTMLElement,Element:domWindow.Element,
     chartSeries,chartPeriod,chartPeriodChange,chartFrequency,candleSeries,minuteFrequencies,intradayMinutes,aggregateIndexMinutes,
-    fxCurrencies,featuredFxCodes,
+    fxCurrencies,featuredFxCodes,usFutures,futuresPeriods,
     location,navigator:{onLine:true},console,Intl,Date,URL,URLSearchParams,TextEncoder,queueMicrotask,
     setTimeout:localTimer,clearTimeout,setInterval:()=>0,clearInterval:()=>{},
     requestAnimationFrame:fn=>localTimer(fn,0),cancelAnimationFrame:clearTimeout,
@@ -52,11 +53,11 @@ test('standalone demo renders every destination without accessing member APIs',a
     quotes: [{id: 'sox', change: 1.25, changeUnit: '%'}, {id: 'usreal10y', change: 3, changeUnit: 'bp'}],
   })`,ctx);
   assert.equal(contrasts.headline, '해외 지표의 신호가 엇갈립니다');
-  assert.equal(contrasts.evidence, '미국 반도체 +1.25% · 미 실질금리 +3.0bp');
+  assert.equal(contrasts.evidence, '미국 반도체 현물 +1.25% · 미 실질금리 +3.0bp');
 
   const topics=[...document.querySelectorAll('.metric-section-title')].map(el=>el.textContent);
   assert.deepEqual(topics.slice(0,6),[
-    '한국 증시 · 외국인·연기금 수급','미국 증시 · 위험 심리','금리','원화 환율','원자재','디지털자산'
+    '한국 증시 · 외국인·연기금 수급','미국 지수선물','금리','원화 환율','원자재','디지털자산'
   ],'six distinct topic headings should be visible in order');
   assert.equal(document.querySelectorAll('.metric-jump-button').length,topics.length);
   assert.equal(document.querySelectorAll('.overview-section-intro').length, 2,
@@ -118,5 +119,19 @@ test('standalone demo renders every destination without accessing member APIs',a
   assert.match(document.querySelector('#modal-root').textContent, /베트남 동 · 일별 원화 환율 차트/);
   assert.ok(document.querySelector('.market-chart-svg'));
   assert.match(document.querySelector('.market-chart-svg').getAttribute('aria-label'), /기준환율 추이/);
+  document.querySelector('#modal-root').replaceChildren();
+  ctx.fetch = async path => {
+    requested.push(String(path));
+    return new Response(JSON.stringify({status:'ready',contract:'ESZ26',source:'한국투자증권 KIS 해외선물',bars:[
+      {date:'2026-11-20 21:05:00',open:7000,high:7010,low:6995,close:7002,value:7002},
+      {date:'2026-11-20 21:10:00',open:7002,high:7020,low:7001,close:7018,value:7018},
+    ]}), {headers:{'Content-Type':'application/json'}});
+  };
+  vm.runInContext('openIndexChart(futuresRows()[0])',ctx);
+  await new Promise(r=>nativeTimeout(r,10));
+  assert.equal(requested.at(-1), '/api/futures?id=fut_es&period=5min');
+  assert.match(document.querySelector('#modal-title').textContent, /S&P 500 선물 · 캔들 차트/);
+  assert.equal(document.querySelectorAll('.market-chart-body').length, 2);
+  assert.match(document.querySelector('.market-chart-footnote').textContent, /ESZ26.*TradingView/);
   timers.forEach(nativeClearTimeout);
 });

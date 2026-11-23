@@ -5,6 +5,8 @@
  * Official endpoints: FHKUP03500100 (index daily) and
  * FHPTJ04040000 (market daily investor flow).
  */
+import {usFutures, futuresPeriods} from '../public/futures-config.js';
+
 const BASE = 'https://openapi.koreainvestment.com:9443';
 const TIMEOUT_MS = 8000;
 let tokenCache = null;
@@ -522,4 +524,146 @@ export async function lookupKisInstrument(env, market, symbol, requestedExchange
     };
   }
   return null;
+}
+
+const futuresBase = '/uapi/overseas-futureoption/v1/quotations/';
+const chicagoClock = new Intl.DateTimeFormat('en-US', {timeZone: 'America/Chicago',
+  year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23'});
+const futuresQuotes = new Map();
+const futuresCharts = new Map();
+const futuresQuoteSource = '한국투자증권 KIS 해외선물';
+const futuresSourceUrl = 'https://apiportal.koreainvestment.com/';
+
+function chicago(now) {
+  return Object.fromEntries(chicagoClock.formatToParts(now)
+    .filter(part => part.type !== 'literal').map(part => [part.type, Number(part.value)]));
+}
+
+export function futuresContract(root, now = Date.now()) {
+  const {year, month, day, hour} = chicago(now);
+  const quarter = Math.ceil(month / 3);
+  const expiration = quarter * 3;
+  const firstWeekday = new Date(Date.UTC(year, expiration - 1, 1)).getUTCDay();
+  const thirdFriday = 15 + (5 - firstWeekday + 7) % 7;
+  // Use the customary roll on Monday of expiry week at the Sunday evening open.
+  const roll = month === expiration && (day >= thirdFriday - 4 || (day === thirdFriday - 5 && hour >= 17));
+  const index = quarter - 1 + Number(roll);
+  return `${root}${'HMUZ'[index % 4]}${String(year + Math.floor(index / 4)).slice(-2)}`;
+}
+
+function futuresSession(now) {
+  const {year, month, day, hour} = chicago(now);
+  const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+  if (weekday === 6 || (weekday === 0 && hour < 17) || (weekday === 5 && hour >= 16)) return '주말 휴장 시간';
+  if (weekday >= 1 && weekday <= 4 && hour === 16) return '일일 점검 시간';
+  return '거래 시간대 · 휴일 일정 별도';
+}
+
+function providerStamp(day, clock) {
+  const date = dateOf(day), time = String(clock || '').padStart(6, '0');
+  if (!date || !/^([01]\d|2[0-3])[0-5]\d[0-5]\d$/.test(time) || !String(clock || '').trim()) return null;
+  return `${date} ${time.slice(0, 2)}:${time.slice(2, 4)}:${time.slice(4)}`;
+}
+
+function validFuturesDate(date, now) {
+  return date && Date.parse(`${date.slice(0, 10)}T00:00:00Z`) - now <= 86400000;
+}
+
+function futuresQuote(row, product, contract, now) {
+  const value = val(row?.last_price);
+  const returnedContract = String(row?.srs_cd || contract).trim();
+  const observedAt = providerStamp(row?.proc_date, row?.proc_time);
+  if (!(value > 0) || returnedContract !== contract || (row?.crc_cd && row.crc_cd.trim() !== 'USD') || !validFuturesDate(observedAt, now)) return null;
+  const previous = val(row.prev_price);
+  const stale = now - Date.parse(`${observedAt.slice(0, 10)}T23:59:59Z`) > 3 * 86400000;
+  return {id: product.id, name: product.name, group: 'futures', contract, exchange: row.exch_cd?.trim() || product.exchange,
+    value, change: previous > 0 ? (value - previous) / previous * 100 : null, changeUnit: '%', unit: 'pt',
+    source: futuresQuoteSource, sourceUrl: futuresSourceUrl, observedAt, timestampPrecision: 'provider_clock',
+    expiresOn: dateOf(row.expr_date) || null, status: stale ? 'stale' : 'delayed', session: futuresSession(now),
+    basis: '선물 계약 현재가 · 전일종가 대비', delay: 'KIS 제공 시각 기준 · 지연 가능'};
+}
+
+export async function collectKisFutures(env, now = Date.now()) {
+  if (!kisConfigured(env)) return [];
+  const token = await tokenFor(env);
+  if (!token) return [];
+  const rows = await Promise.all(usFutures.map(async product => {
+    const contract = futuresContract(product.root, now);
+    const key = `${env.KIS_APP_KEY}:${contract}`;
+    const saved = futuresQuotes.get(key);
+    if (saved && now - saved.time < 60000) return {...saved.quote, session: futuresSession(now)};
+    const data = await kisGet(env, token, futuresBase + 'inquire-price', 'HHDFC55010000', {SRS_CD: contract});
+    const row = Array.isArray(data?.output1) ? data.output1[0] : data?.output1;
+    const quote = futuresQuote(row, product, contract, now);
+    if (!quote) return saved && now - saved.time < 36 * 3600000
+      ? {...saved.quote, status: 'stale', savedFrom: 'cache', session: futuresSession(now)} : null;
+    if (futuresQuotes.size >= 24) futuresQuotes.clear();
+    futuresQuotes.set(key, {time: now, quote});
+    return quote;
+  }));
+  return rows.filter(Boolean);
+}
+
+function priceBars(data, intraday, now) {
+  // Overseas KIS endpoints include separate metadata and price records.
+  const rows = [...[data?.output1, data?.output2].flat()].filter(Boolean);
+  const bars = new Map();
+  for (const row of rows) {
+    const date = intraday ? providerStamp(row.data_date, row.data_time) : dateOf(row.data_date);
+    const [open, high, low, close] = [row.open_price, row.high_price, row.low_price, row.last_price].map(val);
+    if (!validFuturesDate(date, now) || ![open, high, low, close].every(x => x > 0) || high < Math.max(open, close) || low > Math.min(open, close)) continue;
+    bars.set(date, {date, open, high, low, close, value: close});
+  }
+  return [...bars.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function futuresBarBucket(date, period) {
+  if (period === 'M') return date.slice(0, 7);
+  if (period === 'W') {
+    const start = new Date(`${date}T00:00:00Z`);
+    start.setUTCDate(start.getUTCDate() - (start.getUTCDay() + 6) % 7);
+    return start.toISOString().slice(0, 10);
+  }
+  const minutes = Number.parseInt(period, 10);
+  const minuteOfDay = Number(date.slice(11, 13)) * 60 + Number(date.slice(14, 16));
+  return `${date.slice(0, 10)}:${Math.floor(minuteOfDay / minutes)}`;
+}
+
+function regroupFuturesBars(bars, period) {
+  if (!['W', 'M', '3min', '240min'].includes(period)) return bars;
+  const grouped = new Map();
+  for (const bar of bars) {
+    const key = futuresBarBucket(bar.date, period);
+    const group = grouped.get(key);
+    if (group) {
+      group.high = Math.max(group.high, bar.high);
+      group.low = Math.min(group.low, bar.low);
+      group.close = group.value = bar.close;
+    } else grouped.set(key, {...bar});
+  }
+  return [...grouped.values()];
+}
+
+export async function loadKisFuturesChart(env, id, period, now = Date.now()) {
+  const product = usFutures.find(item => item.id === id);
+  if (!product || !futuresPeriods.some(([key]) => key === period)) return {status: 'invalid', bars: []};
+  const contract = futuresContract(product.root, now);
+  const token = await tokenFor(env);
+  if (!token) return {status: 'unavailable', contract, bars: []};
+  const key = `${env.KIS_APP_KEY}:${contract}:${period}`;
+  const saved = futuresCharts.get(key);
+  if (saved && now - saved.time < 60000) return saved.result;
+  const intraday = period.endsWith('min');
+  const gap = period === '3min' ? '1' : period === '240min' ? '60' : period.replace('min', '');
+  const knownQuote = futuresQuotes.get(`${env.KIS_APP_KEY}:${contract}`)?.quote;
+  const data = await kisGet(env, token, futuresBase + (intraday ? 'inquire-time-futurechartprice' : 'daily-ccnl'),
+    intraday ? 'HHDFC55020400' : 'HHDFC55020100', {SRS_CD: contract, EXCH_CD: knownQuote?.exchange || product.exchange,
+      START_DATE_TIME: '', CLOSE_DATE_TIME: todayKst(), QRY_TP: 'Q', QRY_CNT: intraday ? '120' : '100',
+      QRY_GAP: intraday ? gap : '', INDEX_KEY: ''});
+  const bars = regroupFuturesBars(priceBars(data, intraday, now), period);
+  if (!bars.length && saved && now - saved.time < 36 * 3600000) return {...saved.result, status: 'stale'};
+  const result = {status: bars.length ? 'ready' : 'unavailable', bars, contract, source: futuresQuoteSource, sourceUrl: futuresSourceUrl};
+  if (futuresCharts.size >= 60) futuresCharts.clear();
+  if (bars.length) futuresCharts.set(key, {time: now, result});
+  return result;
 }

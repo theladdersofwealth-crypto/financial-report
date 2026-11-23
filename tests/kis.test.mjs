@@ -124,3 +124,43 @@ test('KIS malformed output or forbidden permissions yield no artificial quotes',
   const {collectKis}=await fresh();
   assert.deepEqual(await collectKis({KIS_APP_KEY:'bad-data',KIS_APP_SECRET:'bad-data-secret'}),[]);
 });
+
+test('CME futures roll on the regular expiry-week opening and serve validated contract candles', async t => {
+  const {futuresContract, collectKisFutures, loadKisFuturesChart} = await fresh();
+  const now = Date.parse('2026-11-23T08:00:00Z');
+  const env = {KIS_APP_KEY:'fixture-futures', KIS_APP_SECRET:'fixture-secret'};
+  assert.equal(futuresContract('ES', now), 'ESZ26');
+  assert.equal(futuresContract('ES', Date.parse('2026-12-13T22:59:59Z')), 'ESZ26');
+  assert.equal(futuresContract('ES', Date.parse('2026-12-13T23:00:00Z')), 'ESH27');
+  const requests=[];
+  withFetch(t, async (input, options) => {
+    const url = new URL(input);
+    if (url.pathname === '/oauth2/tokenP') return Response.json({access_token:'test-token'});
+    requests.push([url.pathname.split('/').at(-1), options.headers.tr_id, Object.fromEntries(url.searchParams)]);
+    if (url.pathname.endsWith('inquire-price')) {
+      const code=url.searchParams.get('SRS_CD');
+      return Response.json({rt_cd:'0',output1:{srs_cd:code==='SOXZ26'?'SOXH27':code, crc_cd:'USD',exch_cd:'CME',proc_date:'20261123',proc_time:'074200',last_price:'7005.25',prev_price:'7000'}});
+    }
+    const intraday=url.pathname.endsWith('inquire-time-futurechartprice');
+    const rows = [
+      {data_date:'20261123',data_time:'075000',open_price:'7001',high_price:'7010',low_price:'7000',last_price:'7009'},
+      {data_date:intraday?'20261123':'20261120',data_time:'074500',open_price:'6999',high_price:'7005',low_price:'6998',last_price:'7001'},
+      {data_date:'20261123',data_time:'075500',open_price:'0',high_price:'10000',low_price:'6998',last_price:'7001'},
+    ];
+    return Response.json({rt_cd:'0',output1:rows,output2:{index_key:'irrelevant'}});
+  });
+  const quotes = await collectKisFutures(env,now);
+  assert.equal(quotes.length,4,'exclude a response labelled as a different futures contract');
+  assert.equal(quotes.find(q=>q.id==='fut_es').contract,'ESZ26');
+  assert.deepEqual(await collectKisFutures(env,now+1000),quotes);
+  const minute = await loadKisFuturesChart(env,'fut_es','5min',now);
+  assert.equal(minute.status,'ready');
+  assert.equal(minute.bars.length,2);
+  assert.equal(minute.bars.at(-1).close,7009);
+  assert.equal(requests.at(-1)[2].QRY_GAP,'5');
+  const daily = await loadKisFuturesChart(env,'fut_es','D',now);
+  assert.equal(daily.bars[0].date,'2026-11-20');
+  const monthly = await loadKisFuturesChart(env,'fut_es','M',now);
+  assert.deepEqual(monthly.bars,[{date:'2026-11-20',open:6999,high:7010,low:6998,close:7009,value:7009}]);
+  assert.equal((await loadKisFuturesChart(env,'es','5min',now)).status,'invalid');
+});

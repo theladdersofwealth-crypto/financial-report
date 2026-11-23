@@ -12,7 +12,7 @@ const memberPassword='Member-test-2026!';
 test('private desk authentication, member management and real-time room',async t=>{
   const mf=new Miniflare(convertV4MiniflareOptions({
     modules:['worker','room','market','kis','impact','validation','market-deploy-snapshot','analysis','calendar','calendar-deploy-snapshot','instrument-search'].map(name=>({type:'ESModule',path:resolve(`src/${name}.js`)}))
-      .concat({type:'ESModule',path:resolve('public/fx-currencies.js')}),
+      .concat(['fx-currencies', 'futures-config'].map(name => ({type:'ESModule',path:resolve(`public/${name}.js`)}))),
     compatibilityDate:'2026-11-01',
     durableObjects:{DESK:{className:'DeskRoom',useSQLite:true}},
     bindings:{BOOTSTRAP_TOKEN_SHA256:createHash('sha256').update(setupToken).digest('hex')},
@@ -49,6 +49,12 @@ test('private desk authentication, member management and real-time room',async t
     r=await request('/api/chat/history');assert.equal(r.status,401);
     r=await request('/api/market');assert.equal(r.status,401);
     r=await request('/api/calendar');assert.equal(r.status,401);
+    r=await request('/api/futures');assert.equal(r.status,401);
+    r=await request('/api/futures?id=fut_es&period=5min',{cookie:adminCookie});
+    assert.equal(r.status,200);
+    assert.equal((await r.json()).status,'unavailable');
+    r=await request('/api/futures?id=SPX&period=5min',{cookie:adminCookie});
+    assert.equal(r.status,400);
   });
   await t.test('admin creates real-name account and temporary password must change',async()=>{
     let r=await request('/api/admin/users',{method:'POST',cookie:adminCookie,body:{username:'friend',name:'김투자',password:memberPassword,role:'member'}});
