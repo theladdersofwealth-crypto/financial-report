@@ -32,6 +32,7 @@ async function futuresSnapshot(env, reportSuccess = false) {
   const details = [...new Map(events.filter(event => event.reason || event.code && !['MCA00000', 'EGW00000'].includes(event.code))
     .map(event => [JSON.stringify(event), event])).values()];
   const reason = events.some(event => event.reason === 'missing_configuration') ? 'configuration'
+    : events.some(event => event.code === 'EGW00133') ? 'rate_limit'
     : events.some(event => event.reason === 'no_token') ? 'token'
     : details.some(event => event.http === 401 || event.http === 403) ? 'permission'
     : details.some(event => event.http === 429 || event.code === 'EGW00201') ? 'rate_limit'

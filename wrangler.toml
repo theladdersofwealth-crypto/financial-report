@@ -1,5 +1,5 @@
 name = "financial-report"
-main = "src/worker.js"
+main = "src/worker-entry.js"
 compatibility_date = "2026-11-01"
 workers_dev = true
 
@@ -19,9 +19,17 @@ BOOTSTRAP_TOKEN_SHA256 = "5e859f6f55ecd2238eb2adde4cb742cf9cc89b65689ef23774869d
 name = "DESK"
 class_name = "DeskRoom"
 
+[[durable_objects.bindings]]
+name = "KIS_TOKEN_BROKER"
+class_name = "KisTokenBroker"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["DeskRoom"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["KisTokenBroker"]
 
 [observability]
 enabled = true

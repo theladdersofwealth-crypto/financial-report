@@ -63,38 +63,63 @@ async function jsonRequest(url, init, fetchProvider = fetch, report) {
   }
 }
 
-async function tokenFor(env, report) {
+export async function issueKisToken(env, report) {
+  const data = await jsonRequest(BASE + '/oauth2/tokenP', {
+    method:'POST', headers:{'content-type':'application/json'},
+    body:JSON.stringify({grant_type:'client_credentials',appkey:env.KIS_APP_KEY,appsecret:env.KIS_APP_SECRET}),
+  }, env.fetchProvider, report);
+  if (typeof data?.access_token !== 'string' || !data.access_token) return null;
+  const seconds = Number(data.expires_in);
+  const ttl = seconds > 0 && Number.isFinite(seconds)
+    ? Math.min(seconds - Math.min(300, Math.floor(seconds / 10)), 23 * 3600)
+    : 3600;
+  return {token:data.access_token, expiresAt:Date.now()+ttl*1000};
+}
+
+async function tokenFor(env, report, rejectedToken = null) {
   if (!kisConfigured(env)) return null;
   const appKey=env.KIS_APP_KEY, secret=env.KIS_APP_SECRET;
-  if (tokenCache?.appKey === appKey && tokenCache.secret === secret && Date.now()<tokenCache.expiresAt) return tokenCache.token;
-  if (pendingToken?.appKey===appKey && pendingToken.secret===secret) return pendingToken.promise;
+  if (tokenCache?.appKey === appKey && tokenCache.secret === secret && tokenCache.token !== rejectedToken
+      && Date.now()<tokenCache.expiresAt) return tokenCache.token;
+  if (env.KIS_TOKEN_BROKER) {
+    try {
+      const response = await env.KIS_TOKEN_BROKER.getByName('market-data').getToken(rejectedToken);
+      for (const event of response.events || []) report?.(event);
+      if (response.session?.token) {
+        tokenCache = {appKey, secret, ...response.session};
+        return response.session.token;
+      }
+    } catch {
+      report?.({reason:'broker_unavailable'});
+    }
+    return null;
+  }
+  if (pendingToken?.appKey===appKey && pendingToken.secret===secret && pendingToken.rejectedToken === rejectedToken) return pendingToken.promise;
   const task = (async()=>{
-    const data=await jsonRequest(BASE+'/oauth2/tokenP', {
-      method:'POST',headers:{'content-type':'application/json'},
-      body:JSON.stringify({grant_type:'client_credentials',appkey:appKey,appsecret:secret}),
-    }, env.fetchProvider, report);
-    if (typeof data?.access_token!=='string' || !data.access_token) return null;
-    const secs=Number(data.expires_in);
-    const ttl = Number.isFinite(secs) && secs>60 ? Math.min(secs-300, 23*3600) : 3600;
-    tokenCache={appKey,secret,token:data.access_token,expiresAt:Date.now()+ttl*1000};
-    return data.access_token;
+    const issued = await issueKisToken(env, report);
+    if (!issued?.token) return null;
+    tokenCache={appKey,secret,...issued};
+    return issued.token;
   })();
-  pendingToken={appKey,secret,promise:task};
+  pendingToken={appKey,secret,rejectedToken,promise:task};
   try {return await task;} finally {if(pendingToken?.promise===task)pendingToken=null;}
 }
 
 async function kisGet(env, token, path, trId, parameters, report) {
   const params=new URLSearchParams(parameters);
+  let expired = false;
   const request = async accessToken=>jsonRequest(BASE+path+'?'+params.toString(),{
     method:'GET',
     headers:{accept:'application/json','content-type':'application/json',authorization:'Bearer '+accessToken,
       appkey:env.KIS_APP_KEY,appsecret:env.KIS_APP_SECRET,tr_id:trId,custtype:'P'},
-  }, env.fetchProvider, report);
+  }, env.fetchProvider, event => {
+    expired = event.code === 'EGW00123';
+    report?.(event);
+  });
   let data=await request(token);
   // A known expired token can be invalidated and refreshed only once.
-  if (data?.msg_cd==='EGW00123') {
-    tokenCache=null;
-    const refreshed=await tokenFor(env, report);
+  if (expired) {
+    const refreshed=await tokenFor(env, report, token);
     data=refreshed?await request(refreshed):null;
   }
   return data?.rt_cd==='0' ? data : null;

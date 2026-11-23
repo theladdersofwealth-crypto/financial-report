@@ -8,11 +8,13 @@ const origin='https://desk.test';
 const setupToken='test-only-long-random-bootstrap-code-298472019';
 const adminPassword='Admin-test-2026!';
 const memberPassword='Member-test-2026!';
+const workerModules = ['worker-entry','worker','room','market','kis','impact','validation','market-deploy-snapshot','analysis','calendar','calendar-deploy-snapshot','instrument-search']
+  .map(name=>({type:'ESModule',path:resolve(`src/${name}.js`)}))
+  .concat(['fx-currencies','futures-config'].map(name=>({type:'ESModule',path:resolve(`public/${name}.js`)})));
 
 test('private desk authentication, member management and real-time room',async t=>{
   const mf=new Miniflare(convertV4MiniflareOptions({
-    modules:['worker','room','market','kis','impact','validation','market-deploy-snapshot','analysis','calendar','calendar-deploy-snapshot','instrument-search'].map(name=>({type:'ESModule',path:resolve(`src/${name}.js`)}))
-      .concat(['fx-currencies', 'futures-config'].map(name => ({type:'ESModule',path:resolve(`public/${name}.js`)}))),
+    modules: workerModules,
     compatibilityDate:'2026-11-01',
     durableObjects:{DESK:{className:'DeskRoom',useSQLite:true}},
     bindings:{BOOTSTRAP_TOKEN_SHA256:createHash('sha256').update(setupToken).digest('hex')},
@@ -200,4 +202,30 @@ test('private desk authentication, member management and real-time room',async t
     r=await request('/api/logout',{method:'POST',cookie:adminCookie});assert.equal(r.status,200);
     r=await request('/api/me',{cookie:adminCookie});assert.equal(r.status,401);
   });
+});
+
+test('KIS token broker shares one OAuth issuance across concurrent callers', async t => {
+  let issued = 0;
+  const mf = new Miniflare(convertV4MiniflareOptions({
+    modules: workerModules,
+    compatibilityDate: '2026-11-01',
+    durableObjects: {KIS_TOKEN_BROKER: {className:'KisTokenBroker',useSQLite:true}},
+    bindings: {KIS_APP_KEY:'fixture-key',KIS_APP_SECRET:'fixture-secret'},
+    outboundService: async request => {
+      assert.equal(new URL(request.url).pathname,'/oauth2/tokenP');
+      const number = ++issued;
+      await new Promise(resolve=>setTimeout(resolve,20));
+      return Response.json({access_token:`fixture-token-${number}`,expires_in:86400});
+    },
+  }));
+  t.after(()=>mf.dispose());
+  const broker = await mf.getDurableObjectNamespace('KIS_TOKEN_BROKER');
+  const first = broker.getByName('market-data');
+  const second = broker.getByName('market-data');
+  const original = await Promise.all([first.getToken(),second.getToken()]);
+  assert.deepEqual(original.map(item=>item.session.token),['fixture-token-1','fixture-token-1']);
+  const renewed = await Promise.all([first.getToken('fixture-token-1'),second.getToken('fixture-token-1')]);
+  assert.deepEqual(renewed.map(item=>item.session.token),['fixture-token-2','fixture-token-2']);
+  assert.equal((await second.getToken()).session.token,'fixture-token-2');
+  assert.equal(issued,2);
 });
