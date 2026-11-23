@@ -1297,5 +1297,24 @@ document.addEventListener('visibilitychange', heartbeat);
 ['pointerdown', 'keydown', 'touchstart'].forEach(event => document.addEventListener(event, () => { state.lastActivity = Date.now(); }, {passive: true}));
 document.addEventListener('keydown', event => { if (event.key === 'Escape') { if (state.chatOpen) toggleChat(false); if (state.menuOpen) toggleMenu(); } });
 window.addEventListener('pagehide', () => { if (state.ws?.readyState === WebSocket.OPEN) state.ws.send(JSON.stringify({type: 'heartbeat', visible: false, active: false})); });
+// Refresh the visible market cards every five minutes without resetting the page.
+let marketAutoRefreshBusy=false;
+async function autoRefreshMarket() {
+  if (marketAutoRefreshBusy || document.hidden || !state.user || state.demo) return;
+  if (!['overview','markets'].includes(state.view)) return;
+  marketAutoRefreshBusy=true;
+  try {
+    await loadMarket();
+    if(state.view==='overview') {
+      const current=document.querySelector('.quote-overview-panel');
+      if(current) current.replaceWith(renderQuotes());
+    } else if(state.view==='markets') {
+      // Avoid replacing an open index-chart dialog or interrupting navigation.
+      if(!document.querySelector('[role="dialog"]')) renderView();
+    }
+  } catch (_) { /* Keep the last observed data; the manual refresh remains available. */ }
+  finally { marketAutoRefreshBusy=false; }
+}
+window.setInterval(autoRefreshMarket, 5*60*1000);
 window.setInterval(() => { updateClock(); heartbeat(); }, 20000);
 initialize().catch(error => { state.status = {error: true}; renderWelcome(); toast(errorText(error), true); });

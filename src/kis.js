@@ -131,6 +131,27 @@ function indexCandles(rows) {
   return [...observations.values()].sort((a,b) => a.date.localeCompare(b.date)).slice(-150);
 }
 
+// Intraday index snapshot. Daily OHLC remains the independent chart source.
+async function intradayIndexQuote(env,token,id,iscd) {
+  const data=await kisGet(env,token,
+    '/uapi/domestic-stock/v1/quotations/inquire-index-price','FHPUP02100000',
+    {FID_COND_MRKT_DIV_CODE:'U',FID_INPUT_ISCD:iscd});
+  const row=data?.output;
+  const value=val(row?.bstp_nmix_prpr);
+  const change=val(row?.bstp_nmix_prdy_ctrt);
+  if(value===null || value<=0 || change===null || Math.abs(change)>30) return null;
+  // Do not label a response live unless the exchange is in regular trading hours.
+  const kst=new Date(Date.now()+9*3600000);
+  const day=kst.getUTCDay(),minute=kst.getUTCHours()*60+kst.getUTCMinutes();
+  if(day===0||day===6||minute<540||minute>930) return null;
+  const observedAt=new Date().toISOString();
+  return {id,provider:'kis',source:'한국투자증권 KIS Open API',
+    sourceUrl:'https://apiportal.koreainvestment.com/',
+    value,change,changeUnit:'%',unit:'pt',
+    observedAt,retrievedAt:observedAt,timestampPrecision:'second',
+    status:'delayed',delay:'KIS 장중 현재 지수 · 화면 최대 5분 간격 조회',
+    basis:'KIS 국내 업종지수 현재가 · 장중 조회',reason:null};
+}
 async function indexQuote(env,token,id,iscd) {
   // KIS FHKUP03500100 supports actual D/W/M periods and complete OHLC.
   const timeframes = [
@@ -179,10 +200,18 @@ export async function collectKis(env) {
   const fetched=await Promise.all([
     indexQuote(env,token,'kospi','0001'),
     indexQuote(env,token,'kosdaq','1001'),
+    intradayIndexQuote(env,token,'kospi','0001'),
+    intradayIndexQuote(env,token,'kosdaq','1001'),
     investorQuotes(env,token,'0001','KSP','kospi'),
     investorQuotes(env,token,'1001','KSQ','kosdaq'),
   ]);
-  return fetched.flat().filter(Boolean);
+  // Intraday observations override the corresponding daily snapshot only when validated.
+  const byId=new Map();
+  for(const quote of fetched.flat().filter(Boolean)) {
+    const prior=byId.get(quote.id);
+    byId.set(quote.id,prior ? {...prior,...quote,chartPeriods:prior.chartPeriods,chartBasis:prior.chartBasis,history:prior.history} : quote);
+  }
+  return [...byId.values()];
 }
 
 /**
