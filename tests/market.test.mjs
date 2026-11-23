@@ -25,9 +25,9 @@ function providerFixture(overrides = {}) {
       return Response.json({symbol,currency:'USD',price:({XAU:3500,XAG:40,HG:5.5})[symbol] ?? null,updatedAt:new Date().toISOString()});
     }
     if (url.hostname === 'api.frankfurter.dev') {
-      return Response.json(['KRW', 'JPY', 'CNY'].flatMap(quote => [
-        { date: day(1), base: 'USD', quote, rate: 100 },
-        { date: day(), base: 'USD', quote, rate: 101 },
+      return Response.json(Object.entries({USD: [1 / 1300, 1 / 1320], JPY: [1 / 9.1, 1 / 9.2], CNY: [1 / 190, 1 / 199], VND: [20, 25]}).flatMap(([quote, rates]) => [
+        { date: day(1), base: 'KRW', quote, rate: rates[0] },
+        { date: day(), base: 'KRW', quote, rate: rates[1] },
       ]));
     }
     if (url.hostname === 'www.bitstamp.net') {
@@ -326,9 +326,18 @@ test('ECB partial coverage falls back to separately attributed central bank blen
   const data=await collectMarket({});
   assert.equal(ecbCalls,1);
   assert.equal(mixedCalls,1);
-  assert.equal(data.quotes.find(q=>q.id==='usdjpy')?.source,'ECB / Frankfurter');
-  assert.equal(data.quotes.find(q=>q.id==='usdkrw')?.source,'중앙은행 혼합 / Frankfurter');
-  assert.equal(data.quotes.find(q=>q.id==='usdcny')?.value,101);
+  assert.equal(data.quotes.find(q=>q.id==='jpykrw')?.source,'ECB / Frankfurter');
+  assert.ok(Math.abs(data.quotes.find(q=>q.id==='jpykrw').value - 920) < 0.001);
+  assert.equal(data.quotes.find(q=>q.id==='usdkrw')?.source,'다중 공급처 / Frankfurter');
+  assert.equal(data.quotes.find(q=>q.id==='cnykrw')?.value,199);
+  const vnd = data.quotes.find(q => q.id === 'vndkrw');
+  assert.equal(vnd.value, 40);
+  assert.equal(vnd.unit, '원');
+  assert.equal(vnd.fxAmount, 1000);
+  assert.deepEqual(vnd.history.map(point => point.value), [50, 40]);
+  assert.equal(vnd.change, -20);
+  assert.equal(data.quotes.filter(q => q.group === 'fx').length, 52);
+  assert.ok(data.quotes.filter(q => q.group === 'fx').every(q => q.id.endsWith('krw') && q.unit === '원'));
 });
 
 test('stale FRED observations are no longer reported as a healthy provider', async t => {

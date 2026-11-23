@@ -5,6 +5,7 @@
  * before opening the desk beyond the intended private audience.
  */
 import deploymentSnapshot from './market-deploy-snapshot.js';
+import {fxCurrencies, featuredFxCodes} from '../public/fx-currencies.js';
 import { buildImpact } from './impact.js';
 import { validateHistoricalImpact } from './validation.js';
 import { collectKis, collectKisOverseas, collectKisMacro, kisConfigured } from './kis.js';
@@ -28,6 +29,9 @@ const configHashes = new Map();
 const NASDAQ_INDEXES = {nasdaq: 'NDX', nasdaqcom: 'COMP', sox: 'SOX'};
 const DAY_MS = 86400000;
 
+const orderedCurrencies = [...featuredFxCodes.map(code => fxCurrencies.find(currency => currency.code === code)),
+  ...fxCurrencies.filter(currency => !featuredFxCodes.includes(currency.code))];
+
 const INSTRUMENTS = [
   { id: 'sp500', name: 'S&P 500', group: 'equity', unit: 'pt', fred: 'SP500', origin: 'S&P Dow Jones Indices', basis: '미국 정규장 종가' },
   { id: 'nasdaq', name: '나스닥 100', group: 'equity', unit: 'pt', fred: 'NASDAQ100', origin: 'Nasdaq', basis: '미국 정규장 종가' },
@@ -36,27 +40,8 @@ const INSTRUMENTS = [
   { id: 'us2y', name: '미 국채 2년', group: 'rates', unit: '%', fred: 'DGS2', origin: 'Federal Reserve H.15', basis: '일별 고정만기 수익률' },
   { id: 'us10y', name: '미 국채 10년', group: 'rates', unit: '%', fred: 'DGS10', origin: 'Federal Reserve H.15', basis: '일별 고정만기 수익률' },
   { id: 'usreal10y', name: '미 실질금리 10년', group: 'rates', unit: '%', fred: 'DFII10', origin: 'Federal Reserve H.15', basis: '일별 물가연동채 고정만기 수익률' },
-  { id: 'usdkrw', name: '달러/원', group: 'fx', unit: '원/USD', fx: 'KRW', basis: '일별 기준환율 · 1달러당 원화' },
-  { id: 'usdjpy', name: '달러/엔', group: 'fx', unit: 'JPY/USD', fx: 'JPY', basis: '일별 기준환율 · 1달러당 엔' },
-  { id: 'jpykrw', name: '엔/원', group: 'fx', unit: '원/JPY', fxCross: 'JPY', basis: '동일 날짜 달러 기준환율에서 산출 · 1엔당 원화' },
-  { id: 'usdcny', name: '달러/위안', group: 'fx', unit: 'CNY/USD', fx: 'CNY', basis: '일별 기준환율 · 1달러당 위안' },
-  { id: 'cnykrw', name: '위안/원', group: 'fx', unit: '원/CNY', fxCross: 'CNY', basis: '동일 날짜 달러 기준환율에서 산출 · 1위안당 원화' },
-  { id: 'usdeur', name: '달러/유로', group: 'fx', unit: 'EUR/USD', fx: 'EUR', basis: '일별 기준환율 · 1달러당 유로' },
-  { id: 'eurkrw', name: '유로/원', group: 'fx', unit: '원/EUR', fxCross: 'EUR', basis: '동일 날짜 달러 기준환율에서 산출 · 1유로당 원화' },
-  { id: 'usdgbp', name: '달러/파운드', group: 'fx', unit: 'GBP/USD', fx: 'GBP', basis: '일별 기준환율 · 1달러당 파운드' },
-  { id: 'gbpkrw', name: '파운드/원', group: 'fx', unit: '원/GBP', fxCross: 'GBP', basis: '동일 날짜 달러 기준환율에서 산출 · 1파운드당 원화' },
-  { id: 'usdchf', name: '달러/스위스프랑', group: 'fx', unit: 'CHF/USD', fx: 'CHF', basis: '일별 기준환율 · 1달러당 스위스프랑' },
-  { id: 'chfkrw', name: '스위스프랑/원', group: 'fx', unit: '원/CHF', fxCross: 'CHF', basis: '동일 날짜 달러 기준환율에서 산출 · 1스위스프랑당 원화' },
-  { id: 'usdaud', name: '달러/호주달러', group: 'fx', unit: 'AUD/USD', fx: 'AUD', basis: '일별 기준환율 · 1달러당 호주달러' },
-  { id: 'audkrw', name: '호주달러/원', group: 'fx', unit: '원/AUD', fxCross: 'AUD', basis: '동일 날짜 달러 기준환율에서 산출 · 1호주달러당 원화' },
-  { id: 'usdcad', name: '달러/캐나다달러', group: 'fx', unit: 'CAD/USD', fx: 'CAD', basis: '일별 기준환율 · 1달러당 캐나다달러' },
-  { id: 'cadkrw', name: '캐나다달러/원', group: 'fx', unit: '원/CAD', fxCross: 'CAD', basis: '동일 날짜 달러 기준환율에서 산출 · 1캐나다달러당 원화' },
-  { id: 'usdsgd', name: '달러/싱가포르달러', group: 'fx', unit: 'SGD/USD', fx: 'SGD', basis: '일별 기준환율 · 1달러당 싱가포르달러' },
-  { id: 'sgdkrw', name: '싱가포르달러/원', group: 'fx', unit: '원/SGD', fxCross: 'SGD', basis: '동일 날짜 달러 기준환율에서 산출 · 1싱가포르달러당 원화' },
-  { id: 'usdhkd', name: '달러/홍콩달러', group: 'fx', unit: 'HKD/USD', fx: 'HKD', basis: '일별 기준환율 · 1달러당 홍콩달러' },
-  { id: 'hkdkrw', name: '홍콩달러/원', group: 'fx', unit: '원/HKD', fxCross: 'HKD', basis: '동일 날짜 달러 기준환율에서 산출 · 1홍콩달러당 원화' },
-  { id: 'dxy', name: '달러인덱스 DXY', group: 'fx', unit: 'pt', required: 'ICE DXY 시세 공급자 연결 필요' },
-  { id: 'broadusd', name: '연준 광의달러지수', group: 'fx', unit: 'pt', fred: 'DTWEXBGS', origin: 'Federal Reserve', basis: '일별 무역가중 광의달러지수 · ICE DXY와 다른 지수' },
+  { id: 'dxy', name: '달러인덱스 DXY', group: 'risk', unit: 'pt', required: 'ICE DXY 시세 공급자 연결 필요' },
+  { id: 'broadusd', name: '연준 광의달러지수', group: 'risk', unit: 'pt', fred: 'DTWEXBGS', origin: 'Federal Reserve', basis: '일별 무역가중 광의달러지수 · ICE DXY와 다른 지수' },
   { id: 'wti', name: 'WTI 현물', group: 'energy', unit: 'USD/bbl', fred: 'DCOILWTICO', origin: 'U.S. EIA', basis: '쿠싱 현물 일별 가격 · 선물 아님' },
   { id: 'brent', name: '브렌트 현물', group: 'energy', unit: 'USD/bbl', fred: 'DCOILBRENTEU', origin: 'U.S. EIA', basis: '유럽 브렌트 현물 일별 가격 · 선물 아님' },
   { id: 'gold', name: '금 현물', group: 'metals', unit: 'USD/oz', metalSpot: 'XAU', basis: '금 1트로이온스당 USD 참고 현물가격 · 거래소 결제가격 아님' },
@@ -76,6 +61,10 @@ const INSTRUMENTS = [
   { id: 'kr_pension_kosdaq', name: '연기금 등 순매수 (코스닥)', group: 'korea', unit: '억원', flow: true, required: '한국투자증권 KIS 기금 거래대금 필요', basis: '코스닥시장 기금 순매수 거래대금 · 억원 · 국민연금 단독 아님' },
   { id: 'kr3y', name: '한국 국채 3년', group: 'korea', unit: '%', ecos: '010200000', required: 'ECOS_API_KEY 연결 필요', basis: '한국은행 ECOS 시장금리(일별) · 국고채 3년' },
   { id: 'kr10y', name: '한국 국채 10년', group: 'korea', unit: '%', ecos: '010210000', required: 'ECOS_API_KEY 연결 필요', basis: '한국은행 ECOS 시장금리(일별) · 국고채 10년' },
+  ...orderedCurrencies.map(({id, name, code, amount}) => ({
+    id, name, group: 'fx', unit: '원', fx: code, fxAmount: amount,
+    basis: `${amount.toLocaleString('ko-KR')} ${code}당 원화 · 일별 기준환율`,
+  })),
 ];
 
 const SECTORS = [
@@ -175,9 +164,10 @@ async function readProvider(url, format, headers, failures, fetchProvider) {
 function missing(instrument, reason = instrument.required || '공급자 응답을 확인할 수 없습니다') {
   return {
     id: instrument.id, name: instrument.name, group: instrument.group, value: null,
+    ...(instrument.fx ? {fxCurrency: instrument.fx, fxAmount: instrument.fxAmount} : {}),
     unit: instrument.unit, change: null, changeUnit: instrument.flow ? '억원' : instrument.group === 'rates' || instrument.id === 'hyspread' || (instrument.ecos && !instrument.ecosTable) ? 'bp' : '%',
     provider: instrument.fred ? 'fred' : instrument.metalSpot ? 'goldapi' : instrument.ecos ? 'ecos' : instrument.fx ? 'frankfurter' : instrument.crypto ? 'binance' : instrument.provider || null,
-    source: instrument.fred ? `${instrument.origin} / FRED` : instrument.metalSpot ? 'Gold API' : instrument.ecos ? '한국은행 ECOS' : instrument.fx ? 'ECB / Frankfurter' : instrument.crypto ? 'Bitstamp' : '미연결',
+    source: instrument.fred ? `${instrument.origin} / FRED` : instrument.metalSpot ? 'Gold API' : instrument.ecos ? '한국은행 ECOS' : instrument.fx ? 'Frankfurter' : instrument.crypto ? 'Bitstamp' : '미연결',
     sourceUrl: instrument.fred ? `https://fred.stlouisfed.org/series/${instrument.fred}` : instrument.metalSpot ? 'https://gold-api.com/docs' : instrument.ecos ? 'https://ecos.bok.or.kr/' : instrument.fx ? 'https://frankfurter.dev/' : null,
     observedAt: null, retrievedAt: null, status: 'missing', reason,
     basis: instrument.basis || '', history: [],
@@ -185,7 +175,8 @@ function missing(instrument, reason = instrument.required || '공급자 응답�
 }
 
 function fromHistory(instrument, entries, metadata) {
-  const history = entries.filter((entry) => isoDay(entry.date) && numeric(entry.value) !== null && entry.date <= daysAgo(0))
+  const today = daysAgo(0);
+  const history = entries.filter((entry) => isoDay(entry.date) && numeric(entry.value) !== null && entry.date <= today)
     .map((entry) => ({ date: entry.date, value: Number(entry.value) }))
     .sort((a, b) => a.date.localeCompare(b.date));
   if (!history.length) return missing(instrument, '유효한 최신 관측값이 없습니다');
@@ -202,7 +193,8 @@ function fromHistory(instrument, entries, metadata) {
     comparisonAt: previous?.date || null, changeBasis: instrument.flow ? '직전 관측일 순매수금액 대비 증감(당일 순매수액 자체와 다름)' : '직전 유효 관측일 대비',
     status: stale ? 'stale' : instrument.monthly ? 'monthly' : 'daily',
     reason: stale ? (instrument.monthly ? '월간 기준일이 오래되었습니다' : '관측일이 7일 이상 지났습니다') : null,
-    history: history.slice(-65), delay: instrument.monthly ? '월간 평균값 · 실시간 시세 아님 · 발표 시차 존재' : '일별 자료 · 장중 실시간 시세 아님',
+    history: history.slice(instrument.fx ? -95 : -65),
+    delay: metadata.delay || (instrument.monthly ? '월간 평균값 · 실시간 시세 아님 · 발표 시차 존재' : '일별 자료 · 장중 실시간 시세 아님'),
   };
 }
 
@@ -306,48 +298,39 @@ async function ecosQuote(instrument, env, readURL) {
 }
 
 async function fxQuotes(readURL) {
-  // Query USD-base daily reference rates once; derive KRW crosses only from
-  // same-date observations. Never mix mismatched days or invent spot quotes.
-  const direct = INSTRUMENTS.filter(item => item.fx);
-  const cross = INSTRUMENTS.filter(item => item.fxCross);
-  const symbols = [...new Set(direct.map(item => item.fx))];
-  const base = `https://api.frankfurter.dev/v2/rates?base=USD&quotes=${symbols.join(',')}&from=${daysAgo(100)}`;
-  const pinned = await readURL(`${base}&providers=ECB`);
-  const primary = Array.isArray(pinned?.data) ? pinned.data : [];
-  const validRows = (rows, quote) => rows.filter(row => row.base === 'USD' && row.quote === quote
-    && isoDay(row.date) && numeric(row.rate) !== null && Number(row.rate) > 0);
-  const absent = symbols.some(symbol => !validRows(primary, symbol).length);
-  const fallback = absent ? await readURL(base) : null;
-  const blended = Array.isArray(fallback?.data) ? fallback.data : [];
-  const chosen = new Map(symbols.map(symbol => {
-    const ecbRows = validRows(primary, symbol);
-    return [symbol, {rows: ecbRows.length ? ecbRows : validRows(blended, symbol), ecb: ecbRows.length > 0}];
-  }));
-  const directQuotes = direct.map(instrument => {
-    const {rows,ecb} = chosen.get(instrument.fx);
-    if (!rows.length) return missing(instrument, '일별 기준환율 응답에 해당 통화가 없습니다');
-    return fromHistory(instrument, rows.map(row => ({date:row.date,value:row.rate})), {
-      provider:'frankfurter',source:ecb?'ECB / Frankfurter':'중앙은행 혼합 / Frankfurter',
-      sourceUrl:'https://frankfurter.dev/',retrievedAt:ecb?pinned.retrievedAt:fallback?.retrievedAt,
-      basis:instrument.basis + (ecb?' · ECB 기준':' · 중앙은행 혼합 기준'),
-    });
+  const instruments = INSTRUMENTS.filter(instrument => instrument.fx);
+  const codes = instruments.map(instrument => instrument.fx);
+  const query = new URLSearchParams({base: 'KRW', quotes: codes.join(','), from: daysAgo(94)});
+  const url = `https://api.frankfurter.dev/v2/rates?${query}`;
+  const [ecb, mixed] = await Promise.all([readURL(`${url}&providers=ECB`), readURL(url)]);
+
+  function observations(result) {
+    const byCurrency = new Map(codes.map(code => [code, new Map()]));
+    const days = new Map();
+    for (const row of Array.isArray(result?.data) ? result.data : []) {
+      if (row?.base !== 'KRW' || !byCurrency.has(row.quote)) continue;
+      if (!days.has(row.date)) days.set(row.date, isoDay(row.date));
+      if (!days.get(row.date)) continue;
+      const rate = numeric(row.rate);
+      if (rate !== null && rate > 0) byCurrency.get(row.quote).set(row.date, rate);
+    }
+    return byCurrency;
+  }
+
+  const official = observations(ecb);
+  const blended = observations(mixed);
+  return instruments.map(instrument => {
+    const makeQuote = (series, source, result) => fromHistory(instrument,
+      [...series.get(instrument.fx)].map(([date, rate]) => ({date, value: instrument.fxAmount / rate})),
+      {provider: 'frankfurter', source, sourceUrl: 'https://frankfurter.dev/', retrievedAt: result?.retrievedAt,
+        delay: '일별 기준환율 · 현찰·카드 결제에는 환전 수수료와 적용 환율이 반영될 수 있습니다.'});
+    const ecbQuote = makeQuote(official, 'ECB / Frankfurter', ecb);
+    if (isFreshQuote(ecbQuote)) return ecbQuote;
+    const mixedQuote = makeQuote(blended, '다중 공급처 / Frankfurter', mixed);
+    if (mixedQuote.observedAt && (!ecbQuote.observedAt || mixedQuote.observedAt > ecbQuote.observedAt)) return mixedQuote;
+    if (ecbQuote.observedAt) return ecbQuote;
+    return missing(instrument, '해당 통화의 일별 원화 기준환율을 받지 못했습니다');
   });
-  const krw = chosen.get('KRW')?.rows || [];
-  const krwByDate = new Map(krw.map(row => [row.date,Number(row.rate)]));
-  const crossQuotes = cross.map(instrument => {
-    const target = chosen.get(instrument.fxCross);
-    const matched = (target?.rows || []).filter(row => krwByDate.has(row.date))
-      .map(row => ({date:row.date,value:krwByDate.get(row.date)/Number(row.rate)}));
-    if (!matched.length) return missing(instrument, '동일 날짜의 원화·외화 기준환율이 없습니다');
-    return fromHistory(instrument, matched, {
-      provider:'frankfurter',
-      source:chosen.get('KRW')?.ecb && target.ecb ? 'ECB / Frankfurter (교차환율)' : '중앙은행 혼합 / Frankfurter (교차환율)',
-      sourceUrl:'https://frankfurter.dev/',
-      retrievedAt:chosen.get('KRW')?.ecb && target.ecb ? pinned.retrievedAt : fallback?.retrievedAt || pinned.retrievedAt,
-      basis:instrument.basis + ' · 동일 날짜 USD/KRW ÷ USD/외화',
-    });
-  });
-  return [...directQuotes,...crossQuotes];
 }
 
 async function metalSpotQuote(instrument, readURL) {
@@ -526,7 +509,7 @@ function sourceList(quotes, sectors, leaders, env, failures = new Map()) {
     ['fred', 'FRED / 각 원자료 제공기관', 'https://fred.stlouisfed.org/', '일별 자료 · 원천 이용조건 확인 필요', true, ['api.stlouisfed.org', 'fred.stlouisfed.org']],
     ['nasdaq', 'Nasdaq 지수 종가', 'https://www.nasdaq.com/market-activity/index/ndx/historical', 'FRED 지연·실패 시 Nasdaq 공식 일별 종가', true, ['api.nasdaq.com']],
     ['treasury', '미국 재무부', 'https://home.treasury.gov/policy-issues/financing-the-government/interest-rate-statistics/', 'FRED 금리 실패 시 공식 대체 자료', true, ['home.treasury.gov']],
-    ['frankfurter', 'ECB / Frankfurter', 'https://frankfurter.dev/', 'ECB 일별 기준환율 우선 · 누락 통화는 혼합 기준환율로 대체', true, ['api.frankfurter.dev']],
+    ['frankfurter', 'ECB / Frankfurter', 'https://frankfurter.dev/', 'ECB 일별 원화 환율 우선 · 누락 통화는 Frankfurter 다중 공급처 기준환율로 대체', true, ['api.frankfurter.dev']],
     ['binance', 'Binance Spot', 'https://developers.binance.com/en/docs/products/spot/rest-api', 'BTC/ETH/SOL USDT 현물 24시간 시세 · 최우선 · 키 필요 없음 · USD와 구분', true, ['data-api.binance.vision', 'api.binance.com']],
     ['bitstamp', 'Bitstamp', 'https://www.bitstamp.net/api/', 'Binance 수신 실패 시 USD 현물 대체 · 실패 시 Coinbase', true, ['www.bitstamp.net']],
     ['coinbase', 'Coinbase Spot', 'https://docs.cdp.coinbase.com/coinbase-app/docs/api-prices', 'Binance·Bitstamp 모두 실패할 때 USD 현물 대체 (24시간 등락 미제공)', true, ['api.coinbase.com']],
@@ -730,7 +713,7 @@ async function loadOrRefresh(env, force) {
   if (pending.has(key)) return structuredClone(await pending.get(key));
   const task = (async () => {
     const cache = edgeCache();
-    const cacheRequest = new Request(`https://market-desk-cache.invalid/snapshot/v5/${key}`);
+    const cacheRequest = new Request(`https://market-desk-cache.invalid/snapshot/v6/${key}`);
     if (!force && cache) {
       try {
         const response = await cache.match(cacheRequest);
@@ -743,7 +726,7 @@ async function loadOrRefresh(env, force) {
         }
       } catch { /* Cache outages must not prevent retrieving actual data. */ }
     }
-    const savedRequest = new Request(`https://market-desk-cache.invalid/last-good/v1/${key}`);
+    const savedRequest = new Request(`https://market-desk-cache.invalid/last-good/v2/${key}`);
     let lastGood = lastGoodQuotes.get(key);
     if (!lastGood && cache) {
       try { lastGood = await (await cache.match(savedRequest))?.json(); }

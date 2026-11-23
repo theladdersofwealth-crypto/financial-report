@@ -3660,3 +3660,17 @@ td strong {
 .calendar-providers li { display: grid; gap: 3px; font-size: 12px; color: var(--muted); }
 .calendar-providers strong { color: var(--ink); }
 .event-saved { display: block; margin-top: 4px; }
+
+.fx-unit-label { display: block; color: var(--muted); font-size: 11px; font-weight: 650; }
+.metric-fx .quote-card { gap: 6px; }
+.metric-fx .quote-top { min-height: 28px; }
+.metric-fx .quote-status { font-size: 10.5px; }
+.fx-toolbar { flex-wrap: wrap; }
+.fx-toolbar .search-field { flex: 1 1 210px; }
+.fx-list .metric-section { scroll-margin-top: 14px; }
+.fx-all-button { white-space: nowrap; }
+@media (max-width: 520px) {
+  .fx-toolbar .search-field { width: 100%; }
+  .metric-fx .metric-section-heading { flex-wrap: wrap; }
+  .fx-all-button { margin-left: auto; }
+}

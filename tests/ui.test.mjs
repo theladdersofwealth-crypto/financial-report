@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {chartSeries,chartPeriod,chartPeriodChange,chartFrequency,candleSeries,minuteFrequencies,intradayMinutes,aggregateIndexMinutes} from '../public/chart-data.js';
+import {fxCurrencies, featuredFxCodes} from '../public/fx-currencies.js';
 import {readFile} from 'node:fs/promises';
 import {parseHTML} from 'linkedom';
 import {setTimeout as nativeTimeout,clearTimeout as nativeClearTimeout} from 'node:timers';
@@ -17,6 +18,7 @@ test('standalone demo renders every destination without accessing member APIs',a
   const context={
     document,window,Node:domWindow.Node,HTMLElement:domWindow.HTMLElement,Element:domWindow.Element,
     chartSeries,chartPeriod,chartPeriodChange,chartFrequency,candleSeries,minuteFrequencies,intradayMinutes,aggregateIndexMinutes,
+    fxCurrencies,featuredFxCodes,
     location,navigator:{onLine:true},console,Intl,Date,URL,URLSearchParams,TextEncoder,queueMicrotask,
     setTimeout:localTimer,clearTimeout,setInterval:()=>0,clearInterval:()=>{},
     requestAnimationFrame:fn=>localTimer(fn,0),cancelAnimationFrame:clearTimeout,
@@ -27,16 +29,16 @@ test('standalone demo renders every destination without accessing member APIs',a
   domWindow.HTMLElement.prototype.scrollIntoView=function(){};
   const ctx=vm.createContext(context);
   const browserModule=await readFile('public/app.js','utf8');
-  vm.runInContext(browserModule.replace(/^import [^\n]+\n/,'').trimStart(),ctx,{filename:'app.js'});
+  vm.runInContext(browserModule.replace(/^import [^\n]+\n/gm,'').trimStart(),ctx,{filename:'app.js'});
   await new Promise(r=>nativeTimeout(r,20));
   if(!document.querySelector('.demo-banner')) {
     const demo=document.querySelector('.demo-entry');assert.ok(demo,'로그인 화면의 체험 버튼');demo.click();
   }
   assert.match(document.querySelector('.demo-banner').textContent,/예시 데이터/);
   const topics=[...document.querySelectorAll('.metric-section-title')].map(el=>el.textContent);
-  assert.deepEqual(topics.slice(0,5),[
-    '한국 증시 · 외국인·연기금 수급','미국 증시 · 위험 심리','금리 · 환율','원자재','디지털자산'
-  ],'five distinct topic headings should be visible in order');
+  assert.deepEqual(topics.slice(0,6),[
+    '한국 증시 · 외국인·연기금 수급','미국 증시 · 위험 심리','금리','원화 환율','원자재','디지털자산'
+  ],'six distinct topic headings should be visible in order');
   assert.equal(document.querySelectorAll('.metric-jump-button').length,topics.length);
   assert.ok(document.querySelectorAll('.overview-section-intro').length>=3,
     'interpretation, sector and forecast panels must have section titles');
@@ -45,7 +47,7 @@ test('standalone demo renders every destination without accessing member APIs',a
     else assert.equal(section.querySelector('.metric-section-description'),null);
     assert.ok(section.querySelectorAll('.quote-card').length>0);
   }
-  for(const view of ['overview','markets','instrument','outlooks','calendar','sources','users','activity']) {
+  for(const view of ['overview','markets','fx','instrument','outlooks','calendar','sources','users','activity']) {
     const button=document.querySelector(`[data-view="${view}"]`);assert.ok(button,view);button.click();
     await new Promise(r=>nativeTimeout(r,5));
     assert.ok(document.querySelector('#main-column').textContent.trim().length>20,`${view} content`);
@@ -87,5 +89,20 @@ test('standalone demo renders every destination without accessing member APIs',a
   assert.equal(document.querySelectorAll('.market-chart-body').length, 1);
   button('일봉').click();
   assert.equal(document.querySelector('.market-chart-extent').hidden, false);
+  document.querySelector('#modal-root').replaceChildren();
+  vm.runInContext(`state.market = {quotes: [{id: 'vndkrw', fxCurrency: 'VND', fxAmount: 1000, name: '베트남 동',
+    group: 'fx', unit: '원', value: 51.8, status: 'daily', observedAt: '2026-11-20', timestampPrecision: 'day',
+    history: [{date: '2026-11-19', value: 51.5}, {date: '2026-11-20', value: 51.8}]}]};
+    document.getElementById('app').replaceChildren(renderFxView());`,ctx);
+  assert.equal(document.querySelectorAll('.fx-list .quote-card').length, 52);
+  const search = document.querySelector('.fx-toolbar input');
+  search.value = '다 낭';
+  search.dispatchEvent(new domWindow.Event('input'));
+  assert.equal(document.querySelectorAll('.fx-list .quote-card').length, 1);
+  assert.match(document.querySelector('.fx-unit-label').textContent, /1,000 VND/);
+  document.querySelector('.fx-list .quote-card').click();
+  assert.match(document.querySelector('#modal-root').textContent, /베트남 동 · 일별 원화 환율 차트/);
+  assert.ok(document.querySelector('.market-chart-svg'));
+  assert.match(document.querySelector('.market-chart-svg').getAttribute('aria-label'), /기준환율 추이/);
   timers.forEach(nativeClearTimeout);
 });
