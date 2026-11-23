@@ -523,61 +523,56 @@ async function refreshCurrent() {
   else await loadMarket();
   renderView();
 }
-function briefSignals(market) {
-  const impact = market?.impact;
-  if (!impact?.kospi || !impact?.kosdaq) return {headline: '', evidence: ''};
-  const {kospi, kosdaq} = impact;
-  const shared = {
-    '우호': '해외 지표가 국내 증시에 우호적입니다',
-    '부담': '해외 지표가 국내 증시에 부담을 주는 흐름입니다',
-    '혼재': '해외 지표의 신호가 엇갈립니다',
-    '판단 보류': '국내 증시 여건을 판단하기엔 근거가 부족합니다',
-  };
-  const headline = kospi.state === kosdaq.state ? shared[kospi.state]
-    : `해외 여건은 코스피 ${kospi.state} · 코스닥 ${kosdaq.state}`;
-  const drivers = new Map();
-  for (const driver of [...(kospi.drivers || []), ...(kosdaq.drivers || [])]) {
-    if (!drivers.has(driver.id) || driver.weight > drivers.get(driver.id).weight) drivers.set(driver.id, driver);
-  }
-  const ranked = [...drivers.values()].filter(driver => driver.stance !== '중립').sort((a, b) => b.weight - a.weight);
-  const mixed = kospi.state !== kosdaq.state || kospi.state === '혼재';
-  const preferred = mixed ? null : kospi.state;
-  const lead = ranked.find(driver => driver.stance === preferred) || ranked[0];
-  const nextStance = mixed ? (lead?.stance === '부담' ? '우호' : '부담') : lead?.stance;
-  const second = lead && (ranked.find(driver => driver.id !== lead.id && driver.stance === nextStance)
-    || ranked.find(driver => driver.id !== lead.id));
-  const evidence = [lead, second].filter(Boolean).map(driver => {
-    const quote = market.quotes?.find(quote => quote.id === driver.id);
-    const label = cashUSIndexes.has(driver.id) ? `${driver.name} 현물` : driver.name;
-    if (!Number.isFinite(quote?.change)) return label;
-    return `${label} ${formatChange(quote)}`;
-  }).join(' · ');
-  return {headline, evidence};
-}
 function renderBrief(expanded = false) {
-  const market = state.market;
-  const summary = market?.summary;
-  const analysis = market?.analysis;
-  const signals = state.demo ? {} : briefSignals(market);
-  const hasAnalysis = analysis?.kind === 'ai' && analysis.status === 'ready';
-  const headline = hasAnalysis || state.demo ? summary?.headline : signals.headline;
-  const title = headline || (market?.asOf ? '최근 지표가 부족해 시장 판단을 보류합니다' : '브리핑을 불러오는 중입니다');
-  const points = (summary?.points || []).map(point => typeof point === 'string' ? point : point?.text || point?.title).filter(Boolean);
-  const note = state.demo ? '화면 체험용 예시' : hasAnalysis ? 'AI 해석' : '관측 지표 기반';
-  const timing = hasAnalysis ? analysis.dataAsOf || analysis.generatedAt : market?.asOf;
-  return E('details', {class: 'panel brief-panel', id: 'desk-brief', open: expanded || null},
+  const briefing = state.demo ? null : state.market?.briefing;
+  const items = briefing?.items || [];
+  const title = (state.demo ? state.market?.summary?.headline : briefing?.headline)
+    || '미국 시장 브리핑을 불러오는 중입니다';
+  const evidence = items.slice(0, 3).map(item =>
+    [item.name + (item.type === 'cash' ? ' 종가' : ''), item.change === null ? formatValue(item) + ' pt' : formatChange(item)].join(' ')).join(' · ');
+  const points = state.demo ? (state.market?.summary?.points || [])
+    .map(point => typeof point === 'string' ? point : point?.text || point?.title).filter(Boolean) : [];
+  const timing = state.demo ? '화면 체험용 예시' : briefing
+    ? `갱신 ${dateText(briefing.generatedAt)} KST · ${Date.now() < Date.parse(briefing.nextUpdateAt)
+      ? '다음 ' + shortTime(briefing.nextUpdateAt) + ' KST' : '다음 갱신 확인 중'}`
+    : '한국시간 4시간마다 갱신';
+  return E('details', {class: 'panel brief-panel', id: 'desk-brief', open: expanded || null,
+    'data-brief-generation': briefing?.generatedAt || ''},
     E('summary', {class: 'brief-summary'},
       E('span', {class: 'brief-label'}, icon('brief'), '오늘의 브리핑', state.demo ? badge('예시', 'amber') : null),
-      E('span', {class: 'brief-headline'}, title),
-      signals.evidence ? E('span', {class: 'brief-evidence'}, signals.evidence) : null,
+      E('span', {class: 'brief-headline', 'aria-live': 'polite'}, title),
+      E('span', {class: 'brief-evidence', hidden: !evidence || null}, evidence),
       E('span', {class: 'brief-more'}, E('span', {class: 'brief-more-closed'}, '근거·상세 보기'),
         E('span', {class: 'brief-more-open'}, '상세 접기'), icon('down'))),
     E('div', {class: 'brief-details'},
-      points.length ? E('div', {class: 'brief-content'}, E('h2', {}, '브리핑 근거'),
-        E('ul', {class: 'brief-points'}, points.map(point => E('li', {}, point)))) : null,
+      E('div', {class: 'brief-content', hidden: !items.length && !points.length && !briefing?.missing?.length || null},
+        E('h2', {}, state.demo ? '브리핑 근거' : '미국 시장 관측'),
+        E('ul', {class: 'brief-points'}, points.map(point => E('li', {}, point)),
+          items.map(item => E('li', {},
+            E('strong', {}, `${item.name} ${formatValue(item)} pt`),
+            item.change === null ? null : E('span', {class: changeClass(item.change)}, ` ${formatChange(item)}`),
+            E('div', {class: 'tiny muted'}, [item.contract, item.basis, item.saved ? '저장된 관측' : null,
+              quoteTimestamp(item), sourceName(item.source)].filter(Boolean).join(' · '))))),
+        briefing?.missing?.length ? E('p', {class: 'tiny muted'}, `자료 미수신 · ${briefing.missing.join(' · ')}`) : null),
       renderImpact(),
-      E('div', {class: 'brief-footer'}, E('span', {}, timing ? `${note} · 자료 기준 ${dateText(timing)} KST` : note),
+      E('div', {class: 'brief-footer'}, E('span', {class: 'brief-updated'}, timing),
         E('button', {type: 'button', class: 'text-button', onClick: () => navigate('outlooks')}, '기간별 전망', icon('chevron')))));
+}
+function updateBriefing() {
+  const brief = document.querySelector('#desk-brief');
+  if (!brief) return;
+  const next = renderBrief(brief.hasAttribute('open'));
+  if (brief.dataset.briefGeneration !== next.dataset.briefGeneration) {
+    brief.dataset.briefGeneration = next.dataset.briefGeneration;
+    brief.querySelector('.brief-headline').textContent = next.querySelector('.brief-headline').textContent;
+    for (const selector of ['.brief-evidence', '.brief-content']) {
+      brief.querySelector(selector).replaceWith(next.querySelector(selector));
+    }
+  }
+  brief.querySelector('.brief-updated').textContent = next.querySelector('.brief-updated').textContent;
+  if (!brief.querySelector('#korea-impact').contains(document.activeElement)) {
+    brief.querySelector('#korea-impact').replaceWith(next.querySelector('#korea-impact'));
+  }
 }
 function renderBacktest(review) {
   const outer = E('div', {class:'source-cards'});
@@ -1467,7 +1462,7 @@ async function loadMarket() {
   const generation = state.sessionGeneration;
   const data = await api('/api/market');
   if (generation !== state.sessionGeneration || !state.user || state.demo) return;
-  state.market = {...defaultMarket(), ...data};
+  state.market = {...defaultMarket(), ...data, briefing: data.briefing || state.market?.briefing || null};
 }
 let futuresRefreshRunning = false;
 async function loadFutures() {
@@ -1564,8 +1559,7 @@ async function autoRefreshMarket() {
     if(state.view==='overview') {
       const current=document.querySelector('.quote-overview-panel');
       if(current) current.replaceWith(renderQuotes());
-      const brief = document.querySelector('#desk-brief');
-      if (brief && !brief.hasAttribute('open') && !brief.contains(document.activeElement)) brief.replaceWith(renderBrief());
+      updateBriefing();
     } else if(state.view==='markets') {
       // Avoid replacing an open index-chart dialog or interrupting navigation.
       if(!document.querySelector('[role="dialog"]')) renderView();
@@ -1573,6 +1567,9 @@ async function autoRefreshMarket() {
   } catch (_) { /* Keep the last observed data; the manual refresh remains available. */ }
   finally { marketAutoRefreshBusy=false; }
 }
+document.addEventListener('visibilitychange', () => {
+  if (state.view === 'overview' && Date.now() >= Date.parse(state.market?.briefing?.nextUpdateAt)) autoRefreshMarket();
+});
 window.setInterval(autoRefreshMarket, 5*60*1000);
 window.setInterval(autoRefreshFutures, 60000);
 window.setInterval(() => { updateClock(); heartbeat(); }, 20000);

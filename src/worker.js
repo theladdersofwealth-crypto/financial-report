@@ -4,6 +4,7 @@ import { getCalendar } from './calendar.js';
 import { enrichAnalysis } from './analysis.js';
 import { searchInstrument } from './instrument-search.js';
 import { collectKisFutures, loadKisFuturesChart } from './kis.js';
+import { briefingCashQuotes } from './briefing.js';
 import {usFutures} from '../public/futures-config.js';
 
 export { DeskRoom };
@@ -25,6 +26,28 @@ function protect(response, isApi) {
 }
 
 const FUTURES_CHECK_CRON = '*/5 * * * *';
+
+async function getUsBriefing(env, market) {
+  if (!env.US_BRIEFING) return null;
+  try {
+    return await env.US_BRIEFING.getByName('us-markets').current(briefingCashQuotes(market));
+  } catch (error) {
+    console.warn('US market briefing unavailable', error?.name || 'Error');
+    return null;
+  }
+}
+
+async function refreshBriefingIfDue(env) {
+  if (!env.US_BRIEFING) return null;
+  try {
+    const briefing = env.US_BRIEFING.getByName('us-markets');
+    return await briefing.needsRefresh()
+      ? await briefing.current(briefingCashQuotes(await getMarket(env))) : null;
+  } catch (error) {
+    console.warn('US market briefing refresh failed', error?.name || 'Error');
+    return null;
+  }
+}
 
 async function futuresSnapshot(env, reportSuccess = false) {
   const events = [];
@@ -83,7 +106,9 @@ export default {
             const result=await searchInstrument(env,market,symbol,exchange);
             return protect(Response.json(result,{status:result.status==='invalid'?400:200}),true);
           }
-          return protect(Response.json(await enrichAnalysis(await getMarket(env), env)), true);
+          const market = await getMarket(env);
+          const [analysis, briefing] = await Promise.all([enrichAnalysis(market, env), getUsBriefing(env, market)]);
+          return protect(Response.json({...analysis, briefing}), true);
         }
         return protect(await room.fetch(request), true);
       }
@@ -103,11 +128,11 @@ export default {
   async scheduled(controller, env, ctx) {
     const time = new Date(controller.scheduledTime);
     const refreshMarketNow = time.getUTCMinutes() === 0 && [7, 23].includes(time.getUTCHours());
-    if (controller.cron === FUTURES_CHECK_CRON && !refreshMarketNow) {
-      ctx.waitUntil(futuresSnapshot(env, true));
-      return;
+    if (refreshMarketNow) {
+      ctx.waitUntil(refreshMarket(env).then(market =>
+        Promise.all([enrichAnalysis(market, env), getUsBriefing(env, market)])));
+    } else if (controller.cron === FUTURES_CHECK_CRON) {
+      ctx.waitUntil(refreshBriefingIfDue(env).then(briefing => briefing || futuresSnapshot(env, true)));
     }
-    const refresh = refreshMarket(env).then(market => enrichAnalysis(market, env));
-    ctx.waitUntil(refresh);
   }
 };

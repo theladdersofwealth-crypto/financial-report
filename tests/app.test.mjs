@@ -8,7 +8,7 @@ const origin='https://desk.test';
 const setupToken='test-only-long-random-bootstrap-code-298472019';
 const adminPassword='Admin-test-2026!';
 const memberPassword='Member-test-2026!';
-const workerModules = ['worker-entry','worker','room','market','kis','impact','validation','market-deploy-snapshot','analysis','calendar','calendar-deploy-snapshot','instrument-search']
+const workerModules = ['worker-entry','worker','room','market','kis','briefing','impact','validation','market-deploy-snapshot','analysis','calendar','calendar-deploy-snapshot','instrument-search']
   .map(name=>({type:'ESModule',path:resolve(`src/${name}.js`)}))
   .concat(['fx-currencies','futures-config'].map(name=>({type:'ESModule',path:resolve(`public/${name}.js`)})));
 
@@ -228,4 +228,25 @@ test('KIS token broker shares one OAuth issuance across concurrent callers', asy
   assert.deepEqual(renewed.map(item=>item.session.token),['fixture-token-2','fixture-token-2']);
   assert.equal((await second.getToken()).session.token,'fixture-token-2');
   assert.equal(issued,2);
+});
+
+test('the shared market briefing publishes once within a four-hour window', async t => {
+  const mf = new Miniflare(convertV4MiniflareOptions({
+    modules:workerModules, compatibilityDate:'2026-11-01',
+    durableObjects:{US_BRIEFING:{className:'MarketBriefing',useSQLite:true}},
+  }));
+  t.after(()=>mf.dispose());
+  const namespace = await mf.getDurableObjectNamespace('US_BRIEFING');
+  const first = namespace.getByName('us-markets');
+  const another = namespace.getByName('us-markets');
+  const observedAt = new Date().toISOString().slice(0, 10);
+  const input = [{id:'sp500', value:7000, change:0.4, changeUnit:'%', observedAt, source:'FRED'}];
+  assert.equal(await first.needsRefresh(), true);
+  const release = await first.current(input);
+  assert.match(release.headline, /S&P 500 현물 종가 상승/);
+  input[0].change = -0.5;
+  assert.equal(await another.needsRefresh(), false);
+  const sameWindow = await another.current(input);
+  assert.equal(sameWindow.generatedAt, release.generatedAt);
+  assert.equal(sameWindow.headline, release.headline);
 });

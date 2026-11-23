@@ -23,6 +23,10 @@ class_name = "DeskRoom"
 name = "KIS_TOKEN_BROKER"
 class_name = "KisTokenBroker"
 
+[[durable_objects.bindings]]
+name = "US_BRIEFING"
+class_name = "MarketBriefing"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["DeskRoom"]
@@ -30,6 +34,10 @@ new_sqlite_classes = ["DeskRoom"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["KisTokenBroker"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["MarketBriefing"]
 
 [observability]
 enabled = true

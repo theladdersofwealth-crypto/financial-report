@@ -47,13 +47,22 @@ test('standalone demo renders every destination without accessing member APIs',a
   brief.setAttribute('open', '');
   vm.runInContext('renderView()',ctx);
   assert.ok(overview.firstElementChild.hasAttribute('open'));
-  const contrasts = vm.runInContext(`briefSignals({
-    impact: {kospi: {state: '혼재', drivers: [{id: 'sox', name: '미국 반도체', stance: '우호', weight: 3}]},
-      kosdaq: {state: '혼재', drivers: [{id: 'usreal10y', name: '미 실질금리', stance: '부담', weight: 2}]}},
-    quotes: [{id: 'sox', change: 1.25, changeUnit: '%'}, {id: 'usreal10y', change: 3, changeUnit: 'bp'}],
-  })`,ctx);
-  assert.equal(contrasts.headline, '해외 지표의 신호가 엇갈립니다');
-  assert.equal(contrasts.evidence, '미국 반도체 현물 +1.25% · 미 실질금리 +3.0bp');
+  vm.runInContext(`
+    state.demo = false;
+    state.market.briefing = {headline:'S&P 500 선물 상승', generatedAt:'2026-11-23T15:00:00Z',
+      nextUpdateAt:'2026-11-23T19:00:00Z', items: [
+        {name:'S&P 500 선물', type:'future', value:7000, change:1.25, changeUnit:'%',
+          observedAt:'2026-11-23', basis:'선물 시세', contract:'ESZ26', source:'한투'},
+        {name:'나스닥 100 현물', type:'cash', value:24000, change:-0.4, changeUnit:'%',
+          observedAt:'2026-11-22', basis:'미국 정규장 종가', source:'FRED'}],
+      missing:['다우 선물']};
+    updateBriefing();
+    state.demo = true;
+  `, ctx);
+  assert.ok(overview.firstElementChild.hasAttribute('open'));
+  assert.match(document.querySelector('.brief-headline').textContent,/S&P 500 선물 상승/);
+  assert.match(document.querySelector('.brief-evidence').textContent,/나스닥 100 현물 종가 -0.40%/);
+  assert.match(document.querySelector('.brief-content').textContent,/ESZ26.*한투.*미국 정규장 종가.*FRED.*다우 선물/);
 
   const topics=[...document.querySelectorAll('.metric-section-title')].map(el=>el.textContent);
   assert.deepEqual(topics.slice(0,6),[
