@@ -664,6 +664,25 @@ function quoteCard(quote) {
 }
 
 // Observed index history only: daily closes are not intraday or candlestick data.
+// Aggregate only KIS-observed 1-minute OHLC; no synthetic candles.
+function aggregateIndexMinutes(rows,minutes) {
+  const groups=new Map();
+  for(const bar of Array.isArray(rows)?rows:[]) {
+    const stamp=Date.parse(bar.date);
+    if(!Number.isFinite(stamp) || ![bar.open,bar.high,bar.low,bar.close].every(Number.isFinite))continue;
+    const local=new Date(stamp+9*3600000);
+    const minute=local.getUTCHours()*60+local.getUTCMinutes();
+    if(minute<540 || minute>930)continue;
+    const sessionMinute=minute-540;
+    const bucket=540+Math.floor(sessionMinute/minutes)*minutes;
+    const date=bar.date.slice(0,10);
+    const key=`${date}T${String(Math.floor(bucket/60)).padStart(2,'0')}:${String(bucket%60).padStart(2,'0')}:00+09:00`;
+    const prev=groups.get(key);
+    if(prev){prev.high=Math.max(prev.high,bar.high);prev.low=Math.min(prev.low,bar.low);prev.close=bar.close;prev.value=bar.close;}
+    else groups.set(key,{date:key,open:bar.open,high:bar.high,low:bar.low,close:bar.close,value:bar.close});
+  }
+  return [...groups.values()].sort((a,b)=>a.date.localeCompare(b.date));
+}
 function openIndexChart(quote) {
   const observations = chartSeries(quote.history);
   const hasOfficialCandles = ['kospi','kosdaq'].includes(quote.id)
@@ -673,7 +692,7 @@ function openIndexChart(quote) {
     hasOfficialCandles ? '한투 KIS 실제 시가·고가·저가·종가 · 주기별 원자료' :
       '관측된 종가로 표시하는 추이 차트 · 실제 봉 시고저종 데이터 없음',
     body => {
-      const frequencies = [['D','일봉'],['W','주봉'],['M','월봉']];
+      const frequencies = [['1min','1분봉'],['3min','3분봉'],['5min','5분봉'],['10min','10분봉'],['60min','1시간봉'],['240min','4시간봉'],['D','일봉'],['W','주봉'],['M','월봉']];
       const ranges = [['1m','1개월'],['3m','3개월'],['1y','1년'],['all','전체']];
       const frequencyMenu = E('div',{class:'market-chart-ranges',role:'group','aria-label':'차트 봉 주기'});
       const periodMenu = E('div',{class:'market-chart-ranges market-chart-extent',role:'group','aria-label':'차트 조회 범위'});
@@ -702,10 +721,13 @@ function openIndexChart(quote) {
           button.classList.toggle('active',selected);
           button.setAttribute('aria-pressed',String(selected));
         });
-        const all = hasOfficialCandles ? candleSeries(quote.chartPeriods?.[activeTimeframe]) :
+        const intraday=/^\\d+min$/.test(activeTimeframe);
+        const minuteData=Array.isArray(quote.minuteCandles)?quote.minuteCandles:[];
+        const all = intraday ? aggregateIndexMinutes(minuteData,Number.parseInt(activeTimeframe,10)) :
+          hasOfficialCandles ? candleSeries(quote.chartPeriods?.[activeTimeframe]) :
           chartFrequency(observations,activeTimeframe);
-        const series=chartPeriod(all,activePeriod);
-        const candleMode=hasOfficialCandles;
+        const series=intraday ? all : chartPeriod(all,activePeriod);
+        const candleMode=intraday || hasOfficialCandles;
         const label=frequencies.find(x=>x[0]===activeTimeframe)?.[1]||'일봉';
         plot.replaceChildren();
         const change=chartPeriodChange(series);
