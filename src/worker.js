@@ -100,7 +100,9 @@ export default {
     }
   },
   async scheduled(controller, env, ctx) {
-    if (controller.cron === FUTURES_CHECK_CRON) {
+    const time = new Date(controller.scheduledTime);
+    const refreshMarketNow = time.getUTCMinutes() === 0 && [7, 23].includes(time.getUTCHours());
+    if (controller.cron === FUTURES_CHECK_CRON && !refreshMarketNow) {
       ctx.waitUntil(futuresSnapshot(env, true));
       return;
     }

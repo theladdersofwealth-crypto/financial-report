@@ -27,4 +27,4 @@ new_sqlite_classes = ["DeskRoom"]
 enabled = true
 
 [triggers]
-crons = ["0 7,23 * * *", "*/5 * * * *"]
+crons = ["*/5 * * * *"]
