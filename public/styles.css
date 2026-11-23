@@ -3650,3 +3650,13 @@ td strong {
 @media(max-width:760px){
  .metric-korea .market-grid > .quote-card:nth-child(-n+2) .quote-top::before{font-size:13px}
 }
+
+.quote-bottom { flex-wrap: wrap; column-gap: 8px; row-gap: 4px; }
+.quote-status { font-size: 11px; color: var(--muted); font-weight: 650; }
+.quote-status.saved, .event-saved { color: #8a5b18; }
+.quote-provenance { display: grid; gap: 3px; font-size: 11px; line-height: 1.35; color: var(--muted); overflow-wrap: anywhere; }
+.market-chart-ranges[hidden] { display: none; }
+.calendar-providers { margin: 0; padding: 12px 18px; list-style: none; display: grid; gap: 8px; border-bottom: 1px solid var(--line); }
+.calendar-providers li { display: grid; gap: 3px; font-size: 12px; color: var(--muted); }
+.calendar-providers strong { color: var(--ink); }
+.event-saved { display: block; margin-top: 4px; }

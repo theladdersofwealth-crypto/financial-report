@@ -34,11 +34,11 @@ export function kisConfigured(env) {
     typeof env?.KIS_APP_SECRET==='string' && env.KIS_APP_SECRET.trim());
 }
 
-async function jsonRequest(url, init = {}) {
+async function jsonRequest(url, init, fetchProvider = fetch) {
   const controller = new AbortController();
   const timer = setTimeout(()=>controller.abort(), TIMEOUT_MS);
   try {
-    const res=await fetch(url,{...init,redirect:'manual',signal:controller.signal});
+    const res=await fetchProvider(url,{...init,redirect:'manual',signal:controller.signal});
     if (!res.ok || Number(res.headers.get('content-length'))>1000000) {
       await res.body?.cancel().catch(()=>{});
       return null;
@@ -61,7 +61,7 @@ async function tokenFor(env) {
     const data=await jsonRequest(BASE+'/oauth2/tokenP', {
       method:'POST',headers:{'content-type':'application/json'},
       body:JSON.stringify({grant_type:'client_credentials',appkey:appKey,appsecret:secret}),
-    });
+    }, env.fetchProvider);
     if (typeof data?.access_token!=='string' || !data.access_token) return null;
     const secs=Number(data.expires_in);
     const ttl = Number.isFinite(secs) && secs>60 ? Math.min(secs-300, 23*3600) : 3600;
@@ -78,7 +78,7 @@ async function kisGet(env, token, path, trId, parameters) {
     method:'GET',
     headers:{accept:'application/json','content-type':'application/json',authorization:'Bearer '+accessToken,
       appkey:env.KIS_APP_KEY,appsecret:env.KIS_APP_SECRET,tr_id:trId,custtype:'P'},
-  });
+  }, env.fetchProvider);
   let data=await request(token);
   // A known expired token can be invalidated and refreshed only once.
   if (data?.msg_cd==='EGW00123') {
@@ -148,8 +148,8 @@ async function intradayIndexQuote(env,token,id,iscd) {
   return {id,provider:'kis',source:'한국투자증권 KIS Open API',
     sourceUrl:'https://apiportal.koreainvestment.com/',
     value,change,changeUnit:'%',unit:'pt',
-    observedAt,retrievedAt:observedAt,timestampPrecision:'second',
-    status:'delayed',delay:'KIS 장중 현재 지수 · 화면 최대 5분 간격 조회',
+    observedAt,retrievedAt:observedAt,timestampPrecision:'retrieval',
+    status:'delayed',delay:'KIS 장중 지수 스냅샷 · 공급자 관측 시각 미제공 · 최대 5분 간격 조회',
     basis:'KIS 국내 업종지수 현재가 · 장중 조회',reason:null};
 }
 // KIS index minute OHLC; never infer intraday bars from daily closes.
@@ -327,19 +327,20 @@ async function overseasSecurity(env,token,[symbol,name,group,exchange]) {
  * Read-only overseas quote candidates, and never a reason to lose older
  * FRED/Finnhub feeds. Limits concurrent requests to respect KIS rate limits.
  */
-export async function collectKisOverseas(env) {
+export async function collectKisOverseas(env, kind) {
   if(!kisConfigured(env)) return {indices:[],sectors:[],leaders:[]};
   const token=await tokenFor(env);
   if(!token) return {indices:[],sectors:[],leaders:[]};
   const tasks=[
-    ...OVERSEAS_INDEXES.map(([id,code])=>()=>overseasIndexQuote(env,token,id,code)),
-    ...OVERSEAS_SECURITIES.map(entry=>()=>overseasSecurity(env,token,entry)),
+    ...(kind === 'securities' ? [] : OVERSEAS_INDEXES.map(([id,code])=>()=>overseasIndexQuote(env,token,id,code))),
+    ...(kind === 'indices' ? [] : OVERSEAS_SECURITIES.map(entry=>()=>overseasSecurity(env,token,entry))),
   ];
   const results=[];
   for(let i=0;i<tasks.length;i+=4) {
     // Domestic KIS uses the same key. Pace overseas batches so concurrent
     // domestic D/W/M requests do not exhaust the account's per-second limit.
     await new Promise(resolve=>setTimeout(resolve,350));
+    if (env.hasProviderBudget && !env.hasProviderBudget()) break;
     const batch=await Promise.all(tasks.slice(i,i+4).map(task=>task().catch(()=>null)));
     results.push(...batch.filter(Boolean));
   }

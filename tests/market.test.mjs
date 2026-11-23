@@ -108,7 +108,9 @@ test('backup restores missing quotes only while their observations are recent', 
 
 test('provider failures produce explicit missing values without sample prices or leaked credentials', async t => {
   const warning = t.mock.method(console, 'warn', () => {});
+  let requests = 0;
   installFetch(t, async (input) => {
+    requests++;
     if (new URL(input).hostname === 'api.stlouisfed.org') {
       return new Response('Do not log upstream body', { status: 429 });
     }
@@ -129,10 +131,12 @@ test('provider failures produce explicit missing values without sample prices or
   assert.equal(warning.mock.callCount(), 1);
   const [, failures] = warning.mock.calls[0].arguments;
   assert.ok(failures['api.stlouisfed.org HTTP_429'] > 0);
-  assert.ok(failures['finnhub.io fetch_error'] > 0);
+  assert.ok(failures['finnhub.io request_budget'] > 0);
+  assert.equal(requests, 48);
+  assert.equal(data.providerBudgetReached, true);
   assert.doesNotMatch(JSON.stringify(failures), /secret|Do not log/);
   assert.match(data.summary.points.at(-1), /api\.stlouisfed\.org HTTP 429/);
-  assert.match(data.summary.points.at(-1), /finnhub\.io 요청 실패/);
+  assert.match(data.summary.points.at(-1), /finnhub\.io 한 번에 조회할 수 있는 외부 요청 한도 도달/);
 });
 
 test('keyless provider requests and configured Finnhub calls share the connection budget', async t => {
@@ -425,7 +429,8 @@ test('old IMF nickel month is explicitly stale, not a current LME spot quote',as
 
 
 test('verified KIS overseas candidates win over FRED and missing Finnhub; mismatched indices fall back',async t=>{
-  const publicFixture=providerFixture();
+  const priorCloses = [[day(3), '100'], [day(1), '101']];
+  const publicFixture=providerFixture({SP500: priorCloses, NASDAQ100: priorCloses});
   const original=globalThis.fetch;
   globalThis.fetch=async (input,options={})=>{
     const u=new URL(String(input));
@@ -466,7 +471,7 @@ test('verified KIS overseas candidates win over FRED and missing Finnhub; mismat
   };
   t.after(()=>{globalThis.fetch=original});
   const {collectMarket}=await freshModule();
-  const market=await collectMarket({KIS_APP_KEY:'unique-us-market-test-key',KIS_APP_SECRET:'unique-us-market-test-secret'});
+  const market=await collectMarket({KIS_APP_KEY:'unique-us-market-test-key',KIS_APP_SECRET:'unique-us-market-test-secret'}, [], [], 100);
   const sp=market.quotes.find(q=>q.id==='sp500');
   assert.equal(sp.provider,'kis');
   assert.equal(sp.value,101);
@@ -545,4 +550,44 @@ test('unavailable Binance API retains original USD Bitstamp spot fallback',async
   }
   assert.equal(market.sources.find(x=>x.id==='binance').received,0);
   assert.equal(market.sources.find(x=>x.id==='bitstamp').received,3);
+});
+
+test('Nasdaq official close rescues three index series without accepting a wrong response symbol', async t => {
+  const fixture = providerFixture({NASDAQ100: [], NASDAQCOM: [], NASDAQSOX: []});
+  installFetch(t, async (input, options) => {
+    const u = new URL(String(input));
+    if (u.hostname !== 'api.nasdaq.com') return fixture(input, options);
+    const symbol = u.pathname.split('/')[3];
+    const format = date => `${date.slice(5, 7)}/${date.slice(8)}/${date.slice(0, 4)}`;
+    return Response.json({data: {symbol: symbol === 'COMP' ? 'WRONG' : symbol, tradesTable: {rows: [
+      {date: format(day(1)), close: '9,050.1'}, {date: format(day(2)), close: '9,000.0'},
+    ]}}});
+  });
+  const {collectMarket} = await freshModule();
+  const market = await collectMarket({});
+  const ndx = market.quotes.find(q => q.id === 'nasdaq');
+  assert.equal(ndx.provider, 'nasdaq');
+  assert.equal(ndx.value, 9050.1);
+  assert.equal(ndx.observedAt, day(1));
+  assert.equal(market.quotes.find(q => q.id === 'nasdaqcom').value, null);
+  assert.equal(market.sources.find(source => source.id === 'nasdaq').received, 2);
+});
+
+test('failed refresh keeps the most recent verified observation explicitly stale', async t => {
+  let outage = false;
+  const fixture = providerFixture();
+  installFetch(t, async (input, options) => {
+    const u = new URL(String(input));
+    if (outage && u.searchParams.get('id') === 'SP500') return new Response('', {status: 503});
+    return fixture(input, options);
+  });
+  const {getMarket, refreshMarket} = await freshModule();
+  const initial = (await getMarket()).quotes.find(q => q.id === 'sp500');
+  outage = true;
+  const next = (await refreshMarket()).quotes.find(q => q.id === 'sp500');
+  assert.equal(next.value, initial.value);
+  assert.equal(next.observedAt, initial.observedAt);
+  assert.equal(next.retrievedAt, initial.retrievedAt);
+  assert.equal(next.savedFrom, 'cache');
+  assert.equal(next.status, 'stale');
 });

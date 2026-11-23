@@ -4,6 +4,44 @@
  */
 const DAY_MS = 86400000;
 
+export const minuteFrequencies = [
+  ['1min', '1분봉'], ['3min', '3분봉'], ['5min', '5분봉'], ['10min', '10분봉'],
+  ['60min', '1시간봉'], ['240min', '4시간봉'],
+];
+
+export function intradayMinutes(timeframe) {
+  return minuteFrequencies.some(([code]) => code === timeframe) ? Number.parseInt(timeframe, 10) : null;
+}
+
+export function aggregateIndexMinutes(rows, minutes) {
+  const bars = new Map();
+  if (!Array.isArray(rows) || !Number.isInteger(minutes) || minutes < 1) return [];
+  for (const bar of rows) {
+    if (!bar || ![bar.open, bar.high, bar.low, bar.close].every(value => Number.isFinite(value) && value > 0)
+        || bar.high < Math.max(bar.open, bar.close) || bar.low > Math.min(bar.open, bar.close)) continue;
+    const time = Date.parse(bar.date);
+    if (Number.isFinite(time)) bars.set(time, bar);
+  }
+  const groups = new Map();
+  for (const [time, bar] of [...bars].sort(([a], [b]) => a - b)) {
+    const local = new Date(time + 9 * 3600000);
+    const minute = local.getUTCHours() * 60 + local.getUTCMinutes();
+    if (minute < 540 || minute > 930) continue;
+    const bucket = 540 + Math.floor((minute - 540) / minutes) * minutes;
+    const date = local.toISOString().slice(0, 10);
+    const key = `${date}T${String(Math.floor(bucket / 60)).padStart(2, '0')}:${String(bucket % 60).padStart(2, '0')}:00+09:00`;
+    const group = groups.get(key);
+    if (group) {
+      group.high = Math.max(group.high, bar.high);
+      group.low = Math.min(group.low, bar.low);
+      group.close = group.value = bar.close;
+    } else {
+      groups.set(key, {date: key, open: bar.open, high: bar.high, low: bar.low, close: bar.close, value: bar.close});
+    }
+  }
+  return [...groups.values()];
+}
+
 export function chartSeries(history) {
   if (!Array.isArray(history)) return [];
   const distinct = new Map();

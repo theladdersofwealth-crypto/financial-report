@@ -12,16 +12,21 @@ import { collectKis, collectKisOverseas, collectKisMacro, kisConfigured } from '
 const TTL = 5 * 60 * 1000;
 const TIMEOUT = 4000;
 const PROVIDER_CONCURRENCY = 4;
+const FREE_PLAN_PROVIDER_REQUESTS = 48;
 const HOSTS = new Set([
   'fred.stlouisfed.org', 'api.stlouisfed.org', 'home.treasury.gov',
   'api.frankfurter.dev', 'data-api.binance.vision', 'api.binance.com',
   'www.bitstamp.net', 'api.coinbase.com', 'finnhub.io',
   'www.bls.gov', 'www.federalreserve.gov', 'ecos.bok.or.kr',
-  'api.gold-api.com',
+  'api.gold-api.com', 'api.nasdaq.com',
 ]);
 const snapshots = new Map();
 const pending = new Map();
+const lastGoodQuotes = new Map();
 const configHashes = new Map();
+
+const NASDAQ_INDEXES = {nasdaq: 'NDX', nasdaqcom: 'COMP', sox: 'SOX'};
+const DAY_MS = 86400000;
 
 const INSTRUMENTS = [
   { id: 'sp500', name: 'S&P 500', group: 'equity', unit: 'pt', fred: 'SP500', origin: 'S&P Dow Jones Indices', basis: '미국 정규장 종가' },
@@ -83,13 +88,17 @@ const LEADERS = [
   ['AMZN', '아마존'], ['GOOGL', '알파벳'], ['META', '메타'], ['TSLA', '테슬라'],
 ];
 
-const isoDay = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value));
+const isoDay = value => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value))) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+};
 const numeric = (value) => value !== null && value !== undefined && String(value).trim() !== '' && Number.isFinite(Number(value)) ? Number(value) : null;
 const rounded = (value) => Number.isFinite(value) ? Math.round(value * 10000) / 10000 : null;
 const daysAgo = (days) => new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
 const pct = (last, previous) => previous !== 0 ? rounded((last - previous) / previous * 100) : null;
 
-export function createMarketReader() {
+export function createMarketReader(fetchProvider = fetch) {
   const failures = new Map();
   const queue = [];
   let active = 0;
@@ -98,7 +107,7 @@ export function createMarketReader() {
     while (active < PROVIDER_CONCURRENCY && queue.length) {
       const { url, format, headers, resolve, reject } = queue.shift();
       active++;
-      readProvider(url, format, headers, failures).then(resolve, reject).finally(() => {
+      readProvider(url, format, headers, failures, fetchProvider).then(resolve, reject).finally(() => {
         active--;
         pump();
       });
@@ -116,7 +125,7 @@ export function createMarketReader() {
   };
 }
 
-async function readProvider(url, format, headers, failures) {
+async function readProvider(url, format, headers, failures, fetchProvider) {
   const parsed = new URL(url);
   if (parsed.protocol !== 'https:' || !HOSTS.has(parsed.hostname)) return null;
   const controller = new AbortController();
@@ -130,7 +139,7 @@ async function readProvider(url, format, headers, failures) {
     return null;
   }
   try {
-    const response = await fetch(parsed.toString(), {
+    const response = await fetchProvider(parsed.toString(), {
       method: 'GET', redirect: 'manual', signal: controller.signal,
       headers: { Accept: format === 'json' ? 'application/json' : 'text/csv,application/xml,text/plain', ...headers },
     });
@@ -151,6 +160,7 @@ async function readProvider(url, format, headers, failures) {
     if (controller.signal.aborted) return failed('timeout');
     // Classify locally; never include the exception, request URL, or raw body.
     const detail = `${error?.cause?.code || ''} ${error?.message || ''}`;
+    if (error?.code === 'MARKET_REQUEST_BUDGET') return failed('request_budget');
     if (/I\/O on behalf of a different request|outside of a request context/i.test(detail)) return failed('request_context');
     if (/ENOTFOUND|EAI_AGAIN|DNS|resolve (host|hostname)/i.test(detail)) return failed('dns_error');
     if (/TLS|SSL|certificate/i.test(detail)) return failed('tls_error');
@@ -198,38 +208,57 @@ function fromHistory(instrument, entries, metadata) {
 
 async function fredQuote(instrument, env, readURL) {
   const start = daysAgo(instrument.monthly ? 460 : 100);
-  let result;
-  let entries;
+  const metadata = {provider: 'fred', source: `${instrument.origin} / FRED`,
+    sourceUrl: `https://fred.stlouisfed.org/series/${instrument.fred}`};
+  let apiQuote;
   if (env.FRED_API_KEY) {
-    const query = new URLSearchParams({ series_id: instrument.fred, api_key: env.FRED_API_KEY,
-      file_type: 'json', observation_start: start, sort_order: 'asc' });
-    result = await readURL(`https://api.stlouisfed.org/fred/series/observations?${query}`);
-    entries = result?.data?.observations?.map((row) => ({ date: row.date, value: row.value }));
-  }
-  // The graph download is a keyless fallback if the authenticated endpoint fails.
-  // Never interpret HTML, ZIP, or provider errors as a successful price.
-  if (!Array.isArray(entries) || !entries.some((row) => isoDay(row.date) && numeric(row.value) !== null)) {
-    const csv = await readURL(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=${instrument.fred}&cosd=${start}`, 'text');
-    const rows = csv?.data?.trim().split(/\r?\n/);
-    const header = rows?.[0]?.replace(/^\uFEFF/, '');
-    if (header === `observation_date,${instrument.fred}` || header === `DATE,${instrument.fred}`) {
-      entries = rows.slice(1).map((line) => {
-        const [date, value] = line.split(',');
-        return { date, value };
-      });
-      result = csv;
+    const query = new URLSearchParams({series_id: instrument.fred, api_key: env.FRED_API_KEY,
+      file_type: 'json', observation_start: start, sort_order: 'asc'});
+    const result = await readURL(`https://api.stlouisfed.org/fred/series/observations?${query}`);
+    if (Array.isArray(result?.data?.observations)) {
+      apiQuote = fromHistory(instrument, result.data.observations, {...metadata, retrievedAt: result.retrievedAt});
+      if (isFreshQuote(apiQuote)) return apiQuote;
     }
   }
-  if (!Array.isArray(entries)) return missing(instrument, env.FRED_API_KEY ? 'FRED 인증·이용권한 또는 공급자 응답을 확인해 주세요' : 'FRED 공개 일별 자료 응답을 확인할 수 없습니다');
-  return fromHistory(instrument, entries, {
-    provider: 'fred', source: `${instrument.origin} / FRED`,
-    sourceUrl: `https://fred.stlouisfed.org/series/${instrument.fred}`,
-    retrievedAt: result.retrievedAt,
-  });
+  const csv = await readURL(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=${instrument.fred}&cosd=${start}`, 'text');
+  const rows = csv?.data?.trim().split(/\r?\n/);
+  const header = rows?.[0]?.replace(/^\uFEFF/, '');
+  if (header === `observation_date,${instrument.fred}` || header === `DATE,${instrument.fred}`) {
+    const entries = rows.slice(1).map(line => {
+      const [date, value] = line.split(',');
+      return {date, value};
+    });
+    const quote = fromHistory(instrument, entries, {...metadata, retrievedAt: csv.retrievedAt});
+    if (quote.observedAt && (!apiQuote?.observedAt || quote.observedAt >= apiQuote.observedAt)) return quote;
+  }
+  return apiQuote?.observedAt ? apiQuote : missing(instrument, 'FRED 공개·인증 경로에서 유효한 자료를 받지 못했습니다');
+}
+
+async function nasdaqIndexFallback(quotes, readURL) {
+  const needed = quotes.filter(quote => Object.hasOwn(NASDAQ_INDEXES, quote.id) && !isFreshQuote(quote));
+  const answers = await Promise.all(needed.map(async quote => {
+    const symbol = NASDAQ_INDEXES[quote.id];
+    const query = new URLSearchParams({assetclass: 'index', fromdate: daysAgo(100), limit: '100'});
+    const result = await readURL(`https://api.nasdaq.com/api/quote/${symbol}/historical?${query}`);
+    const data = result?.data?.data;
+    if (data?.symbol !== symbol || !Array.isArray(data.tradesTable?.rows)) return null;
+    const rows = data.tradesTable.rows.map(row => {
+      const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(row?.date);
+      const price = typeof row?.close === 'string' ? row.close.replaceAll(',', '') : row?.close;
+      return match ? {date: `${match[3]}-${match[1]}-${match[2]}`, value: price} : null;
+    }).filter(row => row && numeric(row.value) > 0);
+    const instrument = INSTRUMENTS.find(item => item.id === quote.id);
+    return fromHistory(instrument, rows, {
+      provider: 'nasdaq', source: 'Nasdaq 공식 일별 종가',
+      sourceUrl: `https://www.nasdaq.com/market-activity/index/${symbol.toLowerCase()}/historical`,
+      retrievedAt: result.retrievedAt, basis: 'Nasdaq 공식 지수 정규장 종가 · FRED 대체',
+    });
+  }));
+  return answers.filter(isFreshQuote);
 }
 
 async function treasuryFallback(quotes, readURL) {
-  const needed = quotes.filter((quote) => ['us2y', 'us10y', 'usreal10y'].includes(quote.id) && quote.value === null);
+  const needed = quotes.filter((quote) => ['us2y', 'us10y', 'usreal10y'].includes(quote.id) && !isFreshQuote(quote));
   if (!needed.length) return [];
   const year = new Date().getUTCFullYear();
   const kinds = [...new Set(needed.map((quote) => quote.id === 'usreal10y' ? 'daily_treasury_real_yield_curve' : 'daily_treasury_yield_curve'))];
@@ -386,9 +415,10 @@ async function cryptoQuote(instrument, readURL) {
   const ticker = await readURL(`https://www.bitstamp.net/api/v2/ticker/${pair}/`);
   const price = numeric(ticker?.data?.last);
   const epoch = numeric(ticker?.data?.timestamp);
+  let priorBitstamp;
   if (price !== null && price > 0 && epoch !== null && epoch > 0 && epoch < 1e11) {
     const observedAt = new Date(epoch * 1000).toISOString();
-    if (Date.parse(observedAt) <= Date.now() + 60000) return {
+    if (Date.parse(observedAt) <= Date.now() + 60000) priorBitstamp = {
       ...missing(instrument), provider: 'bitstamp', value: price,
       change: numeric(ticker.data.percent_change_24), changeUnit: '%', changeBasis: '최근 24시간 대비',
       source: 'Bitstamp', sourceUrl: 'https://www.bitstamp.net/api/', observedAt,
@@ -397,6 +427,7 @@ async function cryptoQuote(instrument, readURL) {
       delay: '거래소 현물 스냅샷 · 데스크 최대 5분 캐시',
     };
   }
+  if (isFreshQuote(priorBitstamp)) return priorBitstamp;
   // Coinbase spot provides no trade timestamp or comparable 24h change.
   // Use retrieval time explicitly, never invent either missing field.
   const spot = await readURL(`https://api.coinbase.com/v2/prices/${instrument.crypto}-USD/spot`);
@@ -408,7 +439,7 @@ async function cryptoQuote(instrument, readURL) {
     status: 'live', reason: null, changeBasis: '24시간 등락 자료 미제공',
     delay: '현재 현물 스냅샷 · 관측시각 미제공으로 수집시각 표시 · 최대 5분 캐시',
   };
-  return missing(instrument, '바이낸스 및 대체 거래소 공개 시세 조회 실패 · 접근 제한 또는 응답 오류');
+  return priorBitstamp || missing(instrument, '바이낸스 및 대체 거래소 공개 시세 조회 실패 · 접근 제한 또는 응답 오류');
 }
 
 async function finnhubList(entries, group, env, readURL) {
@@ -493,6 +524,7 @@ function sourceList(quotes, sectors, leaders, env, failures = new Map()) {
   const all = [...quotes, ...sectors, ...leaders];
   const definitions = [
     ['fred', 'FRED / 각 원자료 제공기관', 'https://fred.stlouisfed.org/', '일별 자료 · 원천 이용조건 확인 필요', true, ['api.stlouisfed.org', 'fred.stlouisfed.org']],
+    ['nasdaq', 'Nasdaq 지수 종가', 'https://www.nasdaq.com/market-activity/index/ndx/historical', 'FRED 지연·실패 시 Nasdaq 공식 일별 종가', true, ['api.nasdaq.com']],
     ['treasury', '미국 재무부', 'https://home.treasury.gov/policy-issues/financing-the-government/interest-rate-statistics/', 'FRED 금리 실패 시 공식 대체 자료', true, ['home.treasury.gov']],
     ['frankfurter', 'ECB / Frankfurter', 'https://frankfurter.dev/', 'ECB 일별 기준환율 우선 · 누락 통화는 혼합 기준환율로 대체', true, ['api.frankfurter.dev']],
     ['binance', 'Binance Spot', 'https://developers.binance.com/en/docs/products/spot/rest-api', 'BTC/ETH/SOL USDT 현물 24시간 시세 · 최우선 · 키 필요 없음 · USD와 구분', true, ['data-api.binance.vision', 'api.binance.com']],
@@ -516,8 +548,8 @@ function sourceList(quotes, sectors, leaders, env, failures = new Map()) {
   return definitions.map(([id, name, url, note, enabled, hosts]) => {
     const records = all.filter(quote => quote.provider === id);
     const valid = records.filter(quote => Number.isFinite(quote.value) && ['live', 'delayed', 'daily', 'monthly'].includes(quote.status) && !quote.deploymentBackup);
-    const backups = records.filter(quote => quote.deploymentBackup === true);
-    const stale = records.filter(quote => quote.status === 'stale' && !quote.deploymentBackup);
+    const backups = records.filter(quote => quote.deploymentBackup || quote.savedFrom);
+    const stale = records.filter(quote => quote.status === 'stale' && !quote.deploymentBackup && !quote.savedFrom);
     const errors = [...failures].filter(([key]) => {
       const [host, code] = key.split(' ');
       return hosts.includes(host) && code !== 'response_received';
@@ -529,7 +561,7 @@ function sourceList(quotes, sectors, leaders, env, failures = new Map()) {
       : valid.length ? ((stale.length || backups.length || records.some(q => q.value === null) || (expected[id] && valid.length < expected[id])) ? 'partial' : 'connected')
       : backups.length ? 'backup'
       : stale.length ? 'stale'
-      : ['treasury', 'coinbase', 'bitstamp'].includes(id) ? 'standby' : 'no_data';
+      : ['nasdaq', 'treasury', 'coinbase', 'bitstamp'].includes(id) ? 'standby' : 'no_data';
     return {
       id, name, url, note, enabled, status: state,
       received: valid.length, expected: expected[id] || null,
@@ -540,36 +572,44 @@ function sourceList(quotes, sectors, leaders, env, failures = new Map()) {
   });
 }
 
-function useDeploymentBackup(quotes, backup, now = Date.now()) {
-  const saved = new Map(backup.map(quote => [quote.id, quote]));
+function isFreshQuote(quote) {
+  return Number.isFinite(quote?.value) && ['live', 'delayed', 'daily', 'monthly'].includes(quote.status)
+    && !quote.deploymentBackup && !quote.savedFrom;
+}
+
+function canRestoreQuote(quote, now) {
+  if (!Number.isFinite(quote?.value) || (quote.status && !isFreshQuote(quote))) return false;
+  const observed = Date.parse(quote.observedAt), retrieved = Date.parse(quote.retrievedAt);
+  const age = quote.timestampPrecision === 'month' ? 100 : quote.timestampPrecision === 'day' ? 7 : 1;
+  return Number.isFinite(observed) && Number.isFinite(retrieved) && observed <= now + 60000 && retrieved <= now
+    && now - observed <= age * DAY_MS && now - retrieved <= age * DAY_MS;
+}
+
+function restoreQuotes(quotes, backup, lastGood, now = Date.now()) {
+  const saved = new Map(lastGood.map(quote => [quote.id, quote]));
+  const built = new Map(backup.map(quote => [quote.id, quote]));
   return quotes.map(quote => {
-    if (quote.value !== null) return quote;
-    const prior = saved.get(quote.id);
-    if (!prior || !Number.isFinite(prior.value)) return quote;
-    const observed = Date.parse(prior.observedAt);
-    const retrieved = Date.parse(prior.retrievedAt);
-    const ageLimit = (prior.timestampPrecision === 'day' ? 7 : 1) * 86400000;
-    if (!Number.isFinite(observed) || !Number.isFinite(retrieved) || observed > now + 60000 || retrieved > now || now - observed > ageLimit || now - retrieved > ageLimit) return quote;
-    return {
-      ...prior,
-      deploymentBackup: true,
-      status: 'stale',
-      reason: '공급자 요청 실패 · 배포 시 저장한 관측값',
-      delay: '배포 시 저장한 관측값 · 현재 시세 아님',
-    };
+    if (isFreshQuote(quote)) return quote;
+    const choices = [{prior: saved.get(quote.id), savedFrom: 'cache'}, {prior: built.get(quote.id), savedFrom: 'build'}]
+      .filter(({prior}) => canRestoreQuote(prior, now) && (!quote.observedAt || prior.observedAt > quote.observedAt))
+      .sort((a, b) => b.prior.observedAt.localeCompare(a.prior.observedAt));
+    if (!choices.length) return quote;
+    const {prior, savedFrom} = choices[0];
+    const label = savedFrom === 'cache' ? '최근 저장한 관측값' : '배포 시 저장한 관측값';
+    return {...prior, savedFrom, deploymentBackup: savedFrom === 'build', status: 'stale',
+      reason: `최신 공급자 조회 실패 · ${label}`, delay: `${label} · 현재 시세 아님`};
   });
 }
 
-// A different KIS index ticker must never silently replace an official FRED index.
-// Require independent recent FRED cross-check and matching close within 1.5%.
-function sameIndex(kis,fred) {
-  if(!kis || !fred || !Number.isFinite(kis.value) || !Number.isFinite(fred.value)
-    || kis.value<=0 || fred.value<=0 || fred.status==='stale'
-    || fred.deploymentBackup || kis.status==='stale') return false;
-  const a=Date.parse(String(kis.observedAt).slice(0,10)+'T00:00:00Z');
-  const b=Date.parse(String(fred.observedAt).slice(0,10)+'T00:00:00Z');
-  return Number.isFinite(a) && Number.isFinite(b) && Math.abs(a-b)<=4*86400000
-    && Math.abs(kis.value-fred.value)/fred.value <= 0.015;
+// Compare overlapping sessions from a known official series, never different
+// trading dates or an ETF/futures proxy for the underlying cash index.
+function sameIndex(kis, reference, now = Date.now()) {
+  if (!validQuote(kis) || !['fred', 'nasdaq'].includes(reference?.provider)) return false;
+  const prices = new Map(reference.history?.map(row => [row.date, row.value]));
+  const shared = kis.history?.findLast(row => prices.has(row.date));
+  if (!shared || now - Date.parse(shared.date) > 14 * DAY_MS) return false;
+  const official = prices.get(shared.date);
+  return Number.isFinite(official) && official > 0 && Math.abs(shared.value - official) / official <= 0.015;
 }
 function validQuote(q) {
   if (!q || !Number.isFinite(q.value) || !['daily','delayed','live'].includes(q.status) || q.deploymentBackup) return false;
@@ -586,12 +626,21 @@ function selectKisFirst(previous,kisItems) {
   return [...map.values()];
 }
 
-export async function collectMarket(env, backup = []) {
-  const { readURL, failures } = createMarketReader();
-  const [initialQuotes, fx, kis, overseas, macro] = await Promise.all([
+export async function collectMarket(env, backup = [], lastGood = [], requestLimit = FREE_PLAN_PROVIDER_REQUESTS) {
+  let remaining = requestLimit;
+  const fetchProvider = (url, init) => {
+    if (remaining <= 0) throw Object.assign(new Error('Market provider request budget exhausted'), {code: 'MARKET_REQUEST_BUDGET'});
+    remaining--;
+    return fetch(url, init);
+  };
+  const kisEnv = {...env, fetchProvider, hasProviderBudget: () => remaining > 0};
+  const { readURL, failures } = createMarketReader(fetchProvider);
+  const [initialQuotes, fx, kis, overseasIndices, macro] = await Promise.all([
     Promise.all(INSTRUMENTS.map((instrument) => instrument.fred ? fredQuote(instrument, env, readURL) : instrument.metalSpot ? metalSpotQuote(instrument, readURL) : instrument.ecos ? ecosQuote(instrument, env, readURL) : instrument.crypto ? cryptoQuote(instrument, readURL) : Promise.resolve(missing(instrument)))),
-    fxQuotes(readURL), collectKis(env), collectKisOverseas(env), collectKisMacro(env),
+    fxQuotes(readURL), collectKis(kisEnv), collectKisOverseas(kisEnv, 'indices'), collectKisMacro(kisEnv),
   ]);
+  const [treasury, nasdaq] = await Promise.all([treasuryFallback(initialQuotes, readURL), nasdaqIndexFallback(initialQuotes, readURL)]);
+  const overseas = remaining > 0 ? await collectKisOverseas(kisEnv, 'securities') : {sectors: [], leaders: []};
   // Actual request priority: KIS FIRST. Ask paid Finnhub only for
   // securities that KIS did not return as valid observations.
   const overseasSectorIds = new Set(overseas.sectors.filter(validQuote).map(q=>q.id));
@@ -600,25 +649,34 @@ export async function collectMarket(env, backup = []) {
     finnhubList(SECTORS.filter(([symbol])=>!overseasSectorIds.has(symbol.toLowerCase())), 'sector', env, readURL),
     finnhubList(LEADERS.filter(([symbol])=>!overseasLeaderIds.has(symbol.toLowerCase())), 'equity', env, readURL),
   ]);
-  const treasury = await treasuryFallback(initialQuotes, readURL);
-  const base = new Map(initialQuotes.map(q=>[q.id,q]));
-  const verifiedUSIndices = overseas.indices.filter(q=>sameIndex(q,base.get(q.id)));
-  const replacements = new Map([...fx, ...treasury, ...kis, ...verifiedUSIndices, ...macro]
-    .filter(q => validQuote(q)).map(quote => [quote.id,quote]));
-  const obtained = initialQuotes.map(quote => replacements.get(quote.id) || quote);
-  const quotes = useDeploymentBackup(obtained, backup);
+  const base = new Map(initialQuotes.map(quote => [quote.id, quote]));
+  const nasdaqById = new Map(nasdaq.map(quote => [quote.id, quote]));
+  const verifiedUSIndices = overseasIndices.indices.filter(quote => {
+    const current = nasdaqById.get(quote.id) || base.get(quote.id);
+    const reference = isFreshQuote(current) ? current : [current, ...lastGood, ...backup]
+      .filter(candidate => candidate?.id === quote.id && ['fred', 'nasdaq'].includes(candidate.provider) && candidate.observedAt)
+      .sort((a, b) => b.observedAt.localeCompare(a.observedAt))[0];
+    return sameIndex(quote, reference) && (!isFreshQuote(current) || quote.observedAt >= current.observedAt);
+  });
+  const replacements = new Map([...fx, ...treasury, ...nasdaq, ...kis, ...verifiedUSIndices, ...macro]
+    .filter(quote => validQuote(quote)).map(quote => [quote.id, quote]));
+  const obtained = initialQuotes.map(quote => {
+    const replacement = replacements.get(quote.id);
+    return replacement ? {...quote, ...replacement} : quote;
+  });
+  const quotes = restoreQuotes(obtained, backup, lastGood);
   const sectors = selectKisFirst(finnhubSectors, overseas.sectors);
   const leaders = selectKisFirst(finnhubLeaders, overseas.leaders);
   const available = quotes.filter((quote) => quote.value !== null).length;
   const { summary, outlooks } = buildAnalysis(quotes);
   const impact = buildImpact({ quotes });
   impact.validation = validateHistoricalImpact({ quotes });
-  const restored = quotes.filter(quote => quote.deploymentBackup).length;
+  const restored = quotes.filter(quote => quote.savedFrom).length;
   if (restored) {
-    summary.points.unshift(`실시간 공급자 요청 실패로 ${restored}개 지표에 배포 시 저장한 관측값을 표시합니다. 각 지표의 출처와 관측 시각을 확인하세요.`);
+    summary.points.unshift(`최신 조회 실패로 ${restored}개 지표에 저장한 관측값을 표시합니다. 각 지표의 출처와 관측 시각을 확인하세요.`);
   }
   if (available === 0 || restored) {
-    console.warn(available === 0 ? 'Market snapshot has no valid observations' : 'Market snapshot uses deployment backup', Object.fromEntries(failures));
+    console.warn(available === 0 ? 'Market snapshot has no valid observations' : 'Market snapshot uses saved observations', Object.fromEntries(failures));
     const labels = {
       response_received: '응답 수신 · 유효한 값 없음',
       invalid_json: '응답 형식 오류',
@@ -628,6 +686,7 @@ export async function collectMarket(env, backup = []) {
       dns_error: 'DNS 오류',
       tls_error: 'TLS 오류',
       outbound_denied: '외부 연결 거부',
+      request_budget: '한 번에 조회할 수 있는 외부 요청 한도 도달',
       connection_lost: '연결 끊김',
       fetch_error: '요청 실패',
     };
@@ -639,14 +698,14 @@ export async function collectMarket(env, backup = []) {
   }
   // "Connected" measures valid received observations, not intraday streaming.
   // Legitimate KIS/FRED daily closes and IMF monthly averages count as received.
-  const healthy = quotes.filter(quote => Number.isFinite(quote.value)
-    && ['live', 'delayed', 'daily', 'monthly'].includes(quote.status) && !quote.deploymentBackup).length;
+  const healthy = quotes.filter(isFreshQuote).length;
   const mode = healthy === 0 ? 'unconfigured' : healthy === quotes.length ? 'live' : 'partial';
   return {
     asOf: new Date().toISOString(), mode, quotes, sectors, leaders, impact, events: [],
     summary, outlooks, sources: sourceList(quotes, sectors, leaders, env, failures),
     analysis: { kind: 'rules', status: 'ready', label: '규칙 기반 · 조건부 점검' },
     cacheSeconds: TTL / 1000,
+    providerBudgetReached: remaining === 0,
   };
 }
 
@@ -671,7 +730,7 @@ async function loadOrRefresh(env, force) {
   if (pending.has(key)) return structuredClone(await pending.get(key));
   const task = (async () => {
     const cache = edgeCache();
-    const cacheRequest = new Request(`https://market-desk-cache.invalid/snapshot/v4/${key}`);
+    const cacheRequest = new Request(`https://market-desk-cache.invalid/snapshot/v5/${key}`);
     if (!force && cache) {
       try {
         const response = await cache.match(cacheRequest);
@@ -684,10 +743,28 @@ async function loadOrRefresh(env, force) {
         }
       } catch { /* Cache outages must not prevent retrieving actual data. */ }
     }
-    const data = await collectMarket(env, deploymentSnapshot);
+    const savedRequest = new Request(`https://market-desk-cache.invalid/last-good/v1/${key}`);
+    let lastGood = lastGoodQuotes.get(key);
+    if (!lastGood && cache) {
+      try { lastGood = await (await cache.match(savedRequest))?.json(); }
+      catch { /* Public build data remains available. */ }
+    }
+    lastGood = (lastGood || []).filter(quote => canRestoreQuote(quote, Date.now()));
+    const data = await collectMarket(env, deploymentSnapshot, lastGood);
+    const nextGood = new Map(lastGood.map(quote => [quote.id, quote]));
+    for (const quote of data.quotes.filter(isFreshQuote)) {
+      const prior = nextGood.get(quote.id);
+      if (!prior || quote.observedAt >= prior.observedAt) nextGood.set(quote.id, quote);
+    }
+    const saved = [...nextGood.values()];
+    if (lastGoodQuotes.size > 8) lastGoodQuotes.clear();
+    lastGoodQuotes.set(key, saved);
     if (snapshots.size > 8) snapshots.clear();
     snapshots.set(key, { data, time: Date.now() });
     if (cache) {
+      try {
+        await cache.put(savedRequest, Response.json(saved, {headers: {'Cache-Control': 'public, max-age=604800'}}));
+      } catch { /* Retain the verified data in memory when edge cache is unavailable. */ }
       try {
         await cache.put(cacheRequest, new Response(JSON.stringify(data), {
           headers: { 'Content-Type': 'application/json', 'Cache-Control': `public, max-age=${TTL / 1000}` },

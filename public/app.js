@@ -1,4 +1,4 @@
-import { chartSeries, chartPeriod, chartPeriodChange, chartFrequency, candleSeries } from './chart-data.js';
+import { chartSeries, chartPeriod, chartPeriodChange, chartFrequency, candleSeries, minuteFrequencies, intradayMinutes, aggregateIndexMinutes } from './chart-data.js';
 
 const app = document.querySelector('#app');
 const state = {
@@ -637,13 +637,32 @@ function renderQuotes() {
 }
 const CHART_INDEX_IDS = new Set(['kospi','kosdaq','sp500','nasdaq','nasdaqcom','sox','dxy','broadusd','vix']);
 function hasIndexChart(quote) { return CHART_INDEX_IDS.has(quote?.id) && !state.demo; }
+function quoteTimestamp(quote) {
+  const value = quote.observedAt || quote.retrievedAt;
+  if (!value) return '관측 시각 미제공';
+  if (quote.timestampPrecision === 'month') return `${String(value).slice(0, 7)} 기준`;
+  if (quote.timestampPrecision === 'day') return `${String(value).slice(0, 10)} 기준`;
+  if (quote.timestampPrecision === 'retrieval' || !quote.observedAt) return `${dateText(value)} KST 조회`;
+  if (quote.timestampPrecision === 'window_end') return `${dateText(value)} KST 24시간 집계 종료`;
+  return `${dateText(value)} KST 관측`;
+}
+function quoteStatus(quote) {
+  if (quote.savedFrom === 'cache') return ['최근 저장값', 'saved'];
+  if (quote.savedFrom === 'build' || quote.deploymentBackup) return ['배포 저장값', 'saved'];
+  if (quote.status === 'stale') return ['오래된 관측', 'saved'];
+  if (quote.status === 'monthly') return ['월간 평균', ''];
+  if (quote.status === 'daily') return [quote.group === 'equity' || ['kospi', 'kosdaq'].includes(quote.id) ? '일별 종가' : '일별', ''];
+  if (quote.status === 'delayed') return ['지연 시세', 'saved'];
+  return ['거래소 스냅샷', ''];
+}
 function quoteCard(quote) {
   const available = hasValue(quote);
   const chartable = hasIndexChart(quote);
   const foreign = quote.id === 'kr_foreign_kospi' || quote.id === 'kr_foreign_kosdaq';
   const pension = quote.id === 'kr_pension_kospi' || quote.id === 'kr_pension_kosdaq';
   const flow = foreign || pension;
-  const observed = quote.timestampPrecision === 'month' && quote.observedAt ? `${String(quote.observedAt).slice(0, 7)} 월간 평균` : quote.timestampPrecision === 'day' && quote.observedAt ? String(quote.observedAt).slice(0, 10) : dateText(quote.observedAt);
+  const observed = quoteTimestamp(quote);
+  const [statusLabel, statusTone] = quoteStatus(quote);
   const investor = pension ? '연기금' : '외국인';
   const changeText = flow ? Number(quote.value) < 0 ? `${investor} 순매도` : Number(quote.value) > 0 ? `${investor} 순매수` : `${investor} 순매수 0` : formatChange(quote);
   const tone = flow ? changeClass(quote.value) : changeClass(quote.change);
@@ -660,29 +679,12 @@ function quoteCard(quote) {
     E('div', {class: 'quote-top'}, E('h3', {class: 'quote-name'}, shortName),
       chartable ? E('span', {class:'quote-drilldown','aria-hidden':'true'}, icon('chevron')) : null),
     E('div', {class: 'quote-value-row'}, E('span', {class: 'quote-value'}, formatValue(quote)), E('span', {class: 'quote-unit'}, quote.unit || '')),
-    E('div', {class: 'quote-bottom'}, available ? E('span', {class: `quote-change ${tone}`}, changeText) : E('span', {class: 'quote-missing'}, '데이터 연결 필요')));
+    E('div', {class: 'quote-bottom'}, available ? E('span', {class: `quote-change ${tone}`}, changeText) : E('span', {class: 'quote-missing'}, '데이터 연결 필요'),
+      available && !state.demo ? E('span', {class: `quote-status ${statusTone}`}, statusLabel) : null),
+    state.demo ? null : E('div', {class: 'quote-provenance'},
+      E('span', {}, sourceName(quote.source)), E('span', {}, available ? observed : quote.reason || '수신된 관측 없음')));
 }
 
-// Observed index history only: daily closes are not intraday or candlestick data.
-// Aggregate only KIS-observed 1-minute OHLC; no synthetic candles.
-function aggregateIndexMinutes(rows,minutes) {
-  const groups=new Map();
-  for(const bar of Array.isArray(rows)?rows:[]) {
-    const stamp=Date.parse(bar.date);
-    if(!Number.isFinite(stamp) || ![bar.open,bar.high,bar.low,bar.close].every(Number.isFinite))continue;
-    const local=new Date(stamp+9*3600000);
-    const minute=local.getUTCHours()*60+local.getUTCMinutes();
-    if(minute<540 || minute>930)continue;
-    const sessionMinute=minute-540;
-    const bucket=540+Math.floor(sessionMinute/minutes)*minutes;
-    const date=bar.date.slice(0,10);
-    const key=`${date}T${String(Math.floor(bucket/60)).padStart(2,'0')}:${String(bucket%60).padStart(2,'0')}:00+09:00`;
-    const prev=groups.get(key);
-    if(prev){prev.high=Math.max(prev.high,bar.high);prev.low=Math.min(prev.low,bar.low);prev.close=bar.close;prev.value=bar.close;}
-    else groups.set(key,{date:key,open:bar.open,high:bar.high,low:bar.low,close:bar.close,value:bar.close});
-  }
-  return [...groups.values()].sort((a,b)=>a.date.localeCompare(b.date));
-}
 function openIndexChart(quote) {
   const observations = chartSeries(quote.history);
   const hasOfficialCandles = ['kospi','kosdaq'].includes(quote.id)
@@ -692,7 +694,8 @@ function openIndexChart(quote) {
     hasOfficialCandles ? '한투 KIS 실제 시가·고가·저가·종가 · 주기별 원자료' :
       '관측된 종가로 표시하는 추이 차트 · 실제 봉 시고저종 데이터 없음',
     body => {
-      const frequencies = [['1min','1분봉'],['3min','3분봉'],['5min','5분봉'],['10min','10분봉'],['60min','1시간봉'],['240min','4시간봉'],['D','일봉'],['W','주봉'],['M','월봉']];
+      const domestic = ['kospi', 'kosdaq'].includes(quote.id);
+      const frequencies = [...(domestic ? minuteFrequencies : []), ['D','일봉'],['W','주봉'],['M','월봉']];
       const ranges = [['1m','1개월'],['3m','3개월'],['1y','1년'],['all','전체']];
       const frequencyMenu = E('div',{class:'market-chart-ranges',role:'group','aria-label':'차트 봉 주기'});
       const periodMenu = E('div',{class:'market-chart-ranges market-chart-extent',role:'group','aria-label':'차트 조회 범위'});
@@ -721,9 +724,10 @@ function openIndexChart(quote) {
           button.classList.toggle('active',selected);
           button.setAttribute('aria-pressed',String(selected));
         });
-        const intraday=/^\\d+min$/.test(activeTimeframe);
-        const minuteData=Array.isArray(quote.minuteCandles)?quote.minuteCandles:[];
-        const all = intraday ? aggregateIndexMinutes(minuteData,Number.parseInt(activeTimeframe,10)) :
+        const minutes = intradayMinutes(activeTimeframe);
+        const intraday = minutes !== null;
+        periodMenu.hidden = intraday;
+        const all = intraday ? aggregateIndexMinutes(quote.minuteCandles, minutes) :
           hasOfficialCandles ? candleSeries(quote.chartPeriods?.[activeTimeframe]) :
           chartFrequency(observations,activeTimeframe);
         const series=intraday ? all : chartPeriod(all,activePeriod);
@@ -826,7 +830,7 @@ function openIndexChart(quote) {
         }
         foot.replaceChildren(
           E('p',{},candleMode ?
-            `출처: ${sourceName(quote.source)} · ${label} 실측 시가·고가·저가·종가 · 해당 기간 ${all.length}개 관측 봉 · 장중 실시간 아님` :
+            `출처: ${sourceName(quote.source)} · ${label} ${all.length}개 · ${intraday ? '수신한 분봉 범위로 집계하며 첫 봉과 마지막 봉은 일부 구간일 수 있습니다.' : '실측 시가·고가·저가·종가'}` :
             `출처: ${sourceName(quote.source)} · 종가만 제공되어 선 차트로 표시합니다. 주간·월간은 그 기간 마지막 실제 관측 종가이며 OHLC 캔들이 아닙니다.`),
           isIndexStale?E('p',{class:'market-chart-stale'},'⚠ 오래된 관측값 또는 배포 시 저장된 데이터입니다. 현재 시세로 해석하지 마세요.'):null,
           quote.sourceUrl?link('원자료 확인',quote.sourceUrl):null);
@@ -874,21 +878,43 @@ function reasonList(values, fallback) { const rows = Array.isArray(values) ? val
 function methodologyPanel() {
   return E('section', {class: 'panel'}, panelHead('전망을 읽는 방법', '기간이 달라지면 확인해야 할 근거도 달라집니다.', null, 'info'), E('div', {class: 'source-cards'}, [['오늘 · 2~3일', '해외 장 마감, 원화, 외국인 수급과 주도 업종의 지속성을 확인합니다.'], ['주간 · 월간', '경제지표·통화정책·기업실적이 금리와 이익 기대를 어떻게 바꾸는지 봅니다.'], ['3~6개월', '경기와 정책, 기업 이익의 조합을 평가합니다. 단기 등락으로 중기 방향을 단정하지 않습니다.']].map(([title, text]) => E('div', {class: 'source-card'}, E('div', {class: 'source-body'}, E('h3', {class: 'source-name'}, title), E('p', {class: 'source-description'}, text))))), E('div', {class: 'source-disclaimer'}, '전망은 관측 시점의 조건부 시나리오입니다. 새 정보가 들어오거나 명시한 판단 변경 조건이 충족되면 해석이 달라질 수 있습니다.'));
 }
+const calendarProviderLabels = {
+  bls: '미국 노동통계국 · CPI·고용·PPI·JOLTS',
+  fed: '미국 연방준비제도 · FOMC',
+};
+const calendarRouteLabels = {
+  primary: '공식 일정 수신', alternate: '공식 대체 일정', limited: '공식 회의 날짜만 확인',
+  cache: '최근 저장 일정', build: '배포 시 저장한 일정', unavailable: '일정 조회 실패',
+};
+function renderCalendarProviders(providers, compact) {
+  const rows = (providers || []).filter(provider => !compact || provider.periods.some(period => period.route !== 'primary'));
+  if (!rows.length) return null;
+  return E('ul', {class: 'calendar-providers'}, rows.map(provider => {
+    const periods = provider.periods.filter(period => !compact || period.route !== 'primary');
+    return E('li', {}, E('strong', {}, calendarProviderLabels[provider.id]),
+      E('span', {}, periods.map(period => {
+        const checked = ['cache', 'build'].includes(period.route) && period.checkedAt ? ` (${dateText(period.checkedAt)} 확인)` : '';
+        return `${period.month} ${calendarRouteLabels[period.route]}${checked}`;
+      }).join(' · ')));
+  }));
+}
 function renderEvents(compact = false) {
   const calendar = state.calendar;
   const events = (state.demo ? state.market?.events : calendar?.events) || [];
   const section = E('section', {class: 'panel'}, panelHead(compact ? '다음으로 볼 이벤트' : '주요 경제 일정', state.demo ? '화면 체험용 예시' : compact ? '한국시간 · 가까운 발표 일정' : '앞으로 35일간 예정된 주요 미국 지표와 FOMC', compact ? E('button', {type: 'button', class: 'text-button', onClick: () => navigate('calendar')}, '전체 일정', icon('chevron')) : badge('한국 시간 KST')));
+  const providerStatus = state.demo ? null : renderCalendarProviders(calendar?.providers, compact);
+  if (providerStatus) section.append(providerStatus);
   if (!events.length) {
-    const message = !calendar ? '공식 일정을 불러오는 중입니다.' : calendar.status === 'ready' ? '확인된 예정 일정이 없습니다.' : '공식 일정을 불러오지 못했습니다.';
+    const message = !calendar ? '공식 일정을 불러오는 중입니다.' : calendar.status === 'ready' ? '확인된 예정 일정이 없습니다.' : '예정 일정을 확인하지 못했습니다.';
     section.append(empty(message, '', 'calendar'));
   }
   else section.append(E('div', {class: 'event-list'}, (compact ? events.slice(0, 3) : events).map(item => {
     const rawTime = item.at || item.dateTime || item.datetime || item.startsAt || item.date;
-    const actualTime = item.time || (rawTime ? shortTime(rawTime) : '미정');
+    const actualTime = item.time || (item.date && !item.at ? '시각 미확인' : rawTime ? shortTime(rawTime) : '미정');
     const importance = Number(item.importance) || (item.impact === 'high' ? 3 : 1);
-    return E('div', {class: 'event-row'}, E('div', {class: 'event-time'}, actualTime, E('small', {}, state.demo ? '가상 일정' : rawTime ? dateText(rawTime, {hour: undefined, minute: undefined}) : 'KST')), E('div', {class: 'event-country'}, item.country || item.region || 'GL'), E('div', {class: 'event-info'}, E('div', {class: 'event-name'}, item.name || item.title), E('p', {class: 'event-description'}, item.description || item.note || ''), !state.demo && item.sourceUrl ? link(item.source, item.sourceUrl) : null), E('div', {class: 'event-importance', 'aria-label': `중요도 ${Math.min(3, importance)}/3`}, [1, 2, 3].map(x => E('i', {class: x <= importance ? '' : 'dim'}))));
+    return E('div', {class: 'event-row'}, E('div', {class: 'event-time'}, actualTime, E('small', {}, state.demo ? '가상 일정' : item.date && !item.at ? `${item.date} · 미 동부 기준` : rawTime ? dateText(rawTime, {hour: undefined, minute: undefined}) : 'KST')), E('div', {class: 'event-country'}, item.country || item.region || 'GL'), E('div', {class: 'event-info'}, E('div', {class: 'event-name'}, item.name || item.title), E('p', {class: 'event-description'}, item.description || item.note || ''), !state.demo && item.sourceUrl ? link(item.source, item.sourceUrl) : null, ['cache', 'build'].includes(item.route) ? E('small', {class: 'event-saved'}, calendarRouteLabels[item.route]) : null), E('div', {class: 'event-importance', 'aria-label': `중요도 ${Math.min(3, importance)}/3`}, [1, 2, 3].map(x => E('i', {class: x <= importance ? '' : 'dim'}))));
   })));
-  section.append(E('div', {class: 'panel-foot'}, state.demo ? '예시 일정은 실제 발표 예정일·시각·중요도를 나타내지 않습니다.' : calendar?.status === 'partial' ? '일부 공식 일정을 불러오지 못했습니다.' : '발표 일정은 변경될 수 있습니다.'));
+  section.append(E('div', {class: 'panel-foot'}, state.demo ? '예시 일정은 실제 발표 예정일·시각·중요도를 나타내지 않습니다.' : calendar?.status === 'partial' ? '일부 공급처의 최신 일정 확인이 필요합니다.' : '발표 일정은 변경될 수 있습니다.'));
   return section;
 }
 
@@ -908,7 +934,7 @@ function renderMarketRows() {
   tbody.replaceChildren(...rows.map(q => E('tr', {}, E('td', {}, E('strong', {class: 'data-table-name'},
   hasIndexChart(q) ? E('button', {type:'button',class:'market-table-chart-link',
     'aria-label':`${q.name} 과거 지수 차트 열기`,onClick:()=>openIndexChart(q)},q.name, icon('chart')) : q.name,
-  E('small', {}, q.basis || groupName(q.group)))), E('td', {class: 'num mono'}, E('strong', {}, formatValue(q)), E('div', {class: 'tiny muted'}, q.unit || '')), E('td', {class: `num mono ${changeClass(q.change)}`}, hasValue(q) ? formatChange(q) : '—'), E('td', {}, E('div', {}, state.demo ? '예시 · 실제 시각 아님' : q.timestampPrecision === 'day' && q.observedAt ? String(q.observedAt).slice(0, 10) : q.observedAt ? `${dateText(q.observedAt)} KST` : '—'), E('div', {class: 'tiny muted'}, q.delay || (state.demo ? '가상 데이터' : ''))), E('td', {}, q.sourceUrl ? link(sourceName(q.source), q.sourceUrl) : E('span', {}, state.demo ? '체험용 예시' : sourceName(q.source)), E('div', {class: 'tiny muted', title: q.reason || ''}, state.demo ? '예시 데이터' : q.status === 'stale' ? '관측 지연 · 최신성 주의' : hasValue(q) ? q.status === 'live' ? '공급자 스냅샷' : '최근 유효 관측' : q.reason || '— 데이터 연결 필요')))));
+  E('small', {}, q.basis || groupName(q.group)))), E('td', {class: 'num mono'}, E('strong', {}, formatValue(q)), E('div', {class: 'tiny muted'}, q.unit || '')), E('td', {class: `num mono ${changeClass(q.change)}`}, hasValue(q) ? formatChange(q) : '—'), E('td', {}, E('div', {}, state.demo ? '예시 · 실제 시각 아님' : hasValue(q) ? quoteTimestamp(q) : '—'), E('div', {class: 'tiny muted'}, q.delay || (state.demo ? '가상 데이터' : ''))), E('td', {}, q.sourceUrl ? link(sourceName(q.source), q.sourceUrl) : E('span', {}, state.demo ? '체험용 예시' : sourceName(q.source)), E('div', {class: 'tiny muted', title: q.reason || ''}, state.demo ? '예시 데이터' : hasValue(q) ? quoteStatus(q)[0] : q.reason || '— 데이터 연결 필요')))));
   if (rows.length) {
     // Retain every existing row/quote link, but add strong category dividers.
     const byCategory=new Map();
@@ -969,6 +995,9 @@ function renderSources() {
   const panel = E('section', {class: 'panel'},
     panelHead('데이터 연결 현황', '설정 여부와 실제 수신, 오래된 값, API 장애를 구분합니다.',
       badge(state.demo ? '체험용 데이터' : `${good.length} / ${quotes.length} 지표 정상 수신`, state.demo ? 'amber' : 'blue')));
+  if (!state.demo && state.market?.providerBudgetReached) {
+    panel.append(E('div', {class: 'source-disclaimer'}, '무료 플랜의 외부 조회 한도에 도달했습니다. 핵심 지표와 대체 공급원을 먼저 조회했습니다.'));
+  }
   if (sources.length) {
     panel.append(E('div', {class: 'source-cards'}, sources.map(source => {
       const details = [];
@@ -993,7 +1022,7 @@ function renderSources() {
       '실제 수신 상태는 인증 후 시장 데이터를 조회해야 확인할 수 있습니다.'));
   }
   if (outdated.length && !state.demo) panel.append(E('div', {class: 'source-disclaimer'},
-    E('strong', {}, '오래된 데이터 또는 배포 백업값'),
+    E('strong', {}, '오래된 관측 또는 저장값'),
     E('p', {}, outdated.map(q => q.name).join(' · ')),
     E('p', {}, '과거 관측값은 최근 시장 방향 분석에 사용하지 않습니다.')));
   if (missing.length && !state.demo) panel.append(E('div', {class: 'source-disclaimer'},

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
-import {chartSeries,chartPeriod,chartPeriodChange,chartFrequency,candleSeries} from '../public/chart-data.js';
+import {chartSeries,chartPeriod,chartPeriodChange,chartFrequency,candleSeries,minuteFrequencies,intradayMinutes,aggregateIndexMinutes} from '../public/chart-data.js';
 import {readFile} from 'node:fs/promises';
 import {parseHTML} from 'linkedom';
 import {setTimeout as nativeTimeout,clearTimeout as nativeClearTimeout} from 'node:timers';
@@ -16,7 +16,7 @@ test('standalone demo renders every destination without accessing member APIs',a
   const window={document,location,setTimeout:localTimer,clearTimeout:nativeClearTimeout,setInterval:()=>0,clearInterval(){},scrollTo(){},addEventListener:domWindow.addEventListener.bind(domWindow),matchMedia:()=>({matches:false,addEventListener(){}}),innerWidth:1200};
   const context={
     document,window,Node:domWindow.Node,HTMLElement:domWindow.HTMLElement,Element:domWindow.Element,
-    chartSeries,chartPeriod,chartPeriodChange,chartFrequency,candleSeries,
+    chartSeries,chartPeriod,chartPeriodChange,chartFrequency,candleSeries,minuteFrequencies,intradayMinutes,aggregateIndexMinutes,
     location,navigator:{onLine:true},console,Intl,Date,URL,URLSearchParams,TextEncoder,queueMicrotask,
     setTimeout:localTimer,clearTimeout,setInterval:()=>0,clearInterval:()=>{},
     requestAnimationFrame:fn=>localTimer(fn,0),cancelAnimationFrame:clearTimeout,
@@ -68,5 +68,24 @@ test('standalone demo renders every destination without accessing member APIs',a
   assert.ok(document.querySelector('input[name="username"]'),'legacy admin/password sign-in still exists');
   assert.equal(document.querySelector('input[name="birth6"]'),null);
   assert.equal(requested.length,0,'file preview never contacts a member or market API');
+  vm.runInContext(`state.demo = false;
+    const saved = {id: 'kospi', name: '코스피', status: 'stale', savedFrom: 'cache', source: '한국투자증권 KIS Open API',
+      observedAt: '2026-11-20', timestampPrecision: 'day', unit: 'pt', value: 2950, provider: 'kis',
+      minuteCandles: [
+        {date: '2026-11-20T09:34:00+09:00', open: 2945, high: 2955, low: 2944, close: 2950},
+        {date: '2026-11-20T09:35:00+09:00', open: 2950, high: 2960, low: 2948, close: 2955},
+      ]};
+    document.getElementById('app').replaceChildren(quoteCard(saved));`,ctx);
+  assert.equal(document.querySelector('.quote-status').textContent, '최근 저장값');
+  assert.match(document.querySelector('.quote-provenance').textContent, /한국투자증권.*2026-11-20 기준/);
+  document.querySelector('.quote-card').click();
+  const button = label => [...document.querySelectorAll('.market-chart-range')].find(el => el.textContent === label);
+  button('1분봉').click();
+  assert.equal(document.querySelectorAll('.market-chart-body').length, 2);
+  assert.ok(document.querySelector('.market-chart-extent').hidden);
+  button('1시간봉').click();
+  assert.equal(document.querySelectorAll('.market-chart-body').length, 1);
+  button('일봉').click();
+  assert.equal(document.querySelector('.market-chart-extent').hidden, false);
   timers.forEach(nativeClearTimeout);
 });
