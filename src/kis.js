@@ -543,6 +543,21 @@ const futuresCharts = new Map();
 const futuresQuoteSource = '한국투자증권 KIS 해외선물';
 const futuresSourceUrl = 'https://apiportal.koreainvestment.com/';
 
+async function kisFuturesGet(env, token, path, trId, parameters, stage, report) {
+  let retry = false;
+  const record = event => {
+    // Record only the instrument identifier and response classification.
+    report({stage, contract: parameters.SRS_CD, ...event});
+  };
+  const result = await kisGet(env, token, path, trId, parameters, event => {
+    retry = (event.http >= 500 || event.reason === 'network') && event.code !== 'EGW00201';
+    record(event);
+  });
+  if (result || !retry) return result;
+  await new Promise(resolve => setTimeout(resolve, 400));
+  return kisGet(env, token, path, trId, parameters, record);
+}
+
 function chicago(now) {
   return Object.fromEntries(chicagoClock.formatToParts(now)
     .filter(part => part.type !== 'literal').map(part => [part.type, Number(part.value)]));
@@ -625,19 +640,19 @@ export async function collectKisFutures(env, now = Date.now(), report = () => {}
   if (!kisConfigured(env)) { report({stage:'token',reason:'missing_configuration'}); return []; }
   const token = await tokenFor(env, event => report({stage:'token',...event}));
   if (!token) { report({stage:'token',reason:'no_token'}); return []; }
-  const rows = await Promise.all(usFutures.map(async product => {
+  const rows = await Promise.all(usFutures.map(async (product, index) => {
     const contract = futuresContract(product.root, now);
     const key = `${env.KIS_APP_KEY}:${contract}`;
     const saved = futuresQuotes.get(key);
     if (saved && now - saved.time < 60000) return {...saved.quote, session: futuresSession(now)};
-    const data = await kisGet(env, token, futuresBase + 'inquire-price', 'HHDFC55010000', {SRS_CD: contract},
-      event => report({stage:'quote',...event}));
+    if (index) await new Promise(resolve => setTimeout(resolve, index * 250));
+    const data = await kisFuturesGet(env, token, futuresBase + 'inquire-price', 'HHDFC55010000', {SRS_CD: contract}, 'quote', report);
     const candidates = [data?.output1, data?.output, data?.output2].flat().filter(Boolean);
     const row = candidates.find(item => item.last_price != null);
     const canUseBars = !row || futuresIdentity(row, contract);
     let quote = futuresQuote(row, product, contract, now);
     if (!quote && canUseBars) {
-      if (data) report({stage:'quote',reason:'no_price'});
+      if (data) report({stage:'quote',contract,reason:'no_price'});
       for (const period of ['5min', 'D']) {
         const result = await loadKisFuturesChart(env, product.id, period, now, report);
         quote = futuresQuoteFromBars(product, contract, result, period, now);
@@ -706,13 +721,14 @@ export async function loadKisFuturesChart(env, id, period, now = Date.now(), rep
   const gap = period === '3min' ? '1' : period === '240min' ? '60' : period.replace('min', '');
   // KIS's official overseas futures master uses CME for its Mini Dow contracts as well.
   const kisExchange = product.root === 'YM' ? 'CME' : product.exchange;
-  const data = await kisGet(env, token, futuresBase + (intraday ? 'inquire-time-futurechartprice' : 'daily-ccnl'),
+  const stage = intraday ? 'intraday' : 'daily';
+  const data = await kisFuturesGet(env, token, futuresBase + (intraday ? 'inquire-time-futurechartprice' : 'daily-ccnl'),
     intraday ? 'HHDFC55020400' : 'HHDFC55020100', {SRS_CD: contract, EXCH_CD: kisExchange,
       START_DATE_TIME: '', CLOSE_DATE_TIME: todayKst(), QRY_TP: 'Q', QRY_CNT: intraday ? '120' : '100',
-      QRY_GAP: intraday ? gap : '', INDEX_KEY: ''}, event => report({stage:intraday ? 'intraday' : 'daily',...event}));
+      QRY_GAP: intraday ? gap : '', INDEX_KEY: ''}, stage, report);
   const bars = regroupFuturesBars(priceBars(data, intraday, now), period);
   if (!bars.length && saved && now - saved.time < 36 * 3600000) return {...saved.result, status: 'stale'};
-  if (!bars.length && data) report({stage:intraday ? 'intraday' : 'daily',reason:'no_bars'});
+  if (!bars.length && data) report({stage,contract,reason:'no_bars'});
   const result = {status: bars.length ? 'ready' : 'unavailable', bars, contract, source: futuresQuoteSource, sourceUrl: futuresSourceUrl,
     ...(bars.length ? {} : {reason: data ? 'no_bars' : 'supplier'})};
   if (futuresCharts.size >= 60) futuresCharts.clear();

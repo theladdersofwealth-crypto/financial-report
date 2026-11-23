@@ -34,8 +34,8 @@ async function futuresSnapshot(env, reportSuccess = false) {
   const reason = events.some(event => event.reason === 'missing_configuration') ? 'configuration'
     : events.some(event => event.reason === 'no_token') ? 'token'
     : details.some(event => event.http === 401 || event.http === 403) ? 'permission'
-    : details.some(event => event.http === 429) ? 'rate_limit'
-    : details.some(event => ['network','timeout'].includes(event.reason)) ? 'network'
+    : details.some(event => event.http === 429 || event.code === 'EGW00201') ? 'rate_limit'
+    : details.some(event => event.http >= 500 || ['network','timeout'].includes(event.reason)) ? 'network'
     : 'no_quote';
   if (reportSuccess || quotes.length < usFutures.length || details.length) {
     const sources = quotes.reduce((counts, quote) => {
@@ -43,7 +43,7 @@ async function futuresSnapshot(env, reportSuccess = false) {
       counts[source] = (counts[source] || 0) + 1;
       return counts;
     }, {});
-    console.info('Futures upstream status', {received: quotes.length, sources, details});
+    console.info('Futures upstream status', {received: quotes.length, contracts: quotes.map(quote => quote.contract), sources, details});
   }
   return {quotes, reason: quotes.length < usFutures.length ? reason : null};
 }
