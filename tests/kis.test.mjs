@@ -53,6 +53,10 @@ test('KIS index and market foreign flow are parsed, with a shared cached bearer 
         {stck_bsop_date:iso(1),bstp_nmix_prpr:''},
       ]});
     }
+    if(url.pathname.endsWith('inquire-index-price')) {
+      assert.equal(opts.headers.tr_id,'FHPUP02100000');
+      return Response.json({rt_cd:'0',output:{bstp_nmix_prpr:'',bstp_nmix_prdy_ctrt:''}});
+    }
     assert.equal(opts.headers.tr_id,'FHPTJ04040000');
     assert.equal(url.searchParams.get('FID_INPUT_DATE_1'),url.searchParams.get('FID_INPUT_DATE_2'),'KIS daily investor inquiry requires a single same-day date');
     const kospi=url.searchParams.get('FID_INPUT_ISCD_1')==='KSP';
@@ -79,7 +83,7 @@ test('KIS index and market foreign flow are parsed, with a shared cached bearer 
   assert.equal(byId.kr_pension_kosdaq.value,0);
   assert.equal(byId.kospi.status,'daily');
   assert.equal(calls.filter(c=>c.path==='/oauth2/tokenP').length,1);
-  assert.equal(calls.filter(c=>c.method==='GET').length,8);
+  assert.equal(calls.filter(c=>c.method==='GET').length,10);
   for (const id of ['kospi','kosdaq']) {
     const periods=byId[id].chartPeriods;
     assert.deepEqual(Object.keys(periods),['D','W','M']);
