@@ -159,7 +159,7 @@ function indexMinuteCandles(rows) {
     const raw=String(row?.stck_bsop_date||'');
     const time=String(row?.stck_cntg_hour||'').padStart(6,'0');
     const date=dateOf(raw);
-    if(!date || !/^\\d{6}$/.test(time)) continue;
+    if(!date || !/^\d{6}$/.test(time)) continue;
     const hh=Number(time.slice(0,2)),mm=Number(time.slice(2,4)),ss=Number(time.slice(4));
     if(hh<9 || hh>15 || mm>59 || ss>59 || hh===15 && mm>30)continue;
     const open=val(row.bstp_nmix_oprc),high=val(row.bstp_nmix_hgpr);

@@ -55,7 +55,7 @@ test('KIS index and market foreign flow are parsed, with a shared cached bearer 
     }
     if(url.pathname.endsWith('inquire-time-indexchartprice')) {
       assert.equal(opts.headers.tr_id,'FHKUP03500200');
-      return Response.json({rt_cd:'0',output2:[]});
+      return Response.json({rt_cd:'0',output2:[{stck_bsop_date:iso(0),stck_cntg_hour:'090100',bstp_nmix_oprc:'3000',bstp_nmix_hgpr:'3003',bstp_nmix_lwpr:'2998',bstp_nmix_prpr:'3001'}]});
     }
     if(url.pathname.endsWith('inquire-index-price')) {
       assert.equal(opts.headers.tr_id,'FHPUP02100000');
@@ -75,6 +75,8 @@ test('KIS index and market foreign flow are parsed, with a shared cached bearer 
   assert.equal(quotes.length,6);
   const byId=Object.fromEntries(quotes.map(q=>[q.id,q]));
   assert.equal(byId.kospi.value,3030);
+  assert.equal(byId.kospi.minuteCandles.length,1);
+  assert.equal(byId.kospi.minuteCandles[0].close,3001);
   assert.equal(byId.kosdaq.value,930);
   assert.equal(byId.kospi.change,1);
   assert.equal(byId.kr_foreign_kospi.value,70);
