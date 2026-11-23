@@ -35,23 +35,39 @@ export async function verifyPassword(password, encoded) {
 function publicUser(row) {
   return { id: row.id, username: row.username, name: row.name, role: row.role, pinLogin: row.auth_mode === 'pin', mustChangePassword: !!row.must_change_password, disabled: !!row.disabled, createdAt: new Date(row.created_at).toISOString(), lastSeen: row.last_seen ? new Date(row.last_seen).toISOString() : null };
 }
-// Six-digit YYMMDD is retained as entered; it is not an identity number.
+// Legacy profiles can retain YYMMDD without asking new members for a birth date.
+function ageAtBirth6(value, now = Date.now()) {
+  if (typeof value !== 'string' || !/^[0-9]{6}$/.test(value)) return null;
+  const today = new Date(now + 9 * 3600000);
+  const year = today.getUTCFullYear();
+  const shortYear = Number(value.slice(0, 2));
+  const birthYear = shortYear <= year % 100 ? 2000 + shortYear : 1900 + shortYear;
+  const month = Number(value.slice(2, 4)), day = Number(value.slice(4, 6));
+  const birthday = new Date(Date.UTC(birthYear, month - 1, day));
+  if (birthday.getUTCFullYear() !== birthYear || birthday.getUTCMonth() !== month - 1 || birthday.getUTCDate() !== day) return null;
+  const beforeBirthday = today.getUTCMonth() < month - 1 || (today.getUTCMonth() === month - 1 && today.getUTCDate() < day);
+  const age = year - birthYear - Number(beforeBirthday);
+  return age >= 0 ? age : null;
+}
 function validateBirth6(value) {
-  if (typeof value !== 'string' || !/^[0-9]{6}$/.test(value)) throw new ApiError(400, '생년월일은 950705처럼 숫자 6자리로 입력해 주세요.');
-  const yy=Number(value.slice(0,2)),month=Number(value.slice(2,4)),day=Number(value.slice(4,6));
-  const current=new Date().getUTCFullYear();
-  const year=yy<=current%100?2000+yy:1900+yy;
-  const actual=new Date(Date.UTC(year,month-1,day));
-  if(month<1||month>12||day<1||actual.getUTCFullYear()!==year||actual.getUTCMonth()+1!==month||actual.getUTCDate()!==day
-    ||actual.getTime()>Date.now()) throw new ApiError(400, '실제 존재하는 생년월일을 입력해 주세요.');
+  if (ageAtBirth6(value) === null) throw new ApiError(400, '실제 생년월일을 숫자 6자리로 입력해 주세요.');
   return value;
+}
+function validateAge(value) {
+  if (!Number.isInteger(value) || value < 0 || value > 120) throw new ApiError(400, '만 나이를 0~120 사이의 숫자로 입력해 주세요.');
+  return value;
+}
+function pinProfile(data, acceptsLegacyBirthDate) {
+  const gender = validateGender(data.gender);
+  if (acceptsLegacyBirthDate && data.age === undefined) return {age: null, birth6: validateBirth6(data.birth6), gender};
+  return {age: validateAge(data.age), birth6: null, gender};
 }
 function validateGender(value) {
   if(value!=='남'&&value!=='여') throw new ApiError(400, '성별은 남 또는 여를 선택해 주세요.');
   return value;
 }
 function selfUser(row) {
-  return {...publicUser(row), birth6: row.birth_ymd || null, gender: row.gender || null};
+  return {...publicUser(row), age: row.age ?? ageAtBirth6(row.birth_ymd), birth6: row.birth_ymd || null, gender: row.gender || null};
 }
 function validatePin(value) {
   if (typeof value !== 'string' || !/^[0-9]{4}$/.test(value)) throw new ApiError(400, 'PIN은 숫자 4자리로 입력해 주세요.');
@@ -134,6 +150,7 @@ export class DeskRoom {
       // Additive, nullable migration: existing accounts and passwords unchanged.
       if (!columns.has('birth_ymd')) this.sql.exec('ALTER TABLE users ADD COLUMN birth_ymd TEXT');
       if (!columns.has('gender')) this.sql.exec('ALTER TABLE users ADD COLUMN gender TEXT');
+      if (!columns.has('age')) this.sql.exec('ALTER TABLE users ADD COLUMN age INTEGER');
     });
   }
 
@@ -176,33 +193,31 @@ export class DeskRoom {
     if (increment) this.sql.exec('INSERT INTO throttle(key,count,started_at) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=CASE WHEN started_at>? THEN count+1 ELSE 1 END, started_at=CASE WHEN started_at>? THEN started_at ELSE excluded.started_at END', key, now, now - duration, now - duration);
   }
 
-  async pinRegister(request) {
-    const data = await jsonBody(request);
-    const name=validateNickname(data.nickname),username=name.toLowerCase().normalize('NFC');
-    const birth6=validateBirth6(data.birth6),gender=validateGender(data.gender),pin=validatePin(data.pin);
-    const network=await digest(clientNetwork(request));
-    this.rate(`pin-ip:${network}`,30,15*60_000);
-    this.rate(`pin-signup:${network}`,10,60*60_000);
-    if(!this.one("SELECT id FROM users WHERE role='admin' LIMIT 1"))
-      throw new ApiError(503,'관리자 초기 설정 후 회원가입할 수 있습니다.');
-    if(this.one('SELECT id FROM users WHERE username=?',username))
-      throw new ApiError(409,'이미 사용 중인 닉네임입니다. 로그인해 주세요.');
-    const id=crypto.randomUUID(),passwordHash=await hashPassword(pin);
-    const created=this.one(`INSERT INTO users(id,username,name,password_hash,role,must_change_password,created_at,auth_mode,birth_ymd,gender)
-      VALUES(?,?,?,?,'member',0,?,'pin',?,?) ON CONFLICT(username) DO NOTHING RETURNING *`,
-      id,username,name,passwordHash,Date.now(),birth6,gender);
-    if(!created)throw new ApiError(409,'이미 사용 중인 닉네임입니다. 로그인해 주세요.');
-    return await this.loginSession(created,request);
+  async createPinMember(request, {name, username, pin, network, profile}) {
+    this.rate(`pin-signup:${network}`, 10, 60 * 60_000);
+    if (!this.one("SELECT id FROM users WHERE role='admin' LIMIT 1")) throw new ApiError(503, '관리자 초기 설정 후 입장할 수 있습니다.');
+    const id = crypto.randomUUID(), passwordHash = await hashPassword(pin);
+    const created = this.one(`INSERT INTO users(id,username,name,password_hash,role,must_change_password,created_at,auth_mode,birth_ymd,gender,age)
+      VALUES(?,?,?,?,'member',0,?,'pin',?,?,?) ON CONFLICT(username) DO NOTHING RETURNING *`,
+      id, username, name, passwordHash, Date.now(), profile.birth6, profile.gender, profile.age);
+    if (!created) throw new ApiError(409, '닉네임이 이미 등록되었습니다. 닉네임과 PIN으로 다시 시도해 주세요.');
+    return this.loginSession(created, request);
   }
 
-  async pinSession(request) {
+  async pinSession(request, mode = 'login') {
     const data = await jsonBody(request);
     const name = validateNickname(data.nickname), username = name.toLowerCase().normalize('NFC');
     const pin = validatePin(data.pin);
+    const signupProfile = mode === 'register' ? pinProfile(data, true) : null;
     const network = await digest(clientNetwork(request));
     this.rate(`pin-ip:${network}`, 30, 15 * 60_000);
-    const accountKey = `pin-account:${await digest(username)}`;
     const user = this.one('SELECT * FROM users WHERE username=?', username);
+    if (signupProfile && user) throw new ApiError(409, '이미 사용 중인 닉네임입니다. 로그인해 주세요.');
+    if (!user && (mode === 'entry' || signupProfile)) {
+      const profile = signupProfile || pinProfile(data, false);
+      return this.createPinMember(request, {name, username, pin, network, profile});
+    }
+    const accountKey = `pin-account:${await digest(username)}`;
     if (!user || user.auth_mode !== 'pin' || user.role !== 'member' || user.disabled)
       throw new ApiError(401, '닉네임 또는 PIN을 확인해 주세요.');
     this.rate(accountKey, 5, PIN_ATTEMPT_WINDOW_MS);
@@ -314,8 +329,9 @@ export class DeskRoom {
         return await this.loginSession(this.one('SELECT * FROM users WHERE id=?', id), request);
       }
       if (path === '/api/pin-login' && method === 'POST') return await this.pinSession(request);
-      if (path === '/api/pin-register' && method === 'POST') return await this.pinRegister(request);
-      if (path === '/api/login' && method === 'POST') {
+      if (path === '/api/pin-register' && method === 'POST') return await this.pinSession(request, 'register');
+      if (path === '/api/pin-entry' && method === 'POST') return await this.pinSession(request, 'entry');
+      if ((path === '/api/admin-login' || path === '/api/login') && method === 'POST') {
         const data = await jsonBody(request);
         const username = typeof data.username === 'string' ? data.username.toLowerCase().slice(0,100) : '';
         const coarseIp = clientNetwork(request);
@@ -327,7 +343,8 @@ export class DeskRoom {
         const dummy = 'pbkdf2-sha256$100000$00000000000000000000000000000000$0000000000000000000000000000000000000000000000000000000000000000';
         const valid = await verifyPassword(password, user?.auth_mode === 'password' ? user.password_hash : dummy);
         const currentUser = user && this.one('SELECT * FROM users WHERE id=?', user.id);
-        if (!currentUser || currentUser.disabled || !valid || currentUser.password_hash !== user.password_hash) { this.rate(key, 8, 15 * 60_000); throw new ApiError(401, '아이디 또는 비밀번호를 확인해 주세요.'); }
+        if (!currentUser || currentUser.disabled || !valid || currentUser.password_hash !== user.password_hash
+            || (path === '/api/admin-login' && currentUser.role !== 'admin')) { this.rate(key, 8, 15 * 60_000); throw new ApiError(401, '아이디 또는 비밀번호를 확인해 주세요.'); }
         this.sql.exec('DELETE FROM throttle WHERE key=?', key);
         return await this.loginSession(currentUser, request);
       }
@@ -344,10 +361,12 @@ export class DeskRoom {
       if (path === '/api/profile' && method === 'PATCH') {
         if (user.auth_mode !== 'pin') throw new ApiError(403, 'PIN 회원만 이 정보를 수정할 수 있습니다.');
         const data=await jsonBody(request);
-        const birth6=validateBirth6(data.birth6),gender=validateGender(data.gender),pin=validatePin(data.pin);
+        const {age, birth6, gender} = pinProfile(data, true), pin = validatePin(data.pin);
         this.rate(`profile:${user.id}`,5,30*60_000);
         if(!(await verifyPassword(pin,user.password_hash))) throw new ApiError(401,'현재 PIN이 올바르지 않습니다.');
-        this.sql.exec('UPDATE users SET birth_ymd=?,gender=? WHERE id=?',birth6,gender,user.id);
+        const currentUser = this.sessionByHash(sessionHash);
+        if (!currentUser || currentUser.password_hash !== user.password_hash) throw new ApiError(401, '인증 정보가 변경되었습니다. 다시 로그인해 주세요.');
+        this.sql.exec('UPDATE users SET birth_ymd=COALESCE(?,birth_ymd),gender=?,age=? WHERE id=?', birth6, gender, age, user.id);
         return result({user:selfUser(this.one('SELECT * FROM users WHERE id=?',user.id))});
       }
       if (path === '/api/password' && method === 'POST') {

@@ -129,6 +129,38 @@ test('private desk authentication, member management and real-time room',async t
     assert.equal((await request('/api/me',{cookie:firstCookie})).status,401);
   });
 
+  await t.test('single member entry keeps profile data private and admin sign-in requires admin role', async () => {
+    const member = (body) => request('/api/pin-entry',{method:'POST',body,headers:{'CF-Connecting-IP':'192.0.2.15'}});
+    const nickname = '간편회원';
+    const pin = '0053';
+    assert.equal((await member({nickname,pin,gender:'여',age:null})).status,400);
+    assert.equal((await member({nickname,pin,gender:'여',age:121})).status,400);
+    assert.equal((await member({nickname,pin,gender:'여',age:10.5})).status,400);
+    const created = await member({nickname,pin,gender:'여',age:32});
+    assert.equal(created.status,200,await created.clone().text());
+    const {user} = await created.json();
+    assert.equal(user.age,32);
+    assert.equal(user.gender,'여');
+    assert.equal(user.birth6,null);
+    const relogin = await member({nickname,pin,gender:'남',age:58});
+    assert.equal(relogin.status,200);
+    const returning = (await relogin.json()).user;
+    assert.equal(returning.id,user.id);
+    assert.equal(returning.age,32);
+    assert.equal(returning.gender,'여');
+    assert.equal((await member({nickname,pin})).status,200);
+    assert.equal((await member({nickname,pin:'0054',gender:'여',age:32})).status,401);
+    assert.equal((await member({nickname:'owner',pin,gender:'여',age:32})).status,401);
+    const cookie=created.headers.get('Set-Cookie').split(';')[0];
+    const profile = await request('/api/profile',{method:'PATCH',cookie,body:{age:33,gender:'여',pin}});
+    assert.equal((await profile.json()).user.age,33);
+    const users = await request('/api/admin/users',{cookie:adminCookie});
+    assert.equal((await users.json()).users.find(entry=>entry.id===user.id).age,undefined);
+    const admin = (body)=>request('/api/admin-login',{method:'POST',body});
+    assert.equal((await admin({username:'friend',password:'Changed-member-2026!'})).status,401);
+    assert.equal((await admin({username:'owner',password:adminPassword})).status,200);
+  });
+
   const sockets=[];
   t.after(()=>sockets.forEach(s=>{try{s.ws.close()}catch{}}));
   async function connect(cookie){

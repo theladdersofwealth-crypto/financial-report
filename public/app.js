@@ -195,18 +195,13 @@ function renderWelcome(mode = 'pin') {
   state.calendar = null;
   const story = E('section', {class: 'welcome-story'}, brand(), E('div', {class: 'story-copy'}, E('p', {class: 'eyebrow'}, 'A WIDER VIEW. A CLEARER DECISION.'), E('h1', {}, '세계의 움직임을,', E('br'), E('span', {}, '투자의 시선으로.')), E('p', {class: 'story-description'}, '밤사이의 미국 증시부터 오늘의 한국시장까지.', E('br'), '흩어진 숫자와 흐름을 연결하는 당신의 금융 데스크.'), E('div', {class: 'story-visual'}, E('div', {class: 'story-line'}, E('span', {}, 'GLOBAL → KOREA'), E('span', {}, 'CONTEXT MATTERS')), storyIllustration(), E('div', {class: 'story-tags'}, ['글로벌 시장', '한국시장 영향', '기간별 시나리오'].map(x => E('span', {}, x))))), E('div', {class: 'story-foot'}, E('span', {}, 'A DESK FOR THE THOUGHTFUL INVESTOR'), E('span', {}, 'SEOUL · GLOBAL')), E('div', {class: 'story-decoration', 'aria-hidden': 'true'}));
   const setup = mode === 'setup';
-  const registerMode = mode === 'register';
-  const pinMode = mode === 'pin' || registerMode;
-  const subtitle = setup ? '최초 관리자 계정을 안전하게 설정합니다.\n발급받은 초기 설정 토큰을 입력해 주세요.'
-    : registerMode ? '닉네임, 생년월일 6자리, 성별, 숫자 PIN 4자리로 회원가입합니다. 생년월일과 성별은 다른 회원에게 표시되지 않습니다.'
-    : pinMode ? '가입한 닉네임과 숫자 PIN 4자리로 로그인하세요. 신규 회원은 회원가입에서 정보를 등록할 수 있어요.'
-    : '기존 아이디와 비밀번호로 로그인하세요.';
-  const modeTabs = !setup ? E('div', {class: 'welcome-mode-tabs', role: 'tablist', 'aria-label': '입장 방식 선택'},
-    [['pin', 'PIN 로그인'], ['register', '회원가입'], ['login', '아이디 로그인']].map(([id, label]) =>
-      E('button', {type: 'button', role: 'tab', 'aria-selected': String(mode === id), class: `welcome-mode-tab ${mode === id ? 'active' : ''}`, onClick: () => renderWelcome(id)}, label))) : null;
-  const content = E('div', {class: 'welcome-form'}, E('p', {class: 'eyebrow'}, setup ? 'FIRST THINGS FIRST' : 'WELCOME TO YOUR DESK'), E('h2', {}, setup ? '첫 번째 관리자 만들기' : '오늘의 흐름을 읽어보세요'), E('p', {class: 'welcome-subtitle'}, subtitle), modeTabs);
-  if (state.status?.error) content.append(E('p', {class: 'connection-note'}, '서버 연결을 확인하지 못했습니다. 로그인은 연결 복구 후 가능하며 화면 체험은 지금 이용할 수 있습니다.'));
-  if (!setup && state.status && !state.status.initialized) content.append(E('div', {class: 'setup-notice'}, state.status.setupAvailable ? '아직 관리자가 설정되지 않았습니다. 초기 설정 토큰이 있다면 첫 관리자 계정을 만들어 주세요.' : '관리자 초기 설정이 필요합니다. 운영자가 서버의 초기 설정을 완료한 후 로그인할 수 있습니다.'));
+  const pinMode = mode === 'pin';
+  const heading = setup ? '첫 번째 관리자 만들기' : pinMode ? '마켓데스크 입장' : '관리자 로그인';
+  const content = E('div', {class: 'welcome-form'}, E('h2', {}, heading));
+  if (state.status?.error) content.append(E('p', {class: 'connection-note'}, '서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.'));
+  if (!setup && !pinMode && state.status && !state.status.error && !state.status.initialized) {
+    content.append(E('div', {class: 'setup-notice'}, '로그인하려면 먼저 관리자 계정을 설정해 주세요.'));
+  }
   const form = E('form', {onSubmit: async event => {
     event.preventDefault();
     errorNode.textContent = '';
@@ -215,9 +210,9 @@ function renderWelcome(mode = 'pin') {
       try {
         const payload = pinMode ? {nickname: username.input.value.trim(), pin: password.input.value}
           : {username: username.input.value.trim(), password: password.input.value};
-        if (registerMode) Object.assign(payload, {birth6: birth.input.value.trim(), gender: gender.value});
+        if (pinMode) Object.assign(payload, {age: age.input.value === '' ? null : Number(age.input.value), gender: gender.value});
         if (setup) Object.assign(payload, {token: token.input.value.trim(), name: name.input.value.trim()});
-        const result = await api(setup ? '/api/setup' : registerMode ? '/api/pin-register' : pinMode ? '/api/pin-login' : '/api/login', {method: 'POST', body: payload});
+        const result = await api(setup ? '/api/setup' : pinMode ? '/api/pin-entry' : '/api/admin-login', {method: 'POST', body: payload});
         password.input.value = '';
         if (setup) { token.input.value = ''; confirm.input.value = ''; }
         if (!result.user) throw new Error('로그인 응답에 계정 정보가 없습니다.');
@@ -237,25 +232,30 @@ function renderWelcome(mode = 'pin') {
   const username = field(pinMode ? '닉네임' : '아이디', pinMode ? 'nickname' : 'username', {autocomplete: 'username', placeholder: pinMode ? '닉네임을 입력하세요' : '아이디를 입력하세요', maxlength: pinMode ? 24 : 40, minlength: setup ? 3 : 1, pattern: setup ? '[a-zA-Z0-9._-]{3,40}' : undefined, autocapitalize: 'none', spellcheck: 'false'});
   const password = field(pinMode ? '4자리 PIN' : '비밀번호', pinMode ? 'pin' : 'password', {type: 'password', autocomplete: setup ? 'new-password' : 'current-password', placeholder: pinMode ? '숫자 4자리' : setup ? '12~128자의 비밀번호' : '비밀번호를 입력하세요', minlength: setup ? 12 : 1, maxlength: 128, ...(pinMode ? pinFields : {})});
   const confirm = setup ? field('비밀번호 확인', 'confirmPassword', {type: 'password', autocomplete: 'new-password', placeholder: '비밀번호를 다시 입력하세요', minlength: 12, maxlength: 128}) : null;
-  const birth = registerMode ? field('생년월일 6자리', 'birth6', {type: 'text', inputmode: 'numeric', pattern: '[0-9]{6}', minlength: 6, maxlength: 6, placeholder: '예: 950705', autocomplete: 'off', required: true}) : null;
-  const gender = registerMode ? E('select', {id: 'registerGender', name: 'gender', required: true}, E('option', {value: '', disabled: true, selected: true}, '성별을 선택해 주세요'), E('option', {value: '남'}, '남'), E('option', {value: '여'}, '여')) : null;
-  const genderNode = registerMode ? E('div', {class: 'field'}, E('label', {for: 'registerGender'}, '성별'), gender) : null;
+  const gender = pinMode ? E('select', {id: 'entryGender', name: 'gender'},
+    E('option', {value: '', selected: true}, '선택'), E('option', {value: '남'}, '남'), E('option', {value: '여'}, '여')) : null;
+  const age = pinMode ? field('만 나이', 'age', {type: 'number', inputmode: 'numeric', min: 0, max: 120, step: 1,
+    autocomplete: 'off', placeholder: '숫자만 입력', required: false}) : null;
   const errorNode = E('p', {class: 'form-error', role: 'alert'});
-  const submit = E('button', {type: 'submit', class: 'button primary full'}, setup ? '관리자 계정 만들기' : registerMode ? '회원가입하고 입장' : '내 데스크로 입장', icon('arrow'));
+  const submit = E('button', {type: 'submit', class: 'button primary full'}, setup ? '관리자 계정 만들기' : pinMode ? '입장' : '로그인', icon('arrow'));
   if (setup) form.append(token.node, name.node);
   form.append(username.node);
-  if (registerMode) form.append(birth.node, genderNode);
+  if (pinMode) form.append(E('div', {class: 'welcome-profile-fields'},
+    E('div', {class: 'field'}, E('label', {for: 'entryGender'}, '성별'), gender), age.node));
   form.append(password.node);
-  if (registerMode) form.append(E('p', {class: 'field-help'}, '생년월일은 YYMMDD 형식(950705)으로 입력합니다. PIN은 서버에 단방향 해시로 저장되며, 로그인 때에는 닉네임과 PIN만 사용합니다.'));
-  if (setup) form.append(confirm.node, E('p', {class: 'field-help'}, '설정 토큰은 최초 계정 생성에만 사용되며 브라우저에 저장하지 않습니다.'));
+  if (pinMode) form.append(E('p', {class: 'field-help'}, '처음 입장할 때는 성별과 만 나이를 입력해 주세요.'));
+  if (setup) form.append(confirm.node);
   form.append(errorNode, submit);
   content.append(form);
-  if (registerMode) content.append(E('div', {class: 'welcome-switch'}, E('button', {type: 'button', class: 'text-button', onClick: () => renderWelcome('pin')}, '이미 회원이에요 · 닉네임 + PIN 로그인')));
-  if (mode === 'pin') content.append(E('div', {class: 'welcome-switch'}, E('button', {type: 'button', class: 'button primary small', onClick: () => renderWelcome('register')}, '처음이세요? 회원가입')));
-  if (pinMode) content.append(E('div', {class: 'welcome-switch'}, E('button', {type: 'button', class: 'text-button', onClick: () => renderWelcome('login')}, '기존 아이디·비밀번호로 로그인')));
-  if (!setup && state.status?.setupAvailable && !state.status.initialized) content.append(E('div', {class: 'welcome-switch'}, E('button', {type: 'button', class: 'text-button', onClick: () => renderWelcome('setup')}, icon('lock'), '최초 관리자 설정')));
-  if (!pinMode) content.append(E('div', {class: 'welcome-switch'}, E('button', {type: 'button', class: 'text-button', onClick: () => renderWelcome()}, '닉네임과 PIN으로 입장')));
-  content.append(E('div', {class: 'welcome-or'}, '먼저 둘러보고 싶다면'), E('button', {type: 'button', class: 'demo-entry', onClick: enterDemo}, icon('grid'), E('span', {}, E('strong', {}, '화면 체험하기'), E('small', {}, '가상 데이터로 데스크의 모든 화면을 살펴보세요')), icon('arrow', 'arrow')), E('p', {class: 'welcome-form-footer'}, '데이터의 출처와 시점을 함께, 전망의 근거와 한계도 함께.', E('br'), '시장의 방향을 단정하지 않고 판단의 맥락을 제공합니다.'));
+  const switchMode = E('button', {type: 'button', class: 'text-button welcome-auth-switch', onClick: () => {
+    if (submit.disabled) return;
+    renderWelcome(pinMode ? 'admin' : 'pin');
+    app.querySelector('.welcome-form input')?.focus();
+  }}, pinMode ? '관리자 로그인' : '회원 로그인');
+  content.append(E('div', {class: 'welcome-switch'}, switchMode));
+  if (!pinMode && !setup && state.status?.setupAvailable && !state.status.initialized) {
+    content.append(E('div', {class: 'welcome-switch'}, E('button', {type: 'button', class: 'text-button', onClick: () => renderWelcome('setup')}, '최초 관리자 설정')));
+  }
   app.replaceChildren(E('div', {class: 'welcome'}, story, E('main', {class: 'welcome-form-area', id: 'main-content'}, content, E('div', {class: 'welcome-version'}, 'THE MARKET DESK'))));
 }
 function storyIllustration() {
@@ -1196,18 +1196,19 @@ function profileModal() {
       E('div', {}, E('span', {}, '아이디'), E('strong', {}, state.user.username)),
       E('div', {}, E('span', {}, '권한'), E('strong', {}, state.user.role === 'admin' ? '관리자' : '회원')));
     if (state.user.pinLogin) info.append(
-      E('div', {}, E('span', {}, '생년월일 6자리'), E('strong', {}, state.user.birth6 || '미등록')),
+      E('div', {}, E('span', {}, '만 나이'), E('strong', {}, Number.isInteger(state.user.age) ? `${state.user.age}세` : '미등록')),
       E('div', {}, E('span', {}, '성별'), E('strong', {}, state.user.gender || '미등록')));
     body.append(info);
-    if(state.user.pinLogin && !state.demo) body.append(B('생년월일·성별 수정',()=>{close();profileDetailsModal();},'full','info'));
+    if(state.user.pinLogin && !state.demo) body.append(B('나이·성별 수정',()=>{close();profileDetailsModal();},'full','info'));
     body.append(B(credential + ' 변경', () => { close(); passwordModal(); }, 'full', 'lock'),
       E('div', {class: 'modal-actions'}, B(state.demo ? '체험 종료' : '로그아웃', () => { close(); state.demo ? exitDemo() : logout(); }, 'danger', 'logout')));
   });
 }
 function profileDetailsModal() {
   if(!state.user?.pinLogin || state.demo)return;
-  showModal('내 가입 정보', '생년월일과 성별을 수정하려면 현재 PIN을 확인해 주세요. 다른 회원에게 공개되지 않습니다.',(body,close)=>{
-    const birth=field('생년월일 6자리','profileBirth6',{type:'text',inputmode:'numeric',pattern:'[0-9]{6}',minlength:6,maxlength:6,required:true,value:state.user.birth6||'',placeholder:'950705',autocomplete:'off'});
+  showModal('내 가입 정보', '나이와 성별을 수정하려면 현재 PIN을 입력해 주세요.',(body,close)=>{
+    const age = field('만 나이', 'profileAge', {type: 'number', inputmode: 'numeric', min: 0, max: 120, step: 1,
+      value: state.user.age ?? '', autocomplete: 'off'});
     const gender=E('select',{id:'profileGender',name:'profileGender',required:true},
       E('option',{value:'',disabled:true,selected:!state.user.gender},'성별 선택'),
       E('option',{value:'남',selected:state.user.gender==='남'},'남'),
@@ -1219,13 +1220,13 @@ function profileDetailsModal() {
       event.preventDefault();error.textContent='';
       await busy(submit,async()=>{
         try{
-          const data=await api('/api/profile',{method:'PATCH',body:{birth6:birth.input.value.trim(),gender:gender.value,pin:pin.input.value}});
+          const data=await api('/api/profile',{method:'PATCH',body:{age: Number(age.input.value),gender:gender.value,pin:pin.input.value}});
           pin.input.value='';
           if(data.user)state.user={...state.user,...data.user};
           close();toast('가입 정보를 저장했습니다.');
         }catch(e){error.textContent=errorText(e);}
       });
-    }},birth.node,E('div',{class:'field'},E('label',{for:'profileGender'},'성별'),gender),
+    }},age.node,E('div',{class:'field'},E('label',{for:'profileGender'},'성별'),gender),
       pin.node,error,E('div',{class:'modal-actions'},B('취소',close),submit)));
   });
 }

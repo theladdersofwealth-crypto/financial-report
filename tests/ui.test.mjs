@@ -32,7 +32,7 @@ test('standalone demo renders every destination without accessing member APIs',a
   vm.runInContext(browserModule.replace(/^import [^\n]+\n/gm,'').trimStart(),ctx,{filename:'app.js'});
   await new Promise(r=>nativeTimeout(r,20));
   if(!document.querySelector('.demo-banner')) {
-    const demo=document.querySelector('.demo-entry');assert.ok(demo,'로그인 화면의 체험 버튼');demo.click();
+    vm.runInContext('enterDemo()',ctx);
   }
   assert.match(document.querySelector('.demo-banner').textContent,/예시 데이터/);
   const topics=[...document.querySelectorAll('.metric-section-title')].map(el=>el.textContent);
@@ -53,22 +53,17 @@ test('standalone demo renders every destination without accessing member APIs',a
     assert.ok(document.querySelector('#main-column').textContent.trim().length>20,`${view} content`);
     assert.ok(document.querySelector('.demo-banner'),`${view} retains demo warning`);
   }
-  // Registration is a separate four-field flow; existing member and
-  // administrator login modes retain their original credential formats.
-  vm.runInContext('renderWelcome("register")',ctx);
-  assert.ok(document.querySelector('input[name="nickname"]'));
-  assert.ok(document.querySelector('input[name="birth6"]'));
-  assert.equal(document.querySelector('input[name="birth6"]').getAttribute('maxlength'),'6');
-  assert.ok(document.querySelector('#registerGender'));
-  assert.equal(document.querySelector('#registerGender').querySelectorAll('option').length,3);
-  assert.ok(document.querySelector('input[name="pin"]'));
-  assert.equal(document.querySelector('input[name="pin"]').getAttribute('maxlength'),'4');
-  vm.runInContext('renderWelcome("pin")',ctx);
-  assert.equal(document.querySelector('input[name="birth6"]'),null,'existing PIN members are not blocked by new profile fields');
-  assert.ok(document.querySelector('input[name="pin"]'));
-  vm.runInContext('renderWelcome("login")',ctx);
-  assert.ok(document.querySelector('input[name="username"]'),'legacy admin/password sign-in still exists');
-  assert.equal(document.querySelector('input[name="birth6"]'),null);
+  vm.runInContext('renderWelcome()',ctx);
+  const formFields = () => [...document.querySelectorAll('.welcome-form form input, .welcome-form form select')].map(field => field.name);
+  assert.deepEqual(formFields(), ['nickname','gender','age','pin']);
+  assert.equal(document.querySelector('.welcome-form input[name="pin"]').getAttribute('maxlength'), '4');
+  assert.equal(document.querySelector('.welcome-mode-tabs'), null);
+  assert.equal(document.querySelector('.demo-entry'), null);
+  assert.equal(document.querySelector('.welcome-auth-switch').textContent, '관리자 로그인');
+  document.querySelector('.welcome-auth-switch').click();
+  assert.deepEqual(formFields(), ['username','password']);
+  document.querySelector('.welcome-auth-switch').click();
+  assert.deepEqual(formFields(), ['nickname','gender','age','pin']);
   assert.equal(requested.length,0,'file preview never contacts a member or market API');
   vm.runInContext(`state.demo = false;
     const saved = {id: 'kospi', name: '코스피', status: 'stale', savedFrom: 'cache', source: '한국투자증권 KIS Open API',
