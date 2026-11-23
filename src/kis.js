@@ -206,7 +206,11 @@ export async function collectKis(env) {
     investorQuotes(env,token,'1001','KSQ','kosdaq'),
   ]);
   // Intraday observations override the corresponding daily snapshot only when validated.
-  const byId=new Map(fetched.flat().filter(Boolean).map(quote=>[quote.id,quote]));
+  const byId=new Map();
+  for(const quote of fetched.flat().filter(Boolean)) {
+    const prior=byId.get(quote.id);
+    byId.set(quote.id,prior ? {...prior,...quote,chartPeriods:prior.chartPeriods,chartBasis:prior.chartBasis,history:prior.history} : quote);
+  }
   return [...byId.values()];
 }
 
