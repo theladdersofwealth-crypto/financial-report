@@ -7,8 +7,8 @@ test('fresh exchange books recover from stale or invalid primaries with the true
   const env = {fetchProvider: async input => {
     const url = new URL(input);
     const name = url.searchParams.get('contract') || url.searchParams.get('symbol');
-    if (name === 'SPX500_USDT') return Response.json({update:now-60000,bids:[{p:'7000'}],asks:[{p:'7002'}]});
-    if (name === 'NAS100_USDT') return Response.json({update:now-1000,bids:[{p:'26000'}],asks:[{p:'26002'}]});
+    if (name === 'SPX500_USDT') return Response.json({update_us:(now-60000)*1000,bids:[{p:'7000'}],asks:[{p:'7002'}]});
+    if (name === 'NAS100_USDT') return Response.json({update:(now-1000)/1000,bids:[{p:'26000'}],asks:[{p:'26002'}]});
     if (name === 'US30_USDT') return Response.json({update:now,bids:[{p:'50002'}],asks:[{p:'50000'}]});
     if (name === 'SPYUSDT') return Response.json({symbol:name,time:now-200,bidPrice:'700',askPrice:'702'});
     if (url.hostname === 'api.mexc.com') return Response.json({success:true,data:{timestamp:now,bids:[[50000]],asks:[[50004]]}});

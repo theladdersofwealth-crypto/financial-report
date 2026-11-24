@@ -40,9 +40,12 @@ function positive(value) {
 }
 
 function bookLevels(venue, data, symbol) {
-  if (venue === 'gate') return {
-    bid:positive(data.bids?.[0]?.p), ask:positive(data.asks?.[0]?.p), time:Number(data.update),
-  };
+  if (venue === 'gate') {
+    const microseconds = positive(data.update_us);
+    const update = Number(data.update);
+    const time = microseconds ? microseconds / 1000 : update < 1e11 ? update * 1000 : update;
+    return {bid:positive(data.bids?.[0]?.p), ask:positive(data.asks?.[0]?.p), time};
+  }
   if (venue === 'binance' && data.symbol === symbol) return {
     bid:positive(data.bidPrice), ask:positive(data.askPrice), time:Number(data.time),
   };

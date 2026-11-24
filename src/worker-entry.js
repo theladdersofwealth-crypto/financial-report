@@ -6,6 +6,8 @@ import { FUTURES_FRESHNESS_MS } from '../public/futures-config.js';
 
 export { default, DeskRoom } from './worker.js';
 
+const LIVE_BRIEFING_KEY = 'latest-live-v2';
+
 export class MarketBriefing extends DurableObject {
   #refreshing = null;
   #quoteCache = null;
@@ -37,11 +39,11 @@ export class MarketBriefing extends DurableObject {
   }
 
   async needsRefresh() {
-    return !this.#currentWindow(await this.ctx.storage.get('latest-live'));
+    return !this.#currentWindow(await this.ctx.storage.get(LIVE_BRIEFING_KEY));
   }
 
   async current() {
-    const saved = await this.ctx.storage.get('latest-live');
+    const saved = await this.ctx.storage.get(LIVE_BRIEFING_KEY);
     if (this.#currentWindow(saved)) return saved;
     if (!this.#refreshing) this.#refreshing = this.#publish(saved);
     const pending = this.#refreshing;
@@ -51,7 +53,7 @@ export class MarketBriefing extends DurableObject {
   async #publish(previous) {
     const {quotes, issues} = await this.latestFutures();
     const briefing = buildUsBriefing(quotes, previous, Date.now());
-    await this.ctx.storage.put('latest-live', briefing);
+    await this.ctx.storage.put(LIVE_BRIEFING_KEY, briefing);
     console.info('US market briefing refreshed', {
       generatedAt:briefing.generatedAt, nextUpdateAt:briefing.nextUpdateAt,
       contracts:briefing.items.map(item => `${item.venue}:${item.contract}`), issues,
