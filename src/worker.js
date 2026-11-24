@@ -46,16 +46,26 @@ async function refreshBriefingIfDue(env) {
   }
 }
 
-async function futuresSnapshot(env, reportSuccess = false) {
+async function futuresSnapshot(env, scope = 'indices', reportSuccess = false) {
   if (!env.US_BRIEFING) return {quotes:[], reason:'configuration'};
-  const {quotes, reason, issues} = await env.US_BRIEFING.getByName('us-markets').latestFutures();
+  const groups = scope === 'extended' ? ['assets','equities'] : ['indices'];
+  const snapshots = await Promise.all(groups.map(async group => {
+    try {
+      const name = group === 'indices' ? 'us-markets' : `futures-${group}`;
+      return await env.US_BRIEFING.getByName(name).latestFutures(group);
+    } catch (error) {
+      return {quotes:[],issues:[{group,reason:error?.name || 'internal'}]};
+    }
+  }));
+  const quotes = snapshots.flatMap(snapshot => snapshot.quotes);
+  const issues = snapshots.flatMap(snapshot => snapshot.issues);
   if (reportSuccess) {
     const now = Date.now();
-    console.info('Live futures snapshot', {received:quotes.length, contracts:quotes.map(quote => ({
+    console.info('Live futures snapshot', {scope,received:quotes.length, contracts:quotes.map(quote => ({
       venue:quote.venue, symbol:quote.contract, ageMs:now-Date.parse(quote.observedAt),
     })), issues});
   }
-  return {quotes, reason};
+  return {quotes, reason:quotes.length ? null : 'network'};
 }
 
 export default {
@@ -82,9 +92,11 @@ export default {
             const id = url.searchParams.get('id');
             const period = url.searchParams.get('period');
             const venue = url.searchParams.get('venue');
+            const scope = url.searchParams.get('scope') || 'indices';
+            if (!['indices','extended'].includes(scope)) return protect(Response.json({status:'invalid'}, {status:400}), true);
             const result = id !== null || period !== null || venue !== null
               ? await loadLiveFuturesChart(env, id, period, venue)
-              : await futuresSnapshot(env);
+              : await futuresSnapshot(env, scope);
             return protect(Response.json(result, {status: result.status === 'invalid' ? 400 : 200}), true);
           }
           if (url.pathname === '/api/calendar') return protect(Response.json(await getCalendar()), true);
@@ -120,7 +132,10 @@ export default {
     if (refreshMarketNow) {
       ctx.waitUntil(Promise.all([refreshMarket(env).then(market => enrichAnalysis(market, env)), getUsBriefing(env)]));
     } else if (controller.cron === FUTURES_CHECK_CRON) {
-      ctx.waitUntil(refreshBriefingIfDue(env).then(briefing => briefing || futuresSnapshot(env, true)));
+      ctx.waitUntil(Promise.all([
+        refreshBriefingIfDue(env).then(briefing => briefing || futuresSnapshot(env,'indices',true)),
+        futuresSnapshot(env,'extended',true),
+      ]));
     }
   }
 };

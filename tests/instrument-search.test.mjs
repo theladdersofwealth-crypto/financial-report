@@ -18,97 +18,76 @@ test('input checks: supported market, Korean common names, exact six digits and 
   assert.equal(normalizeSearch('KR','005930','NYS'),null);
 });
 
-test('US and Korean stock lookup use read-only KIS quotes, verify returned names and hide secret keys',async t=>{
+test('Korean stock lookup retains the domestic KIS spot quote and its source',async t=>{
   const original=globalThis.fetch,calls=[];
   globalThis.fetch=async(input,init={})=>{
     const u=new URL(String(input));
     assert.equal(u.hostname,'openapi.koreainvestment.com');
     if(u.pathname==='/oauth2/tokenP')return Response.json({access_token:'SECRET_BEARER_TEST',expires_in:86000});
     assert.equal(init.headers.authorization,'Bearer SECRET_BEARER_TEST');
-    calls.push({path:u.pathname,tr:init.headers.tr_id,params:Object.fromEntries(u.searchParams)});
+    calls.push(u.pathname);
     if(u.pathname.endsWith('/domestic-stock/v1/quotations/inquire-price')){
-      assert.equal(init.headers.tr_id,'FHKST01010100');
       assert.equal(u.searchParams.get('FID_INPUT_ISCD'),'005930');
       return Response.json({rt_cd:'0',output:{stck_prpr:'82000',prdy_ctrt:'-2.34'}});
     }
-    if(u.pathname.endsWith('/domestic-stock/v1/quotations/search-stock-info')){
-      assert.equal(init.headers.tr_id,'CTPF1002R');
-      return Response.json({rt_cd:'0',output:{pdno:'005930',prdt_name:'삼성전자'}});
-    }
-    if(u.pathname.endsWith('/overseas-price/v1/quotations/price')){
-      assert.equal(init.headers.tr_id,'HHDFS00000300');
-      assert.equal(u.searchParams.get('EXCD'),'NAS');
-      return Response.json({rt_cd:'0',output:{last:'235.80',rate:'1.53',rsym:'NASAAPL'}});
-    }
-    if(u.pathname.endsWith('/overseas-price/v1/quotations/search-info')){
-      assert.equal(init.headers.tr_id,'CTPF1702R');
-      return Response.json({rt_cd:'0',output:{pdno:'AAPL',ovrs_item_name:'Apple Inc.'}});
-    }
-    throw Error('unexpected KIS read');
+    return Response.json({rt_cd:'0',output:{pdno:'005930',prdt_name:'삼성전자'}});
   };
   t.after(()=>{globalThis.fetch=original});
-  const env={KIS_APP_KEY:'PRIVATE_KEY_SAMPLE',KIS_APP_SECRET:'PRIVATE_SECRET_SAMPLE'};
-  const kr=await searchInstrument(env,'KR','삼성전자');
-  const us=await searchInstrument(env,'US','AAPL','NAS');
+  const kr=await searchInstrument({KIS_APP_KEY:'PRIVATE_KEY_SAMPLE',KIS_APP_SECRET:'PRIVATE_SECRET_SAMPLE'},'KR','삼성전자');
   assert.equal(kr.status,'ok');
   assert.equal(kr.quote.name,'삼성전자');
+  assert.equal(kr.quote.productType,'국내 현물');
   assert.equal(kr.quote.unit,'KRW');
   assert.equal(kr.quote.value,82000);
   assert.equal(kr.quote.change,-2.34);
-  assert.equal(us.status,'ok');
-  assert.equal(us.quote.name,'Apple Inc.');
-  assert.equal(us.quote.value,235.8);
-  assert.equal(us.quote.unit,'USD');
-  assert.equal(us.quote.exchange,'NAS');
-  assert.equal(calls.length,4);
-  assert.doesNotMatch(JSON.stringify([kr,us]),/PRIVATE_KEY_SAMPLE|PRIVATE_SECRET_SAMPLE|SECRET_BEARER_TEST/);
+  assert.equal(calls.length,2);
+  assert.doesNotMatch(JSON.stringify(kr),/PRIVATE_KEY_SAMPLE|PRIVATE_SECRET_SAMPLE|SECRET_BEARER_TEST/);
 });
 
-test('crypto user lookup uses Binance public BTC/USDT only, not an account API key',async t=>{
+test('US and crypto searches show unsigned USDT perpetual order books',async t=>{
   const original=globalThis.fetch,calls=[];
   globalThis.fetch=async(input,init={})=>{
     const u=new URL(String(input));calls.push(u);
-    assert.equal(u.hostname,'data-api.binance.vision');
-    assert.equal(u.pathname,'/api/v3/ticker/24hr');
-    assert.equal(u.searchParams.get('symbol'),'BTCUSDT');
-    assert.equal(init.method,'GET');
-    assert.equal(init.headers.Accept,'application/json');
-    assert.equal(init.headers.Authorization,undefined);
-    return Response.json({symbol:'BTCUSDT',lastPrice:'95600.13',priceChangePercent:'-1.25',closeTime:today(),count:5284});
+    assert.equal(u.hostname,'api.gateio.ws');
+    assert.match(u.pathname,/futures\/usdt\/order_book$/);
+    assert.equal(init.headers?.Authorization,undefined);
+    const midpoint = u.searchParams.get('contract') === 'AAPL_USDT' ? 236 : 95600;
+    return Response.json({update:today()/1000,bids:[{p:midpoint-1}],asks:[{p:midpoint+1}]});
   };
   t.after(()=>{globalThis.fetch=original});
-  const res=await searchInstrument({},'CRYPTO','비트코인');
-  assert.equal(res.status,'ok');
-  assert.equal(res.quote.provider,'binance');
-  assert.equal(res.quote.symbol,'BTCUSDT');
-  assert.equal(res.quote.value,95600.13);
-  assert.equal(res.quote.unit,'USDT');
-  assert.equal(res.quote.change,-1.25);
-  assert.equal(res.quote.timestampPrecision,'window_end');
-  assert.equal(calls.length,1);
+  const us=await searchInstrument({},'US','AAPL','NAS');
+  const crypto=await searchInstrument({},'CRYPTO','비트코인');
+  assert.equal(us.quote.contract,'AAPL_USDT');
+  assert.equal(us.quote.value,236);
+  assert.equal(crypto.quote.symbol,'BTC_USDT');
+  assert.equal(crypto.quote.value,95600);
+  for (const result of [us,crypto]) {
+    assert.equal(result.status,'ok');
+    assert.equal(result.quote.unit,'USDT');
+    assert.equal(result.quote.timestampPrecision,'book');
+  }
   assert.equal((await searchInstrument({},'CRYPTO','비트코인')).status,'ok');
-  assert.equal(calls.length,1,'quick duplicate requests use short safe snapshot cache');
+  assert.equal(calls.length,2);
 });
 
-test('invalid search never touches KIS and stale/wrong pair is never represented as current',async t=>{
-  const old=globalThis.fetch,names=[];
+test('dynamic lookup rejects a TradFi perpetual when searching for a coin',async t=>{
+  const original=globalThis.fetch,calls=[];
   globalThis.fetch=async(input)=>{
-    const u=new URL(String(input));
-    names.push(u.hostname);
-    return Response.json({symbol:'ETHUSDT',lastPrice:'500',priceChangePercent:'2',
-      closeTime:Date.now()-86_400_000});
+    const u=new URL(String(input));calls.push(u.pathname);
+    return Response.json({retCode:0,result:{list:[{
+      symbol:'DOGEUSDT',baseCoin:'DOGE',quoteCoin:'USDT',contractType:'LinearPerpetual',status:'Trading',symbolType:'stock'
+    }]}});
   };
-  t.after(()=>globalThis.fetch=old);
+  t.after(()=>globalThis.fetch=original);
   assert.equal((await searchInstrument({},'KR','http://bad')).status,'invalid');
-  assert.equal(names.length,0);
+  assert.equal(calls.length,0);
   assert.equal((await searchInstrument({},'CRYPTO','DOGE')).status,'unavailable');
-  assert.deepEqual(names,['data-api.binance.vision','api.binance.com']);
+  assert.deepEqual(calls,['/v5/market/instruments-info']);
 });
 
 test('worker search endpoint requires same authenticated active member as private market',async t=>{
   const original=globalThis.fetch;
-  globalThis.fetch=async()=>Response.json({symbol:'SOLUSDT',lastPrice:'110',priceChangePercent:'1',
-    closeTime:Date.now(),count:10});
+  globalThis.fetch=async()=>Response.json({update:today()/1000,bids:[{p:109}],asks:[{p:111}]});
   t.after(()=>globalThis.fetch=original);
   const requested=[];
   const stub={DESK:{idFromName:()=> 'private',get:()=>({

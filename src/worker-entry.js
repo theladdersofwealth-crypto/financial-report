@@ -13,22 +13,22 @@ export class MarketBriefing extends DurableObject {
   #quoteCache = null;
   #quoting = null;
 
-  async latestFutures() {
+  async latestFutures(scope = 'indices') {
     const now = Date.now();
-    if (this.#quoteCache?.expiresAt > now) {
+    if (this.#quoteCache?.scope === scope && this.#quoteCache.expiresAt > now) {
       return {...this.#quoteCache.snapshot,
         quotes:this.#quoteCache.snapshot.quotes.filter(quote => now - Date.parse(quote.observedAt) <= FUTURES_FRESHNESS_MS)};
     }
-    if (!this.#quoting) this.#quoting = this.#readFutures();
+    if (this.#quoting?.scope !== scope) this.#quoting = {scope, promise:this.#readFutures(scope)};
     const pending = this.#quoting;
-    try { return await pending; } finally { if (this.#quoting === pending) this.#quoting = null; }
+    try { return await pending.promise; } finally { if (this.#quoting === pending) this.#quoting = null; }
   }
 
-  async #readFutures() {
+  async #readFutures(scope) {
     const issues = [];
-    const quotes = await collectLiveFutures(this.env, issue => issues.push(issue));
+    const quotes = await collectLiveFutures(this.env, issue => issues.push(issue), Date.now, scope);
     const snapshot = {quotes, issues, reason:quotes.length ? null : 'network'};
-    this.#quoteCache = {snapshot, expiresAt:Date.now()+4000};
+    this.#quoteCache = {scope, snapshot, expiresAt:Date.now()+(scope === 'indices' ? 4000 : 10000)};
     return snapshot;
   }
 

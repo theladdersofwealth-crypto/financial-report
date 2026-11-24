@@ -1,11 +1,12 @@
 import { chartSeries, chartPeriod, chartPeriodChange, chartFrequency, candleSeries, minuteFrequencies, intradayMinutes, aggregateIndexMinutes } from './chart-data.js';
 import {fxCurrencies, featuredFxCodes} from './fx-currencies.js';
-import {usFutures, futuresPeriods, FUTURES_FRESHNESS_MS, FUTURES_REFRESH_MS} from './futures-config.js';
+import {usFutures, assetFutures, stockFutures, sectorFutures, futuresProducts, futuresPeriods,
+  EXTENDED_FUTURES_REFRESH_MS, FUTURES_FRESHNESS_MS, FUTURES_REFRESH_MS} from './futures-config.js';
 
 const app = document.querySelector('#app');
 const state = {
   user: null, demo: false, status: null, view: 'overview', horizon: 'day',
-  market: null, futuresQuotes: null, futuresIssue: null, marketFilter: '전체', marketSearch: '', fxRegion: '전체', fxSearch: '', users: [], activity: null,
+  market: null, futuresQuotes: {}, futuresIssue: {}, marketFilter: '전체', marketSearch: '', fxRegion: '전체', fxSearch: '', users: [], activity: null,
   instrumentMarket: 'KR', instrumentQuery: '', instrumentResult: null, instrumentLoading: false,
   online: [], onlineCount: 0, threshold: 2, messages: [], chatDraft: '',
   ws: null, connected: false, reconnect: null, lastActivity: Date.now(),
@@ -147,24 +148,29 @@ function formatChange(quote) {
   return `${change > 0 ? '+' : ''}${change.toFixed(unit.toLowerCase().includes('bp') ? 1 : 2)}${unit}`;
 }
 const fxById = new Map(fxCurrencies.map(currency => [currency.id, currency]));
-const futuresById = new Map(usFutures.map(product => [product.id, product]));
+const futuresById = new Map(futuresProducts.map(product => [product.id, product]));
 const cashUSIndexes = new Set(['sp500', 'nasdaq', 'nasdaqcom', 'sox', 'vix']);
 const futuresIssueLabels = {
   configuration: '거래소 호가 연결 설정을 확인하는 중입니다', network: '거래소 호가 재연결 중',
 };
-function futuresRows() {
+function futuresRows(products = usFutures) {
   const now = Date.now();
-  const fresh = (state.futuresQuotes || []).filter(quote =>
+  const fresh = Object.values(state.futuresQuotes).flat().filter(quote =>
     quote.status === 'live' && now - Date.parse(quote.observedAt) <= FUTURES_FRESHNESS_MS);
   const byId = new Map(fresh.map(quote => [quote.id, quote]));
-  return usFutures.map(product => byId.get(product.id) || {id:product.id, name:product.liveName, group:'futures',
-    unit:'USDT', value:null, change:null, status:'missing', source:'공개 거래소 시세',
-    reason:state.demo ? '체험 화면' : state.futuresQuotes === null ? '실시간 호가 확인 중'
-      : futuresIssueLabels[state.futuresIssue] || '최근 30초 내 유효한 호가 대기'});
+  return products.map(product => {
+    const scope = usFutures.includes(product) ? 'indices' : 'extended';
+    return byId.get(product.id) || {id:product.id, name:product.liveName, group:product.group || 'futures',
+      unit:'USDT', value:null, change:null, status:'missing', source:'공개 거래소 시세',
+      reason:state.demo ? '체험 화면' : !Object.keys(product.markets).length ? '확인된 무기한 계약 없음'
+        : !state.futuresQuotes[scope] ? '실시간 호가 확인 중'
+        : futuresIssueLabels[state.futuresIssue[scope]] || '최근 30초 내 유효한 호가 대기'};
+  });
 }
 function normalizedQuotes() {
   const quotes = state.market?.quotes?.length ? state.market.quotes : coreQuotes();
-  return [...futuresRows(), ...quotes.filter(quote => !cashUSIndexes.has(quote.id) &&
+  return [...futuresRows([...usFutures, ...assetFutures]), ...quotes.filter(quote =>
+    !cashUSIndexes.has(quote.id) && !futuresById.has(quote.id) &&
     (groupName(quote.group) !== '외환' || fxById.has(quote.id)))];
 }
 function coreQuotes() {
@@ -210,8 +216,8 @@ function demoMarket() {
 function renderWelcome(mode = 'pin') {
   state.user = null;
   state.calendar = null;
-  state.futuresQuotes = null;
-  state.futuresIssue = null;
+  state.futuresQuotes = {};
+  state.futuresIssue = {};
   const story = E('section', {class: 'welcome-story'}, brand(), E('div', {class: 'story-copy'}, E('p', {class: 'eyebrow'}, 'A WIDER VIEW. A CLEARER DECISION.'), E('h1', {}, '세계의 움직임을,', E('br'), E('span', {}, '투자의 시선으로.')), E('p', {class: 'story-description'}, '밤사이의 미국 증시부터 오늘의 한국시장까지.', E('br'), '흩어진 숫자와 흐름을 연결하는 당신의 금융 데스크.'), E('div', {class: 'story-visual'}, E('div', {class: 'story-line'}, E('span', {}, 'GLOBAL → KOREA'), E('span', {}, 'CONTEXT MATTERS')), storyIllustration(), E('div', {class: 'story-tags'}, ['글로벌 시장', '한국시장 영향', '기간별 시나리오'].map(x => E('span', {}, x))))), E('div', {class: 'story-foot'}, E('span', {}, 'A DESK FOR THE THOUGHTFUL INVESTOR'), E('span', {}, 'SEOUL · GLOBAL')), E('div', {class: 'story-decoration', 'aria-hidden': 'true'}));
   const setup = mode === 'setup';
   const pinMode = mode === 'pin';
@@ -396,11 +402,13 @@ function renderView() {
   if (state.view === 'overview') main.replaceChildren(
     renderBrief(main.querySelector('#desk-brief')?.hasAttribute('open')),
     renderQuotes(),
-    overviewSectionIntro('업종과 주도 기업','미국 업종별 흐름과 주요 기술주가 같은 방향으로 움직이는지 확인합니다.','layers'),
+    overviewSectionIntro('미국 주식·업종 선물','대표 기업과 업종 ETF의 무기한 선물 호가입니다.','layers'),
     E('div', {class: 'section-pair'}, renderSectors(), renderLeaders()),
     overviewSectionIntro('앞으로 볼 변수','기간별 조건과 예정된 경제 이벤트를 분리해서 확인합니다.','calendar'),
     renderOutlook(), renderEvents(true));
-  if (state.view === 'markets') main.replaceChildren(renderMarketTable(), renderEquityTable('미국 섹터 · ETF 대용지표', state.market?.sectors || []), renderEquityTable('미국 대표 종목', state.market?.leaders || []));
+  if (state.view === 'markets') main.replaceChildren(renderMarketTable(),
+    renderFuturesPanel('us-sector-panel','미국 업종 ETF 선물',sectorFutures),
+    renderFuturesPanel('us-stock-panel','미국 대표주 선물',stockFutures));
   if (state.view === 'fx') main.replaceChildren(renderFxView());
   if (state.view === 'instrument') main.replaceChildren(renderInstrumentSearch());
   if (state.view === 'outlooks') main.replaceChildren(renderImpact(), renderOutlook(), methodologyPanel());
@@ -445,7 +453,7 @@ function renderInstrumentSearch() {
     submitInstrumentSearch();
   }});
   const tabs=E('div',{class:'instrument-tabs',role:'group','aria-label':'조회 시장'},
-    [['KR','국내 주식'],['US','미국 주식·ETF'],['CRYPTO','바이낸스 코인']].map(([id,label])=>
+    [['KR','국내 주식 현물'],['US','미국 주식·ETF 선물'],['CRYPTO','코인 선물']].map(([id,label])=>
       E('button',{type:'button',class:`tab ${active===id?'active':''}`,
         'aria-pressed':String(active===id),
         onClick:()=>{
@@ -464,9 +472,9 @@ function renderInstrumentSearch() {
     icon('search'),state.instrumentLoading?'조회 중...':'시세 조회');
   form.append(tabs,E('div',{class:'instrument-search-row'},E('div',{},label,input),
     action),E('p',{id:'instrument-hint',class:'tiny muted'},active==='KR'
-    ?'코스피·코스닥 개별 주식·ETF는 6자리 코드로 검색할 수 있습니다. 종목명 자동완성은 아래 추천 항목에 한정됩니다.'
-    :active==='US'?'미국 상장 종목은 티커로 조회합니다. NASDAQ → NYSE → AMEX 순서로 KIS에서 확인합니다.'
-    :'바이낸스 현물 USDT 거래쌍으로 조회합니다. USD 가격과 혼동하지 마세요.'));
+    ?'코스피·코스닥 개별 주식·ETF의 현물 시세를 6자리 코드로 확인합니다.'
+    :active==='US'?'미국 주식 또는 ETF가 기초자산인 상장 무기한 계약을 티커로 찾습니다.'
+    :'코인 이름 또는 티커로 상장 USDT 무기한 선물을 찾습니다.'));
   const samples=E('div',{class:'instrument-samples'},E('span',{class:'tiny muted'},'빠른 조회'),
     searchSamples[active].map(([name,code])=>
       E('button',{type:'button',class:'instrument-sample',disabled:state.instrumentLoading,
@@ -482,21 +490,21 @@ function renderInstrumentSearch() {
     const valid=hasValue(q);
     resultNode=E('div',{class:'instrument-result','aria-live':'polite'},
       E('div',{class:'instrument-result-heading'},
-        E('div',{},E('p',{class:'eyebrow'},q.market==='CRYPTO'?'BINANCE SPOT':q.market==='KR'?'KOREA STOCK':'US EQUITY'),
+        E('div',{},E('p',{class:'eyebrow'},q.productType),
           E('h3',{},q.name||q.symbol),
           E('p',{class:'instrument-code'},q.symbol, q.exchange?` · ${q.exchange}`:'')),
-        badge(q.status==='live'?'공개 현물 조회':'거래소 지연 가능',q.status==='live'?'green':'amber')),
+        badge(q.market==='KR'?'현물 시세':'조회 시점 호가',q.market==='KR'?'blue':'green')),
       E('div',{class:'instrument-result-quote'},E('strong',{},valid?`${formatValue(q)} ${q.unit}`:'—'),
-        E('span',{class:changeClass(q.change)},q.change===null?'등락률 미제공':formatChange(q))),
-      E('p',{class:'tiny muted'},`출처: ${sourceName(q.source)} · ${q.observedAt?dateText(q.observedAt):'관측시각 미제공'}`),
-      E('p',{class:'tiny muted'},q.delay||'공급자별 이용권한·시차를 확인해 주세요.'),
-      q.sourceUrl?link('공급자 API 안내',q.sourceUrl):null);
+        E('span',{class:changeClass(q.change)},q.timestampPrecision==='book'?'호가 중간값':formatChange(q))),
+      E('p',{class:'tiny muted'},`${sourceName(q.source)} · ${quoteTimestamp(q)}`),
+      q.delay?E('p',{class:'tiny muted'},q.delay):null,
+      hasIndexChart(q)?B('선물 차트',()=>openIndexChart(q),'small','chart'):null,
+      q.sourceUrl?link('거래소 원자료',q.sourceUrl):null);
   }else resultNode=E('div',{class:'instrument-search-feedback','aria-live':'polite'},
     result?.message||'종목을 선택하거나 검색어를 입력해 시세를 확인해 보세요.');
   return E('section',{class:'panel instrument-search-panel'},
-    panelHead('개별 종목 검색','시세 조회 전용 · 주문/계좌 연결 없음',badge('KIS · Binance','blue'),'search'),
-    form,samples,resultNode,E('p',{class:'panel-foot'},
-      '국내·미국 주식은 KIS 이용권한에 따라 지연될 수 있습니다. 국내·미국 종목명 예시는 일부만 제공하며, 전체 종목은 코드/티커로 검색합니다.'));
+    panelHead('개별 종목 검색','국내 현물 및 해외 무기한 선물 시세',null,'search'),
+    form,samples,resultNode);
 }
 function dataState() {
   if (state.demo) return E('span', {class: 'data-state partial'}, E('i', {class: 'dot'}), 'EXAMPLE');
@@ -727,6 +735,7 @@ function renderQuotes() {
   });
   const domesticPlus=take(q=>groupName(q.group)==='한국시장');
   const futures = take(q => q.group === 'futures');
+  const asia = take(q => q.group === 'asia-futures');
   const rates = take(q => groupName(q.group) === '금리');
   const currencyQuotes = new Map(take(q => groupName(q.group) === '외환').map(quote => [quote.id, quote]));
   const featuredFx = featuredFxCodes.map(code => {
@@ -737,13 +746,14 @@ function renderQuotes() {
   const crypto=take(q=>groupName(q.group)==='디지털자산');
   const other=take(()=>true);
   const groups=[
-    ['01','metrics-korea','한국 증시 · 외국인·연기금 수급','','korea',[...domestic,...domesticPlus]],
+    ['01','metrics-korea','한국 증시 · 외국인·연기금 수급','국내 현물 지수와 투자자 수급','korea',[...domestic,...domesticPlus]],
     ['02','metrics-global','미국 지수선물','지수·ETF 연동 무기한 · 실시간 호가 · 화면 8초 갱신','global',futures],
-    ['03','metrics-macro','금리','미국·한국 채권금리와 수익률 변화를 확인합니다.','macro',rates],
-    ['04','metrics-fx','원화 환율','각 통화가 원화로 얼마인지 확인합니다.','fx',featuredFx],
-    ['05','metrics-commodities','원자재','금·에너지·산업금속 가격을 주식시장과 구분해 비교합니다.','commodities',commodities],
-    ['06','metrics-crypto','디지털자산','BTC·ETH·SOL 등 코인 현물 가격을 확인합니다. USD와 USDT를 구분해 표시합니다.','crypto',crypto],
-    ['07','metrics-other','그 밖의 지표','앞선 범주에 포함되지 않은 관측 지표입니다.','other',other],
+    ['03','metrics-asia','일본 지수선물','닛케이225 연동 무기한','global',asia],
+    ['04','metrics-macro','금리','미국·한국 채권 수익률 참고 지표','macro',rates],
+    ['05','metrics-fx','원화 환율','원화 환산과 여행 환전을 위한 기준환율','fx',featuredFx],
+    ['06','metrics-commodities','원자재 선물','금·은·원유·산업금속 무기한 선물','commodities',commodities],
+    ['07','metrics-crypto','코인 선물','BTC·ETH·SOL 무기한 선물','crypto',crypto],
+    ['08','metrics-other','그 밖의 지표','달러지수 선물과 참고 지표','other',other],
   ].filter(group=>group[5].length);
   const jump=E('nav',{class:'metric-jump','aria-label':'핵심 지표 주제 바로가기'},
     E('span',{class:'metric-jump-label'},'주제별 이동'),
@@ -763,7 +773,11 @@ function renderQuotes() {
       '　외국인 수급은 등락률이 아닌 순매수액입니다. 서로 다른 지표의 관측일과 출처를 함께 확인하세요.'));
 }
 const CHART_INDEX_IDS = new Set(['kospi','kosdaq','dxy','broadusd']);
-function hasIndexChart(quote) { return (CHART_INDEX_IDS.has(quote?.id) || fxById.has(quote?.id) || futuresById.has(quote?.id)) && !state.demo; }
+function hasIndexChart(quote) {
+  const product = futuresById.get(quote?.id);
+  return !state.demo && (product ? Object.keys(product.markets).length > 0
+    : CHART_INDEX_IDS.has(quote?.id) || fxById.has(quote?.id));
+}
 function chartLabel(quote) { return fxById.has(quote.id) ? '일별 원화 환율' : futuresById.has(quote.id) ? '선물' : '과거 지수'; }
 function quoteTimestamp(quote) {
   const value = quote.observedAt || quote.retrievedAt;
@@ -1022,15 +1036,20 @@ function sparkline(quote) {
   return svg;
 }
 function groupName(group) {
-  return ({equities: '주식', equity: '주식', stocks: '주식', indices: '주식', rates: '금리', yields: '금리', bonds: '금리', fx: '외환', currencies: '외환', commodities: '원자재', commodity: '원자재', energy: '원자재', metals: '원자재', korea: '한국시장', crypto: '디지털자산', volatility: '변동성', risk: '변동성', futures: '미국 선물'})[group] || group || '기타';
+  return ({equities: '주식', equity: '주식', stocks: '주식', indices: '주식', rates: '금리', yields: '금리', bonds: '금리', fx: '외환', currencies: '외환', commodities: '원자재', commodity: '원자재', energy: '원자재', metals: '원자재', korea: '한국시장', crypto: '디지털자산', volatility: '변동성', risk: '변동성', futures: '미국 선물', 'asia-futures':'일본 선물'})[group] || group || '기타';
 }
 function renderSectors() {
-  const sectors = (state.market?.sectors || []).filter(q => hasValue(q) && q.status !== 'stale' && !q.deploymentBackup);
-  return E('section', {class: 'panel'}, panelHead('섹터의 온도', '미국 주요 업종의 등락', null, 'layers'), sectors.length ? E('div', {class: 'sector-list'}, sectors.slice(0, 8).map(sector => E('div', {class: `sector-tile ${Number(sector.change) > 0 ? 'gain-bg' : Number(sector.change) < 0 ? 'loss-bg' : ''}`}, E('span', {}, sector.name || sector.sector), E('strong', {class: changeClass(sector.change)}, formatChange(sector))))) : E('div', {class: 'compact-empty'}, '— 섹터 데이터 연결 필요', E('br'), '업종별 시세가 연결되면 상승의 확산 정도를 확인할 수 있습니다.'));
+  return renderFuturesPanel('us-sector-panel','미국 업종 ETF 선물',sectorFutures,8);
 }
 function renderLeaders() {
-  const leaders = (state.market?.leaders || []).filter(q => hasValue(q) && q.status !== 'stale' && !q.deploymentBackup);
-  return E('section', {class: 'panel'}, panelHead('주도 종목', '시장의 움직임을 설명하는 대표 기업', null, 'chart'), leaders.length ? E('div', {class: 'leaders-list'}, leaders.slice(0, 4).map(item => E('div', {class: 'leader-row'}, E('div', {class: 'leader-monogram'}, String(item.symbol || item.name || '').slice(0, 2)), E('div', {}, E('div', {class: 'leader-title'}, item.name), E('div', {class: 'leader-symbol'}, item.symbol || item.ticker || '')), E('div', {class: 'leader-change'}, E('div', {class: changeClass(item.change)}, formatChange(item)), E('div', {class: 'leader-value'}, hasValue(item) ? `$${formatValue(item)}` : '—'))))) : E('div', {class: 'compact-empty'}, '— 종목 데이터 연결 필요', E('br'), '대표 종목의 가격과 시장 대비 움직임을 함께 제공합니다.'));
+  return renderFuturesPanel('us-stock-panel','미국 대표주 선물',stockFutures,4);
+}
+function renderFuturesPanel(id, title, products, limit = products.length) {
+  const rows = futuresRows(products);
+  const available = rows.filter(hasValue);
+  const visible = [...available,...rows.filter(row=>!hasValue(row))].slice(0,limit);
+  return E('section',{class:'panel',id},panelHead(title,`실시간 호가 ${available.length}/${rows.length}`),
+    E('div',{class:'market-grid'},visible.map(quoteCard)));
 }
 const horizons = [{id: 'day', label: '오늘', aliases: ['day', 'today', 'daily']}, {id: 'short', label: '2~3일', aliases: ['short', '2-3d', '2-3days']}, {id: 'week', label: '이번 주', aliases: ['week', 'weekly']}, {id: 'month', label: '1개월', aliases: ['month', 'monthly']}, {id: 'quarter', label: '3~6개월', aliases: ['quarter', '3-6m', 'medium']}];
 function renderOutlook() {
@@ -1138,12 +1157,6 @@ function renderMarketRows() {
     tbody.replaceChildren(...content);
   }
   if (!rows.length) tbody.append(E('tr', {}, E('td', {colspan: 5}, E('div', {class: 'empty-state'}, '검색 조건에 맞는 지표가 없습니다.'))));
-}
-function renderEquityTable(title, rows) {
-  const section = E('section', {class: 'panel'}, panelHead(title, state.demo ? '체험용 예시 · 실제 종목·업종 등락이 아닙니다.' : '공급사 시세가 없는 항목은 수치를 표시하지 않습니다.'));
-  if (!rows.length) { section.append(E('div', {class: 'compact-empty'}, '— 데이터 연결 필요')); return section; }
-  section.append(E('div', {class: 'table-wrap'}, E('table', {}, E('thead', {}, E('tr', {}, ['종목 / 지표', '가격 / 단위', '변동', '관측 시점', '출처'].map(x => E('th', {}, x)))), E('tbody', {}, rows.map(row => E('tr', {}, E('td', {}, E('strong', {}, row.name), E('div', {class: 'tiny muted'}, row.symbol || row.id || '')), E('td', {class: 'mono'}, hasValue(row) ? `${formatValue(row)} ${row.unit || ''}` : '—'), E('td', {class: changeClass(row.change)}, row.change === null || row.change === undefined ? '—' : formatChange(row)), E('td', {class: 'tiny muted'}, state.demo ? '가상 예시' : row.observedAt ? dateText(row.observedAt) : '—'), E('td', {class: 'tiny muted'}, state.demo ? '체험용 예시' : hasValue(row) ? sourceName(row.source) : row.reason || '데이터 연결 필요')))))));
-  return section;
 }
 function failureLabel(code) {
   if (/^HTTP_429$/.test(code)) return '호출 제한(429)';
@@ -1472,39 +1485,50 @@ async function loadMarket() {
   if (generation !== state.sessionGeneration || !state.user || state.demo) return;
   state.market = {...defaultMarket(), ...data, briefing: data.briefing || state.market?.briefing || null};
 }
-let futuresRefreshRunning = false;
-async function loadFutures() {
-  if (!state.user || state.demo || state.user.mustChangePassword || futuresRefreshRunning) return;
+const futuresRequests = new Map();
+async function loadFutures(scope) {
+  if (!scope) return Promise.all([loadFutures('indices'),loadFutures('extended')]);
+  if (!state.user || state.demo || state.user.mustChangePassword) return;
   const generation = state.sessionGeneration;
-  futuresRefreshRunning = true;
+  if (futuresRequests.get(scope) === generation) return;
+  futuresRequests.set(scope,generation);
   try {
-    const data = await api('/api/futures');
+    const data = await api(scope === 'indices' ? '/api/futures' : '/api/futures?scope=extended');
     if (generation === state.sessionGeneration) {
-      state.futuresQuotes = Array.isArray(data.quotes) ? data.quotes : [];
-      state.futuresIssue = data.reason;
+      state.futuresQuotes[scope] = Array.isArray(data.quotes) ? data.quotes : [];
+      state.futuresIssue[scope] = data.reason;
     }
   } catch {
     if (generation === state.sessionGeneration) {
-      state.futuresIssue = 'network';
-      state.futuresQuotes ||= [];
+      state.futuresIssue[scope] = 'network';
+      state.futuresQuotes[scope] ||= [];
     }
-  } finally { futuresRefreshRunning = false; }
+  } finally {
+    if (futuresRequests.get(scope) === generation) futuresRequests.delete(scope);
+  }
 }
-async function autoRefreshFutures() {
-  if (document.hidden || !state.user || state.demo) return;
-  if (!['overview', 'markets'].includes(state.view)) return;
+function replaceFuturesSection(current, next) {
+  if (!current || !next) return;
+  const active = document.activeElement;
+  const quoteId = active && current.contains(active) ? active.closest('[data-quote-id]')?.dataset.quoteId : null;
+  current.replaceWith(next);
+  if (quoteId) [...next.querySelectorAll('[data-quote-id]')].find(card=>card.dataset.quoteId===quoteId)?.focus({preventScroll:true});
+}
+async function autoRefreshFutures(scope = 'indices') {
+  if (document.hidden || !state.user || state.demo || !['overview','markets'].includes(state.view)) return;
   const generation = state.sessionGeneration;
-  await loadFutures();
+  await loadFutures(scope);
   if (generation !== state.sessionGeneration) return;
-  const grid = document.querySelector('#metrics-global .market-grid');
-  if (state.view === 'overview' && grid) {
-    const focused = document.activeElement?.closest('.quote-card')?.dataset.quoteId;
-    const cards = futuresRows().map(quoteCard);
-    grid.replaceChildren(...cards);
-    if (focused) cards.find(card => card.dataset.quoteId === focused)?.focus({preventScroll:true});
-    const coverage = document.querySelector('#metrics-global .metric-section-coverage');
-    if (coverage) coverage.textContent = `수신 ${futuresRows().filter(hasValue).length}/${usFutures.length}`;
+  if (state.view === 'overview') {
+    const panel = renderQuotes();
+    const sections = scope === 'indices' ? ['metrics-global'] : ['metrics-asia','metrics-commodities','metrics-crypto','metrics-other'];
+    for (const id of sections) replaceFuturesSection(document.getElementById(id),panel.querySelector('#'+id));
   } else if (state.view === 'markets' && !document.querySelector('[role="dialog"]')) renderMarketRows();
+  if (scope === 'extended' && ['overview','markets'].includes(state.view)) {
+    const overview = state.view === 'overview';
+    replaceFuturesSection(document.getElementById('us-sector-panel'),overview ? renderSectors() : renderFuturesPanel('us-sector-panel','미국 업종 ETF 선물',sectorFutures));
+    replaceFuturesSection(document.getElementById('us-stock-panel'),overview ? renderLeaders() : renderFuturesPanel('us-stock-panel','미국 대표주 선물',stockFutures));
+  }
   const status = document.querySelector('.data-state-action');
   if (status !== document.activeElement) status?.replaceWith(dataState());
 }
@@ -1518,6 +1542,7 @@ async function loadDashboard() {
   const requests = [api('/api/market'), api('/api/calendar')];
   if (!state.user?.pinLogin) requests.push(api('/api/chat/history'), api('/api/settings'));
   autoRefreshFutures();
+  autoRefreshFutures('extended');
   const results = await Promise.allSettled(requests);
   if (generation !== state.sessionGeneration || !state.user || state.demo) return;
   const [market, calendar, history, settings] = results;
@@ -1579,10 +1604,14 @@ async function autoRefreshMarket() {
 }
 document.addEventListener('visibilitychange', () => {
   if (state.view === 'overview' && Date.now() >= Date.parse(state.market?.briefing?.nextUpdateAt)) autoRefreshMarket();
-  if (!document.hidden) autoRefreshFutures();
+  if (!document.hidden) {
+    autoRefreshFutures();
+    autoRefreshFutures('extended');
+  }
 });
 window.setInterval(autoRefreshMarket, 5*60*1000);
 window.setInterval(autoRefreshFutures, FUTURES_REFRESH_MS);
+window.setInterval(() => autoRefreshFutures('extended'), EXTENDED_FUTURES_REFRESH_MS);
 window.setInterval(() => { if (!document.hidden) refreshFuturesChart?.(); },25000);
 window.setInterval(() => { updateClock(); heartbeat(); }, 20000);
 initialize().catch(error => { state.status = {error: true}; renderWelcome(); toast(errorText(error), true); });

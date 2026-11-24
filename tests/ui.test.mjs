@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {chartSeries,chartPeriod,chartPeriodChange,chartFrequency,candleSeries,minuteFrequencies,intradayMinutes,aggregateIndexMinutes} from '../public/chart-data.js';
 import {fxCurrencies, featuredFxCodes} from '../public/fx-currencies.js';
-import {usFutures, futuresPeriods, FUTURES_FRESHNESS_MS, FUTURES_REFRESH_MS} from '../public/futures-config.js';
+import {usFutures, assetFutures, stockFutures, sectorFutures, futuresProducts, futuresPeriods, EXTENDED_FUTURES_REFRESH_MS, FUTURES_FRESHNESS_MS, FUTURES_REFRESH_MS} from '../public/futures-config.js';
 import {readFile} from 'node:fs/promises';
 import {parseHTML} from 'linkedom';
 import {setTimeout as nativeTimeout,clearTimeout as nativeClearTimeout} from 'node:timers';
@@ -19,7 +19,7 @@ test('standalone demo renders every destination without accessing member APIs',a
   const context={
     document,window,Node:domWindow.Node,HTMLElement:domWindow.HTMLElement,Element:domWindow.Element,
     chartSeries,chartPeriod,chartPeriodChange,chartFrequency,candleSeries,minuteFrequencies,intradayMinutes,aggregateIndexMinutes,
-    fxCurrencies,featuredFxCodes,usFutures,futuresPeriods,FUTURES_FRESHNESS_MS,FUTURES_REFRESH_MS,
+    fxCurrencies,featuredFxCodes,usFutures,assetFutures,stockFutures,sectorFutures,futuresProducts,futuresPeriods,EXTENDED_FUTURES_REFRESH_MS,FUTURES_FRESHNESS_MS,FUTURES_REFRESH_MS,
     location,navigator:{onLine:true},console,Intl,Date,URL,URLSearchParams,TextEncoder,queueMicrotask,
     setTimeout:localTimer,clearTimeout,setInterval:()=>0,clearInterval:()=>{},
     requestAnimationFrame:fn=>localTimer(fn,0),cancelAnimationFrame:clearTimeout,
@@ -30,7 +30,7 @@ test('standalone demo renders every destination without accessing member APIs',a
   domWindow.HTMLElement.prototype.scrollIntoView=function(){};
   const ctx=vm.createContext(context);
   const browserModule=await readFile('public/app.js','utf8');
-  vm.runInContext(browserModule.replace(/^import [^\n]+\n/gm,'').trimStart(),ctx,{filename:'app.js'});
+  vm.runInContext(browserModule.slice(browserModule.indexOf('const app = ')),ctx,{filename:'app.js'});
   await new Promise(r=>nativeTimeout(r,20));
   if(!document.querySelector('.demo-banner')) {
     vm.runInContext('enterDemo()',ctx);
@@ -65,15 +65,14 @@ test('standalone demo renders every destination without accessing member APIs',a
   assert.match(document.querySelector('.brief-content').textContent,/SPX500_USDT.*Gate.*NAS100_USDT.*Gate.*다우 선물/);
 
   const topics=[...document.querySelectorAll('.metric-section-title')].map(el=>el.textContent);
-  assert.deepEqual(topics.slice(0,6),[
-    '한국 증시 · 외국인·연기금 수급','미국 지수선물','금리','원화 환율','원자재','디지털자산'
-  ],'six distinct topic headings should be visible in order');
+  assert.deepEqual(topics.slice(0,7),[
+    '한국 증시 · 외국인·연기금 수급','미국 지수선물','일본 지수선물','금리','원화 환율','원자재 선물','코인 선물'
+  ],'distinct trading instrument and reference sections stay in order');
   assert.equal(document.querySelectorAll('.metric-jump-button').length,topics.length);
   assert.equal(document.querySelectorAll('.overview-section-intro').length, 2,
     'sector and outlook sections keep their own headings');
   for (const section of document.querySelectorAll('.metric-section')) {
-    if (section.id !== 'metrics-korea') assert.ok(section.querySelector('.metric-section-description')?.textContent.trim());
-    else assert.equal(section.querySelector('.metric-section-description'),null);
+    assert.ok(section.querySelector('.metric-section-description')?.textContent.trim());
     assert.ok(section.querySelectorAll('.quote-card').length>0);
   }
   for(const view of ['overview','markets','fx','instrument','outlooks','calendar','sources','users','activity']) {

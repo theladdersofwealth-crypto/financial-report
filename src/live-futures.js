@@ -1,13 +1,14 @@
-import {FUTURES_FRESHNESS_MS, futuresPeriods, usFutures} from '../public/futures-config.js';
+import {FUTURES_FRESHNESS_MS, futuresPeriods, futuresProducts, futuresScopes} from '../public/futures-config.js';
 
 const urls = {
   gate:'https://api.gateio.ws/api/v4/futures/usdt/',
   binance:'https://fapi.binance.com/fapi/v1/',
   mexc:'https://api.mexc.com/api/v1/contract/',
+  bybit:'https://api.bybit.com/v5/market/',
 };
-const labels = {gate:'Gate', binance:'바이낸스', mexc:'MEXC'};
+const labels = {gate:'Gate', binance:'바이낸스', mexc:'MEXC', bybit:'Bybit'};
 const links = {gate:'https://www.gate.com/futures/USDT/', binance:'https://www.binance.com/en/futures/',
-  mexc:'https://www.mexc.com/futures/'};
+  mexc:'https://www.mexc.com/futures/', bybit:'https://www.bybit.com/trade/usdt/'};
 const MINUTE = 60000;
 
 async function providerJson(fetcher, venue, path, parameters) {
@@ -25,12 +26,13 @@ async function providerJson(fetcher, venue, path, parameters) {
 }
 
 function contractFields(product, venue, symbol) {
-  const etf = venue === 'binance' || product.id === 'fut_sox';
+  const etfFallback = !product.productType && venue === 'binance' && product.id !== 'fut_sox';
+  const productType = product.productType || (venue === 'binance' || product.id === 'fut_sox' ? 'ETF 연동' : '지수 연동');
   const etfName = symbol.split(/_?USDT$/)[0];
   return {
-    id:product.id, name:etf && product.id !== 'fut_sox' ? `${etfName} ETF 무기한` : product.liveName,
-    group:'futures', venue, contract:symbol, exchange:labels[venue], unit:'USDT', decimals:2,
-    source:labels[venue], sourceUrl:links[venue] + symbol, productType:etf ? 'ETF 연동' : '지수 연동',
+    id:product.id, name:etfFallback ? `${etfName} ETF 무기한` : product.liveName,
+    group:product.group || 'futures', venue, contract:symbol, exchange:labels[venue], unit:'USDT',
+    source:labels[venue], sourceUrl:links[venue] + symbol, productType,
   };
 }
 
@@ -52,12 +54,19 @@ function bookLevels(venue, data, symbol) {
   if (venue === 'mexc' && data.success === true) return {
     bid:positive(data.data?.bids?.[0]?.[0]), ask:positive(data.data?.asks?.[0]?.[0]), time:Number(data.data?.timestamp),
   };
+  if (venue === 'bybit' && data.retCode === 0 && data.result?.s === symbol) return {
+    bid:positive(data.result.b?.[0]?.[0]), ask:positive(data.result.a?.[0]?.[0]),
+    time:Number(data.result.cts || data.result.ts),
+  };
   return {};
 }
 
 async function quoteFor(product, venue, symbol, fetcher, clock, report) {
-  const path = venue === 'gate' ? 'order_book' : venue === 'binance' ? 'ticker/bookTicker' : `depth/${symbol}`;
-  const parameters = venue === 'gate' ? {contract:symbol, limit:1} : venue === 'binance' ? {symbol} : {limit:1};
+  const requests = {
+    gate:['order_book',{contract:symbol,limit:1}], binance:['ticker/bookTicker',{symbol}],
+    mexc:[`depth/${symbol}`,{limit:1}], bybit:['orderbook',{category:'linear',symbol,limit:1}],
+  };
+  const [path,parameters] = requests[venue];
   const {http, data} = await providerJson(fetcher, venue, path, parameters);
   const observed = data && typeof data === 'object' ? bookLevels(venue, data, symbol) : {};
   const now = clock();
@@ -68,21 +77,51 @@ async function quoteFor(product, venue, symbol, fetcher, clock, report) {
     report({venue, symbol, http, reason:validBook ? 'quote_time' : 'no_book', ageMs:validBook ? age : null});
     return null;
   }
-  return {...contractFields(product, venue, symbol), value:(bid + ask) / 2, bid, ask,
+  const value = (bid + ask) / 2;
+  return {...contractFields(product, venue, symbol), value, bid, ask, decimals:value < 0.01 ? 8 : value < 10 ? 4 : 2,
     change:null, changeUnit:'%', observedAt:new Date(time).toISOString(), retrievedAt:new Date(now).toISOString(),
     timestampPrecision:'book', status:'live', basis:'최우선 매수·매도 호가 중간값'};
 }
 
-export async function collectLiveFutures(env = {}, report = () => {}, clock = Date.now) {
+async function productQuote(product, fetcher, clock, report) {
+  for (const [venue, symbol] of Object.entries(product.markets)) {
+    const quote = await quoteFor(product, venue, symbol, fetcher, clock, report);
+    if (quote) return quote;
+  }
+  return null;
+}
+
+export async function collectLiveFutures(env = {}, report = () => {}, clock = Date.now, scope = 'indices') {
+  const products = Object.hasOwn(futuresScopes,scope) ? futuresScopes[scope] : [];
   const fetcher = env.fetchProvider || fetch;
-  const quotes = await Promise.all(usFutures.map(async product => {
-    for (const [venue, symbol] of Object.entries(product.markets)) {
-      const quote = await quoteFor(product, venue, symbol, fetcher, clock, report);
-      if (quote) return quote;
+  const quotes = [];
+  let next = 0;
+  await Promise.all(Array.from({length:Math.min(5,products.length)}, async () => {
+    while (next < products.length) {
+      const index = next++;
+      quotes[index] = await productQuote(products[index],fetcher,clock,report);
     }
-    return null;
   }));
   return quotes.filter(quote => quote && clock() - Date.parse(quote.observedAt) <= FUTURES_FRESHNESS_MS);
+}
+
+export async function lookupLiveFuture(env, market, ticker) {
+  const fetcher = env.fetchProvider || fetch;
+  const group = market === 'US' ? ['us-stock','us-sector'] : ['crypto'];
+  const product = futuresProducts.find(item => group.includes(item.group) && item.symbol === ticker);
+  if (product && Object.keys(product.markets).length) return productQuote(product,fetcher,Date.now,()=>{});
+
+  const base = ticker === 'BRK.B' ? 'BRKB' : ticker;
+  if (!/^[A-Z0-9]{1,15}$/.test(base)) return null;
+  const symbol = `${base}USDT`;
+  const {data} = await providerJson(fetcher,'bybit','instruments-info',{category:'linear',symbol});
+  const instrument = data?.result?.list?.find(item => item.symbol === symbol);
+  const types = market === 'US' ? ['stock','ETF'] : ['','crypto'];
+  if (instrument?.status !== 'Trading' || instrument.contractType !== 'LinearPerpetual'
+      || instrument.baseCoin !== base || instrument.quoteCoin !== 'USDT' || !types.includes(instrument.symbolType)) return null;
+  const productType = market === 'CRYPTO' ? '코인 선물' : instrument.symbolType === 'ETF' ? 'ETF 연동' : '주식 연동';
+  return quoteFor({id:`search_${base}`,liveName:`${ticker} 무기한`,group:group[0],productType},
+    'bybit',symbol,fetcher,Date.now,()=>{});
 }
 
 const periods = {
@@ -93,6 +132,7 @@ const periods = {
 function markRows(venue, data) {
   if (venue === 'gate') return Array.isArray(data) ? data.map(row => [Number(row.t)*1000,row.o,row.h,row.l,row.c]) : [];
   if (venue === 'binance') return Array.isArray(data) ? data : [];
+  if (venue === 'bybit') return data?.retCode === 0 && Array.isArray(data.result?.list) ? data.result.list : [];
   const raw = data?.data;
   if (data?.success !== true || !Array.isArray(raw?.time)) return [];
   return raw.time.map((t,i) => [Number(t)*1000,raw.open?.[i],raw.high?.[i],raw.low?.[i],raw.close?.[i]]);
@@ -124,8 +164,8 @@ function candles(rows, period, bucketMinutes, now) {
 }
 
 export async function loadLiveFuturesChart(env, id, period, venue, now = Date.now()) {
-  const product = usFutures.find(candidate => candidate.id === id);
-  if (!product || !futuresPeriods.some(([key]) => key === period)
+  const product = futuresProducts.find(candidate => candidate.id === id);
+  if (!product || !Object.keys(product.markets).length || !futuresPeriods.some(([key]) => key === period)
       || venue && !Object.hasOwn(product.markets,venue)) return {status:'invalid',bars:[]};
   const source = venue || Object.keys(product.markets)[0];
   const symbol = product.markets[source];
@@ -138,9 +178,13 @@ export async function loadLiveFuturesChart(env, id, period, venue, now = Date.no
   } else if (source === 'binance') {
     path = 'markPriceKlines';
     parameters = {symbol,interval:period === 'M' ? '1M' : interval,limit};
-  } else {
+  } else if (source === 'mexc') {
     path = `kline/fair_price/${symbol}`;
     parameters = {interval:mexcInterval};
+  } else {
+    path = 'mark-price-kline';
+    const bybitPeriod = {D:'D', W:'W', M:'M'}[period] || String(bucketMinutes ? parseInt(interval,10) : parseInt(period,10));
+    parameters = {category:'linear',symbol,interval:bybitPeriod,limit:Math.min(limit,200)};
   }
   const {data} = await providerJson(env.fetchProvider || fetch, source, path, parameters);
   const bars = candles(markRows(source,data),period,bucketMinutes,now);
