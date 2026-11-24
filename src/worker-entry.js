@@ -1,38 +1,60 @@
 import { DurableObject } from 'cloudflare:workers';
-import { collectKisFutures, issueKisToken, kisConfigured } from './kis.js';
+import { issueKisToken, kisConfigured } from './kis.js';
 import { briefingWindow, buildUsBriefing } from './briefing.js';
+import { collectLiveFutures } from './live-futures.js';
+import { FUTURES_FRESHNESS_MS } from '../public/futures-config.js';
 
 export { default, DeskRoom } from './worker.js';
 
 export class MarketBriefing extends DurableObject {
   #refreshing = null;
+  #quoteCache = null;
+  #quoting = null;
 
-  async #currentWindow() {
-    const saved = await this.ctx.storage.get('latest');
-    return saved?.windowStart === briefingWindow(Date.now()).windowStart ? saved : null;
+  async latestFutures() {
+    const now = Date.now();
+    if (this.#quoteCache?.expiresAt > now) {
+      return {...this.#quoteCache.snapshot,
+        quotes:this.#quoteCache.snapshot.quotes.filter(quote => now - Date.parse(quote.observedAt) <= FUTURES_FRESHNESS_MS)};
+    }
+    if (!this.#quoting) this.#quoting = this.#readFutures();
+    const pending = this.#quoting;
+    try { return await pending; } finally { if (this.#quoting === pending) this.#quoting = null; }
+  }
+
+  async #readFutures() {
+    const issues = [];
+    const quotes = await collectLiveFutures(this.env, issue => issues.push(issue));
+    const snapshot = {quotes, issues, reason:quotes.length ? null : 'network'};
+    this.#quoteCache = {snapshot, expiresAt:Date.now()+4000};
+    return snapshot;
+  }
+
+  #currentWindow(saved) {
+    const now = Date.now();
+    return saved?.windowStart === briefingWindow(now).windowStart
+      && (saved.items.length || now - Date.parse(saved.generatedAt) < 60000);
   }
 
   async needsRefresh() {
-    return !(await this.#currentWindow());
+    return !this.#currentWindow(await this.ctx.storage.get('latest-live'));
   }
 
-  async current(cashQuotes) {
-    const saved = await this.#currentWindow();
-    if (saved) return saved;
-    if (!this.#refreshing) this.#refreshing = this.#publish(cashQuotes);
+  async current() {
+    const saved = await this.ctx.storage.get('latest-live');
+    if (this.#currentWindow(saved)) return saved;
+    if (!this.#refreshing) this.#refreshing = this.#publish(saved);
     const pending = this.#refreshing;
     try { return await pending; } finally { if (this.#refreshing === pending) this.#refreshing = null; }
   }
 
-  async #publish(cashQuotes) {
-    const futures = await collectKisFutures(this.env);
-    const briefing = buildUsBriefing(futures, cashQuotes, Date.now());
-    await this.ctx.storage.put('latest', briefing);
+  async #publish(previous) {
+    const {quotes, issues} = await this.latestFutures();
+    const briefing = buildUsBriefing(quotes, previous, Date.now());
+    await this.ctx.storage.put('latest-live', briefing);
     console.info('US market briefing refreshed', {
       generatedAt:briefing.generatedAt, nextUpdateAt:briefing.nextUpdateAt,
-      futures:briefing.items.filter(item => item.type === 'future').length,
-      officialCloses:briefing.items.filter(item => item.type === 'cash').length,
-      headline:briefing.headline,
+      contracts:briefing.items.map(item => `${item.venue}:${item.contract}`), issues,
     });
     return briefing;
   }

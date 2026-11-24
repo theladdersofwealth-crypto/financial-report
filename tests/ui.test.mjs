@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {chartSeries,chartPeriod,chartPeriodChange,chartFrequency,candleSeries,minuteFrequencies,intradayMinutes,aggregateIndexMinutes} from '../public/chart-data.js';
 import {fxCurrencies, featuredFxCodes} from '../public/fx-currencies.js';
-import {usFutures, futuresPeriods} from '../public/futures-config.js';
+import {usFutures, futuresPeriods, FUTURES_FRESHNESS_MS, FUTURES_REFRESH_MS} from '../public/futures-config.js';
 import {readFile} from 'node:fs/promises';
 import {parseHTML} from 'linkedom';
 import {setTimeout as nativeTimeout,clearTimeout as nativeClearTimeout} from 'node:timers';
@@ -19,7 +19,7 @@ test('standalone demo renders every destination without accessing member APIs',a
   const context={
     document,window,Node:domWindow.Node,HTMLElement:domWindow.HTMLElement,Element:domWindow.Element,
     chartSeries,chartPeriod,chartPeriodChange,chartFrequency,candleSeries,minuteFrequencies,intradayMinutes,aggregateIndexMinutes,
-    fxCurrencies,featuredFxCodes,usFutures,futuresPeriods,
+    fxCurrencies,featuredFxCodes,usFutures,futuresPeriods,FUTURES_FRESHNESS_MS,FUTURES_REFRESH_MS,
     location,navigator:{onLine:true},console,Intl,Date,URL,URLSearchParams,TextEncoder,queueMicrotask,
     setTimeout:localTimer,clearTimeout,setInterval:()=>0,clearInterval:()=>{},
     requestAnimationFrame:fn=>localTimer(fn,0),cancelAnimationFrame:clearTimeout,
@@ -51,18 +51,18 @@ test('standalone demo renders every destination without accessing member APIs',a
     state.demo = false;
     state.market.briefing = {headline:'S&P 500 선물 상승', generatedAt:'2026-11-23T15:00:00Z',
       nextUpdateAt:'2026-11-23T19:00:00Z', items: [
-        {name:'S&P 500 선물', type:'future', value:7000, change:1.25, changeUnit:'%',
-          observedAt:'2026-11-23', basis:'선물 시세', contract:'ESZ26', source:'한투'},
-        {name:'나스닥 100 현물', type:'cash', value:24000, change:-0.4, changeUnit:'%',
-          observedAt:'2026-11-22', basis:'미국 정규장 종가', source:'FRED'}],
+        {name:'S&P 500 무기한', type:'future', value:7000, change:1.25, changeUnit:'%', unit:'USDT',
+          observedAt:'2026-11-23', basis:'호가 중간값', contract:'SPX500_USDT', source:'Gate'},
+        {name:'나스닥100 무기한', type:'future', value:24000, change:-0.4, changeUnit:'%', unit:'USDT',
+          observedAt:'2026-11-22', basis:'호가 중간값', contract:'NAS100_USDT', source:'Gate'}],
       missing:['다우 선물']};
     updateBriefing();
     state.demo = true;
   `, ctx);
   assert.ok(overview.firstElementChild.hasAttribute('open'));
   assert.match(document.querySelector('.brief-headline').textContent,/S&P 500 선물 상승/);
-  assert.match(document.querySelector('.brief-evidence').textContent,/나스닥 100 현물 종가 -0.40%/);
-  assert.match(document.querySelector('.brief-content').textContent,/ESZ26.*한투.*미국 정규장 종가.*FRED.*다우 선물/);
+  assert.match(document.querySelector('.brief-evidence').textContent,/나스닥100 무기한 -0.40%/);
+  assert.match(document.querySelector('.brief-content').textContent,/SPX500_USDT.*Gate.*NAS100_USDT.*Gate.*다우 선물/);
 
   const topics=[...document.querySelectorAll('.metric-section-title')].map(el=>el.textContent);
   assert.deepEqual(topics.slice(0,6),[
@@ -131,7 +131,8 @@ test('standalone demo renders every destination without accessing member APIs',a
   document.querySelector('#modal-root').replaceChildren();
   ctx.fetch = async path => {
     requested.push(String(path));
-    return new Response(JSON.stringify({status:'ready',contract:'ESZ26',source:'한국투자증권 KIS 해외선물',bars:[
+    return new Response(JSON.stringify({status:'ready',contract:'SPX500_USDT',source:'Gate',
+      sourceUrl:'https://www.gate.com/futures/USDT/SPX500_USDT',bars:[
       {date:'2026-11-20 21:05:00',open:7000,high:7010,low:6995,close:7002,value:7002},
       {date:'2026-11-20 21:10:00',open:7002,high:7020,low:7001,close:7018,value:7018},
     ]}), {headers:{'Content-Type':'application/json'}});
@@ -139,8 +140,8 @@ test('standalone demo renders every destination without accessing member APIs',a
   vm.runInContext('openIndexChart(futuresRows()[0])',ctx);
   await new Promise(r=>nativeTimeout(r,10));
   assert.equal(requested.at(-1), '/api/futures?id=fut_es&period=5min');
-  assert.match(document.querySelector('#modal-title').textContent, /S&P 500 선물 · 캔들 차트/);
+  assert.match(document.querySelector('#modal-title').textContent, /S&P 500 무기한 · 캔들 차트/);
   assert.equal(document.querySelectorAll('.market-chart-body').length, 2);
-  assert.match(document.querySelector('.market-chart-footnote').textContent, /ESZ26.*TradingView/);
+  assert.match(document.querySelector('.market-chart-footnote').textContent, /SPX500_USDT.*Gate.*마크 가격.*거래소 원자료/);
   timers.forEach(nativeClearTimeout);
 });

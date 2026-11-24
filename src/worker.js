@@ -3,9 +3,7 @@ import { getMarket, refreshMarket } from './market.js';
 import { getCalendar } from './calendar.js';
 import { enrichAnalysis } from './analysis.js';
 import { searchInstrument } from './instrument-search.js';
-import { collectKisFutures, loadKisFuturesChart } from './kis.js';
-import { briefingCashQuotes } from './briefing.js';
-import {usFutures} from '../public/futures-config.js';
+import { loadLiveFuturesChart } from './live-futures.js';
 
 export { DeskRoom };
 
@@ -27,10 +25,10 @@ function protect(response, isApi) {
 
 const FUTURES_CHECK_CRON = '*/5 * * * *';
 
-async function getUsBriefing(env, market) {
+async function getUsBriefing(env) {
   if (!env.US_BRIEFING) return null;
   try {
-    return await env.US_BRIEFING.getByName('us-markets').current(briefingCashQuotes(market));
+    return await env.US_BRIEFING.getByName('us-markets').current();
   } catch (error) {
     console.warn('US market briefing unavailable', error?.name || 'Error');
     return null;
@@ -41,8 +39,7 @@ async function refreshBriefingIfDue(env) {
   if (!env.US_BRIEFING) return null;
   try {
     const briefing = env.US_BRIEFING.getByName('us-markets');
-    return await briefing.needsRefresh()
-      ? await briefing.current(briefingCashQuotes(await getMarket(env))) : null;
+    return await briefing.needsRefresh() ? await briefing.current() : null;
   } catch (error) {
     console.warn('US market briefing refresh failed', error?.name || 'Error');
     return null;
@@ -50,26 +47,15 @@ async function refreshBriefingIfDue(env) {
 }
 
 async function futuresSnapshot(env, reportSuccess = false) {
-  const events = [];
-  const quotes = await collectKisFutures(env, Date.now(), event => events.push(event));
-  const details = [...new Map(events.filter(event => event.reason || event.code && !['MCA00000', 'EGW00000'].includes(event.code))
-    .map(event => [JSON.stringify(event), event])).values()];
-  const reason = events.some(event => event.reason === 'missing_configuration') ? 'configuration'
-    : events.some(event => event.code === 'EGW00133') ? 'rate_limit'
-    : events.some(event => event.reason === 'no_token') ? 'token'
-    : details.some(event => event.http === 401 || event.http === 403) ? 'permission'
-    : details.some(event => event.http === 429 || event.code === 'EGW00201') ? 'rate_limit'
-    : details.some(event => event.http >= 500 || ['network','timeout'].includes(event.reason)) ? 'network'
-    : 'no_quote';
-  if (reportSuccess || quotes.length < usFutures.length || details.length) {
-    const sources = quotes.reduce((counts, quote) => {
-      const source = quote.status === 'stale' ? 'saved' : quote.fallbackPeriod || 'quote';
-      counts[source] = (counts[source] || 0) + 1;
-      return counts;
-    }, {});
-    console.info('Futures upstream status', {received: quotes.length, contracts: quotes.map(quote => quote.contract), sources, details});
+  if (!env.US_BRIEFING) return {quotes:[], reason:'configuration'};
+  const {quotes, reason, issues} = await env.US_BRIEFING.getByName('us-markets').latestFutures();
+  if (reportSuccess) {
+    const now = Date.now();
+    console.info('Live futures snapshot', {received:quotes.length, contracts:quotes.map(quote => ({
+      venue:quote.venue, symbol:quote.contract, ageMs:now-Date.parse(quote.observedAt),
+    })), issues});
   }
-  return {quotes, reason: quotes.length < usFutures.length ? reason : null};
+  return {quotes, reason};
 }
 
 export default {
@@ -95,7 +81,10 @@ export default {
           if (url.pathname === '/api/futures') {
             const id = url.searchParams.get('id');
             const period = url.searchParams.get('period');
-            const result = id !== null || period !== null ? await loadKisFuturesChart(env, id, period) : await futuresSnapshot(env);
+            const venue = url.searchParams.get('venue');
+            const result = id !== null || period !== null || venue !== null
+              ? await loadLiveFuturesChart(env, id, period, venue)
+              : await futuresSnapshot(env);
             return protect(Response.json(result, {status: result.status === 'invalid' ? 400 : 200}), true);
           }
           if (url.pathname === '/api/calendar') return protect(Response.json(await getCalendar()), true);
@@ -107,7 +96,7 @@ export default {
             return protect(Response.json(result,{status:result.status==='invalid'?400:200}),true);
           }
           const market = await getMarket(env);
-          const [analysis, briefing] = await Promise.all([enrichAnalysis(market, env), getUsBriefing(env, market)]);
+          const [analysis, briefing] = await Promise.all([enrichAnalysis(market, env), getUsBriefing(env)]);
           return protect(Response.json({...analysis, briefing}), true);
         }
         return protect(await room.fetch(request), true);
@@ -129,8 +118,7 @@ export default {
     const time = new Date(controller.scheduledTime);
     const refreshMarketNow = time.getUTCMinutes() === 0 && [7, 23].includes(time.getUTCHours());
     if (refreshMarketNow) {
-      ctx.waitUntil(refreshMarket(env).then(market =>
-        Promise.all([enrichAnalysis(market, env), getUsBriefing(env, market)])));
+      ctx.waitUntil(Promise.all([refreshMarket(env).then(market => enrichAnalysis(market, env)), getUsBriefing(env)]));
     } else if (controller.cron === FUTURES_CHECK_CRON) {
       ctx.waitUntil(refreshBriefingIfDue(env).then(briefing => briefing || futuresSnapshot(env, true)));
     }

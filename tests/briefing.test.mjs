@@ -11,24 +11,18 @@ test('briefing windows advance at four-hour boundaries in Korea time', () => {
   });
 });
 
-test('US briefing uses verified contracts first and labels cash and missing alternatives', () => {
-  const now = Date.parse('2026-11-23T18:00:00Z');
-  const futures = [
-    {id:'fut_es', value:7000, change:0.5, changeUnit:'%', status:'delayed', contract:'ESZ26', observedAt:'2026-11-23', source:'KIS'},
-    {id:'fut_sox', value:5000, change:1, changeUnit:'%', status:'stale', observedAt:'2026-11-20'},
-  ];
-  const cash = [
-    {id:'sp500', value:6990, change:-1, changeUnit:'%', observedAt:'2026-11-20'},
-    {id:'nasdaq', value:24000, change:-0.4, changeUnit:'%', observedAt:'2026-11-20', source:'FRED', savedFrom:'build'},
-    {id:'sox', value:5000, change:2, changeUnit:'%', observedAt:'2026-11-24'},
-  ];
-  const first = buildUsBriefing(futures, cash, now);
-  assert.equal(first.headline,'S&P 500 선물 상승 · 나스닥100 현물 종가 하락');
-  assert.equal(first.items[0].contract,'ESZ26');
-  assert.equal(first.items[1].saved,true);
-  assert.deepEqual(first.missing,['다우 선물','러셀2000 선물','필라델피아 반도체 선물']);
-  futures[0].change = -0.2;
-  const later = buildUsBriefing(futures, cash, now + 4*3600000);
-  assert.notEqual(later.windowStart, first.windowStart);
-  assert.match(later.headline,/S&P 500 선물 하락/);
+test('briefing compares fresh quotes only across matching contracts and venues', () => {
+  const now = Date.parse('2026-11-23T19:00:00Z');
+  const quote = {id:'fut_es',name:'S&P 500 무기한',venue:'gate',contract:'SPX500_USDT',value:7000,
+    status:'live',unit:'USDT',observedAt:new Date(now).toISOString()};
+  const old = {...quote, value:6900};
+  const previous = {nextUpdateAt:new Date(now).toISOString(),items:[old]};
+  const result = buildUsBriefing([quote,{id:'fut_nq',status:'daily',value:24000}],previous,now);
+  assert.equal(result.headline,'S&P 500 무기한 상승');
+  assert.equal(result.items[0].change,1.45);
+  assert.ok(result.missing.includes('나스닥100 무기한'));
+  const switched = buildUsBriefing([{...quote,venue:'binance',contract:'SPYUSDT',value:700}],previous,now);
+  assert.equal(switched.items[0].change,null);
+  const stale = buildUsBriefing([{...quote,observedAt:new Date(now-30001).toISOString()}],previous,now);
+  assert.equal(stale.items.length,0);
 });

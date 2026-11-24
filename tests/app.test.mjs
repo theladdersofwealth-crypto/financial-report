@@ -8,7 +8,7 @@ const origin='https://desk.test';
 const setupToken='test-only-long-random-bootstrap-code-298472019';
 const adminPassword='Admin-test-2026!';
 const memberPassword='Member-test-2026!';
-const workerModules = ['worker-entry','worker','room','market','kis','briefing','impact','validation','market-deploy-snapshot','analysis','calendar','calendar-deploy-snapshot','instrument-search']
+const workerModules = ['worker-entry','worker','room','market','kis','briefing','live-futures','impact','validation','market-deploy-snapshot','analysis','calendar','calendar-deploy-snapshot','instrument-search']
   .map(name=>({type:'ESModule',path:resolve(`src/${name}.js`)}))
   .concat(['fx-currencies','futures-config'].map(name=>({type:'ESModule',path:resolve(`public/${name}.js`)})));
 
@@ -19,6 +19,11 @@ test('private desk authentication, member management and real-time room',async t
     durableObjects:{DESK:{className:'DeskRoom',useSQLite:true}},
     bindings:{BOOTSTRAP_TOKEN_SHA256:createHash('sha256').update(setupToken).digest('hex')},
     serviceBindings:{ASSETS:()=>new Response('static asset')},
+    outboundService: async request => {
+      const url = new URL(request.url);
+      if (url.searchParams.get('contract') !== 'mark_SPX500_USDT') return new Response(null,{status:404});
+      return Response.json([{t:Math.floor(Date.now()/1000),o:'7000',h:'7005',l:'6990',c:'7001'}]);
+    },
   }));
   t.after(()=>mf.dispose());
   async function request(path,{method='GET',body,cookie,requestOrigin=origin,headers={}}={}){
@@ -52,9 +57,11 @@ test('private desk authentication, member management and real-time room',async t
     r=await request('/api/market');assert.equal(r.status,401);
     r=await request('/api/calendar');assert.equal(r.status,401);
     r=await request('/api/futures');assert.equal(r.status,401);
-    r=await request('/api/futures?id=fut_es&period=5min',{cookie:adminCookie});
+    r=await request('/api/futures?id=fut_es&period=5min&venue=gate',{cookie:adminCookie});
     assert.equal(r.status,200);
-    assert.equal((await r.json()).status,'unavailable');
+    const chart = await r.json();
+    assert.equal(chart.status,'ready');
+    assert.equal(chart.contract,'SPX500_USDT');
     r=await request('/api/futures?id=SPX&period=5min',{cookie:adminCookie});
     assert.equal(r.status,400);
   });
@@ -234,19 +241,20 @@ test('the shared market briefing publishes once within a four-hour window', asyn
   const mf = new Miniflare(convertV4MiniflareOptions({
     modules:workerModules, compatibilityDate:'2026-11-01',
     durableObjects:{US_BRIEFING:{className:'MarketBriefing',useSQLite:true}},
+    outboundService: async request => {
+      if (new URL(request.url).searchParams.get('contract') !== 'SPX500_USDT') return new Response(null,{status:404});
+      return Response.json({update:Date.now(),bids:[{p:'7000'}],asks:[{p:'7002'}]});
+    },
   }));
   t.after(()=>mf.dispose());
   const namespace = await mf.getDurableObjectNamespace('US_BRIEFING');
   const first = namespace.getByName('us-markets');
   const another = namespace.getByName('us-markets');
-  const observedAt = new Date().toISOString().slice(0, 10);
-  const input = [{id:'sp500', value:7000, change:0.4, changeUnit:'%', observedAt, source:'FRED'}];
   assert.equal(await first.needsRefresh(), true);
-  const release = await first.current(input);
-  assert.match(release.headline, /S&P 500 현물 종가 상승/);
-  input[0].change = -0.5;
+  const release = await first.current();
+  assert.match(release.headline, /S&P 500 무기한/);
   assert.equal(await another.needsRefresh(), false);
-  const sameWindow = await another.current(input);
+  const sameWindow = await another.current();
   assert.equal(sameWindow.generatedAt, release.generatedAt);
   assert.equal(sameWindow.headline, release.headline);
 });
