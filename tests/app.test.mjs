@@ -8,7 +8,7 @@ const origin='https://desk.test';
 const setupToken='test-only-long-random-bootstrap-code-298472019';
 const adminPassword='Admin-test-2026!';
 const memberPassword='Member-test-2026!';
-const workerModules = ['worker-entry','worker','room','market','kis','briefing','live-futures','impact','validation','market-deploy-snapshot','analysis','calendar','calendar-deploy-snapshot','instrument-search']
+const workerModules = ['worker-entry','worker','room','market','kis','briefing','live-futures','impact','us-session','validation','market-deploy-snapshot','analysis','calendar','calendar-deploy-snapshot','instrument-search']
   .map(name=>({type:'ESModule',path:resolve(`src/${name}.js`)}))
   .concat(['fx-currencies','futures-config'].map(name=>({type:'ESModule',path:resolve(`public/${name}.js`)})));
 

@@ -1,8 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildImpact } from '../src/impact.js';
+import { latestUsSession } from '../src/us-session.js';
 
 const now = Date.parse('2026-11-22T02:00:00Z');
+
+test('US outlook follows New York closing time, weekends and exchange holidays', () => {
+  const session = time => latestUsSession(Date.parse(time));
+  assert.deepEqual(session('2026-11-23T20:59:00Z'), {date: '2026-11-20', previous: '2026-11-19'});
+  assert.deepEqual(session('2026-11-24T01:41:00Z'), {date: '2026-11-23', previous: '2026-11-20'});
+  assert.deepEqual(session('2026-11-27T02:00:00Z'), {date: '2026-11-25', previous: '2026-11-24'});
+  assert.deepEqual(session('2026-04-04T00:00:00Z'), {date: '2026-04-02', previous: '2026-04-01'});
+});
 function quote(id, change, group = 'equity', unit = group === 'rates' ? 'bp' : '%', date = '2026-11-20', status = 'daily') {
   return { id, name: id, change, changeUnit: unit, group, status, observedAt: date, value: 100, source: '테스트 출처' };
 }
@@ -50,10 +59,11 @@ test('stale, future, deployment backups, and mismatched units are excluded', () 
 test('mixed observation dates are disclosed and neutral evidence is not called bullish', () => {
   const quotes = [
     quote('sox', 0), quote('nasdaq', 0, 'equity', '%', '2026-11-19'),
-    quote('sp500', 0), quote('usdkrw', 0, 'fx'),
+    quote('sp500', 0), quote('usdkrw', 0, 'fx', '%', '2026-11-19'),
     quote('us10y', 0, 'rates'), quote('vix', 0, 'risk'),
   ];
   const impact = buildImpact({quotes}, now);
+  assert.equal(impact.kospi.drivers.some(driver => driver.id === 'nasdaq'), false);
   assert.equal(impact.kospi.state, '혼재');
   assert.equal(impact.mixedDates, true);
   assert.ok(impact.cautions.some(text => text.includes('예측모형')));

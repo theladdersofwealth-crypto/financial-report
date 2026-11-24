@@ -383,6 +383,7 @@ async function navigate(view) {
   document.querySelectorAll('.nav-button').forEach(node => { node.classList.toggle('active', node.dataset.view === view); node.setAttribute('aria-current', node.dataset.view === view ? 'page' : 'false'); });
   renderView();
   if (view === 'users' || view === 'activity') await loadAdmin(view);
+  if (view === 'outlooks') await autoRefreshMarket();
 }
 function overviewSectionIntro(title,subtitle,iconName) {
   return E('div',{class:'overview-section-intro'},
@@ -1587,7 +1588,7 @@ window.addEventListener('pagehide', () => { if (state.ws?.readyState === WebSock
 let marketAutoRefreshBusy=false;
 async function autoRefreshMarket() {
   if (marketAutoRefreshBusy || document.hidden || !state.user || state.demo) return;
-  if (!['overview','markets'].includes(state.view)) return;
+  if (!['overview','markets','outlooks'].includes(state.view)) return;
   marketAutoRefreshBusy=true;
   try {
     await loadMarket();
@@ -1595,6 +1596,11 @@ async function autoRefreshMarket() {
       const current=document.querySelector('.quote-overview-panel');
       if(current) current.replaceWith(renderQuotes());
       updateBriefing();
+      refreshOutlookPanel();
+    } else if(state.view==='outlooks') {
+      const impact = document.querySelector('#korea-impact');
+      if (impact && !impact.contains(document.activeElement)) impact.replaceWith(renderImpact());
+      refreshOutlookPanel();
     } else if(state.view==='markets') {
       // Avoid replacing an open index-chart dialog or interrupting navigation.
       if(!document.querySelector('[role="dialog"]')) renderView();
@@ -1602,8 +1608,17 @@ async function autoRefreshMarket() {
   } catch (_) { /* Keep the last observed data; the manual refresh remains available. */ }
   finally { marketAutoRefreshBusy=false; }
 }
+function refreshOutlookPanel() {
+  const panel = document.querySelector('#outlook-panel');
+  if (!panel) return;
+  const active = document.activeElement;
+  const focusedTab = panel.contains(active) && active.getAttribute('role') === 'tab' ? active.id : '';
+  if (panel.contains(active) && !focusedTab) return;
+  panel.replaceWith(renderOutlook());
+  if (focusedTab) document.getElementById(focusedTab)?.focus({preventScroll: true});
+}
 document.addEventListener('visibilitychange', () => {
-  if (state.view === 'overview' && Date.now() >= Date.parse(state.market?.briefing?.nextUpdateAt)) autoRefreshMarket();
+  if (state.view === 'outlooks' || (state.view === 'overview' && Date.now() >= Date.parse(state.market?.briefing?.nextUpdateAt))) autoRefreshMarket();
   if (!document.hidden) {
     autoRefreshFutures();
     autoRefreshFutures('extended');

@@ -1,5 +1,7 @@
 // Global-to-Korea overseas-market environment checklist.
 // This is not a calibrated forecast, trading signal, or domestic fund-flow estimate.
+import { latestUsSession, matchesUsClose, US_CASH_INDEXES } from './us-session.js';
+
 const FACTORS = {
   kospi: [
     ['sox', 3, 1, '미국 반도체'], ['nasdaq', 2, 1, '나스닥 100'],
@@ -88,8 +90,10 @@ function domesticQuote(quote, now) {
   };
 }
 export function buildImpact(market, now = Date.now()) {
+  const session = latestUsSession(now);
   const indexed = new Map((Array.isArray(market?.quotes) ? market.quotes : [])
-    .filter(quote => quote && typeof quote.id === 'string').map(quote => [quote.id, quote]));
+    .filter(quote => quote && typeof quote.id === 'string'
+      && (!US_CASH_INDEXES.has(quote.id) || matchesUsClose(quote, session))).map(quote => [quote.id, quote]));
   const domestic = {
     kospi: domesticQuote(indexed.get('kospi'), now),
     kosdaq: domesticQuote(indexed.get('kosdaq'), now),

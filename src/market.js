@@ -9,6 +9,7 @@ import {fxCurrencies, featuredFxCodes} from '../public/fx-currencies.js';
 import { buildImpact } from './impact.js';
 import { validateHistoricalImpact } from './validation.js';
 import { collectKis, collectKisOverseas, collectKisMacro, kisConfigured } from './kis.js';
+import { latestUsSession, matchesUsClose, US_CASH_INDEXES } from './us-session.js';
 
 const TTL = 5 * 60 * 1000;
 const TIMEOUT = 4000;
@@ -226,10 +227,40 @@ async function fredQuote(instrument, env, readURL) {
   return apiQuote?.observedAt ? apiQuote : missing(instrument, 'FRED 공개·인증 경로에서 유효한 자료를 받지 못했습니다');
 }
 
-async function nasdaqIndexFallback(quotes, readURL) {
-  const needed = quotes.filter(quote => Object.hasOwn(NASDAQ_INDEXES, quote.id) && !isFreshQuote(quote));
+const NASDAQ_MONTHS = 'Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'.split(' ');
+
+async function nasdaqClosingQuote(instrument, symbol, session, readURL, history = [], assetclass = 'index') {
+  const result = await readURL(`https://api.nasdaq.com/api/quote/${symbol}/info?assetclass=${assetclass}`);
+  const data = result?.data?.data;
+  if (data?.symbol !== symbol) return null;
+  const afterHours = assetclass === 'stocks' && data.marketStatus === 'After-Hours';
+  if (!afterHours && data.marketStatus !== 'Closed') return null;
+  const close = afterHours ? data.secondaryData : data.primaryData;
+  const [year, month, day] = session.date.split('-').map(Number);
+  const dateLabel = `${NASDAQ_MONTHS[month - 1]} ${day}, ${year}`;
+  if (assetclass === 'index' ? close?.lastTradeTimestamp !== dateLabel
+    : !close?.lastTradeTimestamp?.startsWith(`Closed at ${dateLabel} `)) return null;
+  const value = numeric(String(close.lastSalePrice ?? '').replace(/[$,]/g, ''));
+  const change = typeof close.percentageChange === 'string' && close.percentageChange.endsWith('%')
+    ? numeric(close.percentageChange.slice(0, -1)) : null;
+  if (value === null || value <= 0 || change === null) return null;
+  return {
+    ...missing(instrument), value, change, observedAt: session.date, comparisonAt: session.previous,
+    provider: 'nasdaq', source: 'Nasdaq 공식 정규장 종가',
+    sourceUrl: `https://www.nasdaq.com/market-activity/${assetclass}/${symbol.toLowerCase()}`,
+    changeBasis: '직전 정규장 종가 대비', retrievedAt: result.retrievedAt,
+    timestampPrecision: 'day', status: 'daily', reason: null,
+    delay: '미국 정규장 종가', history: [...history.filter(row => row.date < session.date), {date: session.date, value}].slice(-65),
+  };
+}
+
+async function nasdaqIndexFallback(quotes, session, readURL) {
+  const needed = quotes.filter(quote => Object.hasOwn(NASDAQ_INDEXES, quote.id) && !matchesUsClose(quote, session));
   const answers = await Promise.all(needed.map(async quote => {
     const symbol = NASDAQ_INDEXES[quote.id];
+    const instrument = INSTRUMENTS.find(item => item.id === quote.id);
+    const latest = await nasdaqClosingQuote(instrument, symbol, session, readURL, quote.history);
+    if (latest) return latest;
     const query = new URLSearchParams({assetclass: 'index', fromdate: daysAgo(100), limit: '100'});
     const result = await readURL(`https://api.nasdaq.com/api/quote/${symbol}/historical?${query}`);
     const data = result?.data?.data;
@@ -239,12 +270,12 @@ async function nasdaqIndexFallback(quotes, readURL) {
       const price = typeof row?.close === 'string' ? row.close.replaceAll(',', '') : row?.close;
       return match ? {date: `${match[3]}-${match[1]}-${match[2]}`, value: price} : null;
     }).filter(row => row && numeric(row.value) > 0);
-    const instrument = INSTRUMENTS.find(item => item.id === quote.id);
-    return fromHistory(instrument, rows, {
+    const official = fromHistory(instrument, rows, {
       provider: 'nasdaq', source: 'Nasdaq 공식 일별 종가',
       sourceUrl: `https://www.nasdaq.com/market-activity/index/${symbol.toLowerCase()}/historical`,
       retrievedAt: result.retrievedAt, basis: 'Nasdaq 공식 지수 정규장 종가 · FRED 대체',
     });
+    return !isFreshQuote(quote) || official.observedAt > quote.observedAt || matchesUsClose(official, session) ? official : null;
   }));
   return answers.filter(isFreshQuote);
 }
@@ -458,9 +489,14 @@ function fact(quote) {
   return `${quote.name} ${quote.value.toLocaleString('en-US', { maximumFractionDigits: 2 })}${quote.unit} / ${change} (${quote.observedAt}, ${quote.source})`;
 }
 
-function buildAnalysis(quotes) {
+function buildAnalysis(quotes, session, company) {
   const byId = Object.fromEntries(quotes.map((quote) => [quote.id, quote]));
-  const evidence = ['sox', 'usdkrw', 'nasdaq', 'usreal10y', 'sp500', 'us10y', 'vix'].map((id) => fact(byId[id])).filter(Boolean);
+  const sessionIndexes = ['nasdaq', 'nasdaqcom', 'sox', 'sp500'];
+  const dayEvidence = [...sessionIndexes.map(id => byId[id]).filter(quote => matchesUsClose(quote, session)),
+    company, ...['usdkrw', 'usreal10y'].map(id => byId[id]).filter(quote => quote?.observedAt >= session.date)]
+    .map(fact).filter(Boolean);
+  const evidence = ['sox', 'usdkrw', 'nasdaq', 'usreal10y', 'sp500', 'us10y', 'vix'].map(id => byId[id])
+    .filter(quote => quote && (!US_CASH_INDEXES.has(quote.id) || matchesUsClose(quote, session))).map(fact).filter(Boolean);
   const available = quotes.filter((quote) => quote.value !== null).length;
   // These describe observed external conditions, not a price forecast. No news
   // attribution, probability, or causal assertion is inferred from price signs.
@@ -468,18 +504,23 @@ function buildAnalysis(quotes) {
     const first = byId[firstId];
     const second = byId[secondId];
     const valid = (quote) => quote && quote.value !== null && quote.change !== null && quote.status !== 'stale' && quote.status !== 'missing' && !quote.deploymentBackup;
-    if (!valid(first) || !valid(second)) return { state: '판단 보류', text: '비교할 최근 관측 자료가 부족해 개장 전 외부 여건 판단을 보류합니다.' };
+    if (!valid(first) || !matchesUsClose(first, session)) {
+      return {state: '판단 보류', text: `${session.date} 미국 정규장 ${first?.name || firstId} 종가를 아직 확인하지 못해 판단을 보류합니다.`};
+    }
+    const firstMove = first.change > 0 ? firstLabel[0] : first.change < 0 ? firstLabel[1] : firstLabel[2];
+    if (!valid(second) || second.observedAt < session.date) {
+      return {state: '판단 보류', text: `${session.date} 미국 정규장 기준 ${firstMove}. ${second?.name || secondId}은 해당 거래일 관측이 없어 국내 증시 여건 판단을 보류합니다.`};
+    }
     const a = Math.sign(first.change);
     const b = Math.sign(second.change) * (secondInverse ? -1 : 1);
     const state = a > 0 && b > 0 ? '우호' : a < 0 && b < 0 ? '부담' : '혼재';
-    const firstMove = first.change > 0 ? firstLabel[0] : first.change < 0 ? firstLabel[1] : firstLabel[2];
     const secondMove = second.change > 0 ? secondLabel[0] : second.change < 0 ? secondLabel[1] : secondLabel[2];
     return { state, text: `${firstMove}·${secondMove} 조합상 개장 전 외부 여건은 ${state === '우호' ? '우호적' : state === '부담' ? '부담 요인 우세' : '혼재'}입니다. 국내 수급을 확인하기 전 지수 방향은 확정하지 않습니다.` };
   }
   const kospiDay = pairConditions('sox', 'usdkrw', ['미국 반도체 상승', '미국 반도체 하락', '미국 반도체 보합'], ['원화 약세', '원화 강세', '원화 보합'], true);
   const kosdaqDay = pairConditions('nasdaq', 'usreal10y', ['나스닥 100 상승', '나스닥 100 하락', '나스닥 100 보합'], ['미 실질금리 상승', '미 실질금리 하락', '미 실질금리 보합'], true);
   const ruleSets = [
-    ['day', '당일 · 최근 관측에 따른 개장 여건', kospiDay.text, kosdaqDay.text, ['미국 종가·ECB 기준환율은 서로 관측일이 다를 수 있고 한국 장중 움직임을 반영하지 않습니다.', '외국인 수급·국내 거래대금·개별 실적이 외부 여건과 다르게 움직일 수 있습니다.'], ['한국 장중 환율·반도체 흐름이 관측 조합과 반대로 전환하면 해석을 철회합니다.', '외국인 수급·거래대금이 동반 확인될 때에만 국내 방향 판단을 갱신합니다.']],
+    ['day', `오늘의 개장 여건 · 미국 ${session.date} 정규장`, kospiDay.text, kosdaqDay.text, ['미국 정규장 이후 움직임은 미국 선물에서 확인하세요.', '외국인 수급·국내 거래대금·개별 실적이 외부 여건과 다르게 움직일 수 있습니다.'], ['한국 장중 환율·반도체 흐름이 관측 조합과 반대로 전환하면 해석을 철회합니다.', '외국인 수급·거래대금이 동반 확인될 때에만 국내 방향 판단을 갱신합니다.']],
     ['short', '2~3거래일 · 흐름 지속 여부', '반도체 상대강도·환율·외국인 수급의 2~3일 지속 여부를 확인합니다. 현재 방향 판단 보류.', '거래대금 확산과 성장주 상대강도가 함께 지속되는지 확인합니다. 현재 방향 판단 보류.', ['하루의 반등은 추세 전환 근거로 부족합니다.'], ['미국 금리 재상승·원화 약세 전환 시 우호적 조건을 철회합니다.']],
     ['week', '1주 · 이벤트와 업종 순환', '경제 일정, 실적 발표와 주간 수급을 함께 확인해야 합니다. 실적·수급 자료가 부족해 방향 판단을 보류합니다.', '성장주 실적과 업종 내 상승 종목 확산을 확인해야 합니다. 실적 자료 미연동으로 판단 보류.', ['발표 전 전망과 발표 후 반응은 다를 수 있습니다.'], ['경제지표·실적 발표 후 금리와 이익 전망이 달라지면 다시 검토합니다.']],
     ['month', '1개월 · 거시와 이익 추세', '수출·이익 추정치·원화·글로벌 경기의 동반 개선 여부를 확인합니다. 해당 자료 미연동으로 판단 보류.', '실질금리·유동성·이익 추정치 개선이 함께 나타나는지 확인합니다. 해당 자료 미연동으로 판단 보류.', ['지수 상승과 이익 개선은 같은 의미가 아닙니다.'], ['실적 하향과 실질금리 상승이 지속되면 우호적 조건을 철회합니다.']],
@@ -496,7 +537,8 @@ function buildAnalysis(quotes) {
       method: 'rules', label: '규칙 기반 · 조건부 점검',
     },
     outlooks: ruleSets.map(([horizon, title, kospi, kosdaq, counter, invalidation]) => ({
-      horizon, title, kospi, kosdaq, evidence: evidence.slice(0, 5), counter, invalidation,
+      horizon, title, kospi, kosdaq, evidence: horizon === 'day' ? dayEvidence : evidence.slice(0, 5), counter, invalidation,
+      ...(horizon === 'day' ? {usSessionDate: session.date} : {}),
       confidence: horizon === 'day' && (kospiDay.state !== '판단 보류' || kosdaqDay.state !== '판단 보류') ? '낮음 · 국내 수급 미확인' : '판단 보류',
       method: 'rules', label: horizon === 'day' ? '관측 조합의 조건부 해석 · 지수 방향 예측 아님' : '일반 조건 · 현재 방향 예측 아님',
     })),
@@ -568,10 +610,16 @@ function canRestoreQuote(quote, now) {
     && now - observed <= age * DAY_MS && now - retrieved <= age * DAY_MS;
 }
 
-function restoreQuotes(quotes, backup, lastGood, now = Date.now()) {
+function restoreQuotes(quotes, backup, lastGood, session, now = Date.now()) {
   const saved = new Map(lastGood.map(quote => [quote.id, quote]));
   const built = new Map(backup.map(quote => [quote.id, quote]));
   return quotes.map(quote => {
+    if (US_CASH_INDEXES.has(quote.id) && !matchesUsClose(quote, session)) {
+      const confirmed = [saved.get(quote.id), built.get(quote.id)].find(prior =>
+        canRestoreQuote(prior, now) && matchesUsClose(prior, session));
+      // A completed session's verified close is still valid for that same session.
+      if (confirmed) return confirmed;
+    }
     if (isFreshQuote(quote)) return quote;
     const choices = [{prior: saved.get(quote.id), savedFrom: 'cache'}, {prior: built.get(quote.id), savedFrom: 'build'}]
       .filter(({prior}) => canRestoreQuote(prior, now) && (!quote.observedAt || prior.observedAt > quote.observedAt))
@@ -610,6 +658,7 @@ function selectKisFirst(previous,kisItems) {
 }
 
 export async function collectMarket(env, backup = [], lastGood = [], requestLimit = FREE_PLAN_PROVIDER_REQUESTS) {
+  const session = latestUsSession();
   let remaining = requestLimit;
   const fetchProvider = (url, init) => {
     if (remaining <= 0) throw Object.assign(new Error('Market provider request budget exhausted'), {code: 'MARKET_REQUEST_BUDGET'});
@@ -622,7 +671,11 @@ export async function collectMarket(env, backup = [], lastGood = [], requestLimi
     Promise.all(INSTRUMENTS.map((instrument) => instrument.fred ? fredQuote(instrument, env, readURL) : instrument.metalSpot ? metalSpotQuote(instrument, readURL) : instrument.ecos ? ecosQuote(instrument, env, readURL) : instrument.crypto ? cryptoQuote(instrument, readURL) : Promise.resolve(missing(instrument)))),
     fxQuotes(readURL), collectKis(kisEnv), collectKisOverseas(kisEnv, 'indices'), collectKisMacro(kisEnv),
   ]);
-  const [treasury, nasdaq] = await Promise.all([treasuryFallback(initialQuotes, readURL), nasdaqIndexFallback(initialQuotes, readURL)]);
+  const [treasury, nasdaq, nvda] = await Promise.all([
+    treasuryFallback(initialQuotes, readURL), nasdaqIndexFallback(initialQuotes, session, readURL),
+    nasdaqClosingQuote({id: 'nvda', name: '엔비디아', group: 'equity', unit: ' USD', basis: '미국 정규장 종가'},
+      'NVDA', session, readURL, [], 'stocks'),
+  ]);
   const overseas = remaining > 0 ? await collectKisOverseas(kisEnv, 'securities') : {sectors: [], leaders: []};
   // Actual request priority: KIS FIRST. Ask paid Finnhub only for
   // securities that KIS did not return as valid observations.
@@ -639,7 +692,9 @@ export async function collectMarket(env, backup = [], lastGood = [], requestLimi
     const reference = isFreshQuote(current) ? current : [current, ...lastGood, ...backup]
       .filter(candidate => candidate?.id === quote.id && ['fred', 'nasdaq'].includes(candidate.provider) && candidate.observedAt)
       .sort((a, b) => b.observedAt.localeCompare(a.observedAt))[0];
-    return sameIndex(quote, reference) && (!isFreshQuote(current) || quote.observedAt >= current.observedAt);
+    return sameIndex(quote, reference) && (!matchesUsClose(current, session) || matchesUsClose(quote, session))
+      && (!isFreshQuote(current) || quote.observedAt > current.observedAt
+        || (quote.observedAt === current.observedAt && current.provider !== 'nasdaq'));
   });
   const replacements = new Map([...fx, ...treasury, ...nasdaq, ...kis, ...verifiedUSIndices, ...macro]
     .filter(quote => validQuote(quote)).map(quote => [quote.id, quote]));
@@ -647,11 +702,13 @@ export async function collectMarket(env, backup = [], lastGood = [], requestLimi
     const replacement = replacements.get(quote.id);
     return replacement ? {...quote, ...replacement} : quote;
   });
-  const quotes = restoreQuotes(obtained, backup, lastGood);
+  const quotes = restoreQuotes(obtained, backup, lastGood, session);
   const sectors = selectKisFirst(finnhubSectors, overseas.sectors);
   const leaders = selectKisFirst(finnhubLeaders, overseas.leaders);
   const available = quotes.filter((quote) => quote.value !== null).length;
-  const { summary, outlooks } = buildAnalysis(quotes);
+  const company = nvda || [...lastGood, ...backup].find(quote =>
+    quote.id === 'nvda' && quote.provider === 'nasdaq' && canRestoreQuote(quote, Date.now()) && matchesUsClose(quote, session));
+  const { summary, outlooks } = buildAnalysis(quotes, session, company);
   const impact = buildImpact({ quotes });
   impact.validation = validateHistoricalImpact({ quotes });
   const restored = quotes.filter(quote => quote.savedFrom).length;
@@ -685,7 +742,8 @@ export async function collectMarket(env, backup = [], lastGood = [], requestLimi
   const mode = healthy === 0 ? 'unconfigured' : healthy === quotes.length ? 'live' : 'partial';
   return {
     asOf: new Date().toISOString(), mode, quotes, sectors, leaders, impact, events: [],
-    summary, outlooks, sources: sourceList(quotes, sectors, leaders, env, failures),
+    summary, outlooks, usSession: {date: session.date, company: company || null},
+    sources: sourceList(quotes, sectors, leaders, env, failures),
     analysis: { kind: 'rules', status: 'ready', label: '규칙 기반 · 조건부 점검' },
     cacheSeconds: TTL / 1000,
     providerBudgetReached: remaining === 0,
@@ -713,7 +771,7 @@ async function loadOrRefresh(env, force) {
   if (pending.has(key)) return structuredClone(await pending.get(key));
   const task = (async () => {
     const cache = edgeCache();
-    const cacheRequest = new Request(`https://market-desk-cache.invalid/snapshot/v6/${key}`);
+    const cacheRequest = new Request(`https://market-desk-cache.invalid/snapshot/v7/${key}`);
     if (!force && cache) {
       try {
         const response = await cache.match(cacheRequest);
@@ -735,7 +793,7 @@ async function loadOrRefresh(env, force) {
     lastGood = (lastGood || []).filter(quote => canRestoreQuote(quote, Date.now()));
     const data = await collectMarket(env, deploymentSnapshot, lastGood);
     const nextGood = new Map(lastGood.map(quote => [quote.id, quote]));
-    for (const quote of data.quotes.filter(isFreshQuote)) {
+    for (const quote of [...data.quotes, data.usSession.company].filter(isFreshQuote)) {
       const prior = nextGood.get(quote.id);
       if (!prior || quote.observedAt >= prior.observedAt) nextGood.set(quote.id, quote);
     }

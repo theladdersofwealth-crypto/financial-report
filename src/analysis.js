@@ -145,10 +145,13 @@ function ruleResult(market, status, reason) {
   return { ...market, analysis: { ...(market?.analysis || {}), kind:'rules', status, label:'규칙 기반 · 조건부 점검', ...(reason ? {reason} : {}) } };
 }
 function apply(market, generated, model, dataAsOf) {
+  const currentDay = market.outlooks?.find(item => item.horizon === 'day' && item.usSessionDate);
   return {
     ...market,
     summary: generated.content.summary,
-    outlooks: generated.content.outlooks,
+    outlooks: currentDay
+      ? [currentDay, ...generated.content.outlooks.filter(item => item.horizon !== 'day')]
+      : generated.content.outlooks,
     analysis: {kind:'ai',status:'ready',label:'AI 해석 · 조건부 시나리오',provider:'OpenAI',model,generatedAt:generated.generatedAt,dataAsOf:generated.dataAsOf || dataAsOf},
   };
 }

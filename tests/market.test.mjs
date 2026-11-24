@@ -582,6 +582,41 @@ test('Nasdaq official close rescues three index series without accepting a wrong
   assert.equal(market.sources.find(source => source.id === 'nasdaq').received, 2);
 });
 
+test('Monday’s official US closes replace stale declines in Tuesday’s Korea outlook', async t => {
+  t.mock.timers.enable({apis: ['Date'], now: new Date('2026-11-24T01:41:00Z')});
+  const old = [['2026-11-18', '110'], ['2026-11-19', '100']];
+  const fixture = providerFixture({NASDAQ100: old, NASDAQSOX: old, NASDAQCOM: old, SP500: old, DFII10: old});
+  installFetch(t, async (input, options) => {
+    const url = new URL(String(input));
+    if (url.hostname !== 'api.nasdaq.com') return fixture(input, options);
+    const symbol = url.pathname.split('/')[3];
+    if (symbol === 'COMP') return new Response(null, {status: 503});
+    const observation = {
+      lastTradeTimestamp: 'Nov 23, 2026', lastSalePrice: '26,746.10', percentageChange: '+6.86%',
+    };
+    if (symbol === 'NVDA') return Response.json({data: {
+      symbol, marketStatus: 'After-Hours',
+      primaryData: {...observation, percentageChange: '-1.25%'},
+      secondaryData: {...observation, lastTradeTimestamp: 'Closed at Nov 23, 2026 4:00 PM ET',
+        lastSalePrice: '$165.05', percentageChange: '+31.48%'},
+    }});
+    return Response.json({data: {
+      symbol, marketStatus: 'Closed',
+      primaryData: symbol === 'SOX' ? {...observation, lastSalePrice: '9,588.05', percentageChange: '+14.03%'} : observation,
+    }});
+  });
+  const {collectMarket} = await freshModule();
+  const market = await collectMarket({});
+  const today = market.outlooks.find(item => item.horizon === 'day');
+  assert.equal(today.usSessionDate, '2026-11-23');
+  assert.match(today.kospi, /미국 반도체 상승/);
+  assert.match(today.kosdaq, /나스닥 100 상승/);
+  assert.ok(today.evidence.some(line => /엔비디아.*\+31\.48%/.test(line)));
+  assert.ok(today.evidence.every(line => !/2026-11-19|나스닥 종합|S&P 500|-1\.25%/.test(line)));
+  assert.ok(market.impact.kosdaq.drivers.some(item => item.id === 'nasdaq' && item.observedAt === '2026-11-23'));
+  assert.ok(market.impact.kosdaq.drivers.every(item => item.id !== 'sp500'));
+});
+
 test('failed refresh keeps the most recent verified observation explicitly stale', async t => {
   let outage = false;
   const fixture = providerFixture();

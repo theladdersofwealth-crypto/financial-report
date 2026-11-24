@@ -71,6 +71,21 @@ test('duplicate horizons are rejected even with otherwise plausible content',asy
   }finally{globalThis.fetch=prior;}
 });
 
+test('cached AI commentary cannot replace the latest session’s daily outlook', async () => {
+  const prior = globalThis.fetch;
+  globalThis.fetch = async () => response(validContent());
+  try {
+    const env = {OPENAI_API_KEY: 'test-secret-session'};
+    await enrichAnalysis(original, env);
+    const day = {horizon: 'day', usSessionDate: '2026-11-23', kosdaq: '나스닥 100 상승'};
+    const result = await enrichAnalysis({...original, outlooks: [day]}, env);
+    assert.deepEqual(result.outlooks.find(item => item.horizon === 'day'), day);
+    assert.equal(result.outlooks.length, 5);
+  } finally {
+    globalThis.fetch = prior;
+  }
+});
+
 test('cooldown expiry permits one new analysis using the new observation snapshot',async()=>{
   const prior=globalThis.fetch,now=Date.now;let count=0;
   globalThis.fetch=async()=>{count++;return response(validContent());};
