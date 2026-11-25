@@ -142,6 +142,21 @@ test('standalone demo renders every destination without accessing member APIs',a
   assert.equal(document.querySelectorAll('.market-chart-body').length, 1);
   button('일봉').click();
   assert.equal(document.querySelector('.market-chart-extent').hidden, false);
+  // A fresh Korean snapshot updates the open chart without resetting its chosen frequency.
+  button('1분봉').click();
+  vm.runInContext(`state.market = {quotes: [{...saved, status:'daily', savedFrom:null,
+    minuteCandles:[...saved.minuteCandles,{date:'2026-11-20T09:36:00+09:00',open:2955,high:2962,low:2951,close:2958}]}]};
+    refreshKoreaChart();`,ctx);
+  assert.equal(button('1분봉').getAttribute('aria-pressed'), 'true');
+  assert.match(document.querySelector('.market-chart-date').textContent, /09:36/);
+  vm.runInContext('state.market.quotes = [{...state.market.quotes[0],minuteCandles:[]}]; refreshKoreaChart();',ctx);
+  assert.match(document.querySelector('.market-chart-date').textContent, /09:36/);
+  assert.match(document.querySelector('.market-chart-stale').textContent, /저장한 관측값/);
+  const receipt = vm.runInContext(`const noon = Date.parse('2026-11-25T02:30:00Z');
+    const quote = {group:'korea',status:'delayed',marketPhase:'intraday',value:2500,retrievedAt:'2026-11-25T02:27:00Z'};
+    [freshKoreaIntraday(quote,noon),freshKoreaIntraday({...quote,retrievedAt:'2026-11-25T02:29:45Z'},noon),
+     isOutdatedObservation(quote),isHealthyObservation(quote),isHealthyObservation({...quote,marketPhase:'close',status:'daily'})];`, ctx);
+  assert.deepEqual([...receipt], [false,true,true,false,true]);
   document.querySelector('#modal-root').replaceChildren();
   vm.runInContext(`state.market = {quotes: [{id: 'vndkrw', fxCurrency: 'VND', fxAmount: 1000, name: '베트남 동',
     group: 'fx', unit: '원', value: 51.8, status: 'daily', observedAt: '2026-11-20', timestampPrecision: 'day',

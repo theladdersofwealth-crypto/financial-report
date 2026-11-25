@@ -55,10 +55,10 @@ test('main index cards and market table open an accessible chart modal from hist
  assert.match(main,/tabindex: chartable \? 0 : null/);
  assert.match(main,/onClick: chartable \? \(\) => openIndexChart\(quote\)/);
  assert.match(main,/openIndexChart\(quote\)/);
- assert.match(main,/chartSeries\(quote\.history\)/);
+ assert.match(main,/chartSeries\(chartQuote\.history\)/);
  assert.match(main,/chartPeriod\(all,activePeriod\)/);
  assert.match(main,/\['D','일봉'\],\['W','주봉'\],\['M','월봉'\]/);
- assert.match(main,/candleSeries\(quote\.chartPeriods\?\.\[activeTimeframe\]\)/);
+ assert.match(main,/candleSeries\(chartQuote\.chartPeriods\?\.\[activeTimeframe\]\)/);
  assert.match(main,/market-chart-wick/);
  assert.match(main,/market-chart-body/);
  assert.match(main,/1개월/);
@@ -66,7 +66,7 @@ test('main index cards and market table open an accessible chart modal from hist
  assert.match(main,/\['all','전체'\]/);
  assert.match(main,/showModal\(/);
  assert.match(main,/market-chart-scrubber/);
- assert.match(main,/chartFrequency\(observations,activeTimeframe\)/);
+ assert.match(main,/chartFrequency\(chartSeries\(chartQuote\.history\),activeTimeframe\)/);
  assert.match(app,/class:'market-table-chart-link'/);
  assert.match(styles,/market-history-modal/);
 });

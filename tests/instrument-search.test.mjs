@@ -48,18 +48,23 @@ test('US and crypto searches show unsigned USDT perpetual order books',async t=>
   const original=globalThis.fetch,calls=[];
   globalThis.fetch=async(input,init={})=>{
     const u=new URL(String(input));calls.push(u);
+    assert.equal(init.headers?.Authorization,undefined);
+    if (u.hostname === 'fapi.binance.com') {
+      assert.equal(u.pathname,'/fapi/v1/ticker/bookTicker');
+      assert.equal(u.searchParams.get('symbol'),'BTCUSDT');
+      return Response.json({symbol:'BTCUSDT',time:today(),bidPrice:'95599',askPrice:'95601'});
+    }
     assert.equal(u.hostname,'api.gateio.ws');
     assert.match(u.pathname,/futures\/usdt\/order_book$/);
-    assert.equal(init.headers?.Authorization,undefined);
-    const midpoint = u.searchParams.get('contract') === 'AAPL_USDT' ? 236 : 95600;
-    return Response.json({update:today()/1000,bids:[{p:midpoint-1}],asks:[{p:midpoint+1}]});
+    assert.equal(u.searchParams.get('contract'),'AAPL_USDT');
+    return Response.json({update:today()/1000,bids:[{p:235}],asks:[{p:237}]});
   };
   t.after(()=>{globalThis.fetch=original});
   const us=await searchInstrument({},'US','AAPL','NAS');
   const crypto=await searchInstrument({},'CRYPTO','비트코인');
   assert.equal(us.quote.contract,'AAPL_USDT');
   assert.equal(us.quote.value,236);
-  assert.equal(crypto.quote.symbol,'BTC_USDT');
+  assert.equal(crypto.quote.symbol,'BTCUSDT');
   assert.equal(crypto.quote.value,95600);
   for (const result of [us,crypto]) {
     assert.equal(result.status,'ok');

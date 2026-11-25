@@ -18,8 +18,8 @@ export const assetFutures = [
   perpetual('brent','브렌트유','energy','원자재 연동',{gate:'BZ_USDT',bybit:'BZUSDT',binance:'BZUSDT'}),
   perpetual('gold','금','metals','원자재 연동',{gate:'XAU_USDT',mexc:'XAU_USDT',bybit:'XAUUSDT'}),
   perpetual('silver','은','metals','원자재 연동',{gate:'XAG_USDT',bybit:'XAGUSDT',binance:'XAGUSDT'}),
-  perpetual('btc','비트코인','crypto','코인 선물',{gate:'BTC_USDT',mexc:'BTC_USDT',bybit:'BTCUSDT'},'BTC'),
-  perpetual('eth','이더리움','crypto','코인 선물',{gate:'ETH_USDT',mexc:'ETH_USDT',bybit:'ETHUSDT'},'ETH'),
+  perpetual('btc','비트코인','crypto','코인 선물',{binance:'BTCUSDT',bybit:'BTCUSDT',okx:'BTC-USDT-SWAP',gate:'BTC_USDT'},'BTC'),
+  perpetual('eth','이더리움','crypto','코인 선물',{binance:'ETHUSDT',bybit:'ETHUSDT',okx:'ETH-USDT-SWAP',gate:'ETH_USDT'},'ETH'),
 ];
 
 export const stockFutures = [

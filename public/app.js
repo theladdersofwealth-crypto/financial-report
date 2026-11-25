@@ -167,6 +167,16 @@ function koreaOpen(now = Date.now()) {
   const day = kst.getUTCDay(), minute = kst.getUTCHours()*60 + kst.getUTCMinutes();
   return day >= 1 && day <= 5 && minute >= 540 && minute < 930;
 }
+const isKoreaIntraday = quote => quote.group === 'korea'
+  && (quote.marketPhase === 'intraday' || quote.timestampPrecision === 'retrieval');
+function freshKoreaIntraday(quote, now = Date.now()) {
+  const age = now - Date.parse(quote.retrievedAt || quote.observedAt);
+  return koreaOpen(now) && Number.isFinite(age) && age >= -5000 && age <= 2 * koreaRefreshMs;
+}
+const isOutdatedObservation = quote => quote.status === 'stale' || quote.deploymentBackup
+  || (isKoreaIntraday(quote) && !freshKoreaIntraday(quote));
+const isHealthyObservation = quote => Number.isFinite(quote.value)
+  && ['daily', 'delayed', 'live', 'monthly'].includes(quote.status) && !isOutdatedObservation(quote);
 const futuresIssueLabels = {
   configuration: '거래소 호가 연결 설정을 확인하는 중입니다', network: '거래소 호가 재연결 중',
 };
@@ -192,10 +202,7 @@ function normalizedQuotes() {
     id, unit:'%', value:null, change:null, status:'missing', ...byId.get(id),
     group:'rates', name,
   }));
-  const current = new Map(state.koreaQuotes.filter(quote => {
-    const age = now - Date.parse(quote.retrievedAt);
-    return koreaOpen(now) && age >= -5000 && age <= 2 * koreaRefreshMs;
-  }).map(quote=>[quote.id, quote]));
+  const current = new Map(state.koreaQuotes.filter(quote => freshKoreaIntraday(quote, now)).map(quote=>[quote.id, quote]));
   const domestic = domesticLabels.map(([id,name,unit]) => ({
     id, unit, value:null, change:null, status:'missing', ...byId.get(id), ...current.get(id),
     name, group:'korea', ...(current.has(id) ? {savedFrom:null, deploymentBackup:false} : {}),
@@ -568,13 +575,12 @@ function renderInstrumentSearch() {
 function dataState() {
   if (state.demo) return E('span', {class: 'data-state partial'}, E('i', {class: 'dot'}), 'EXAMPLE');
   const quotes = state.market?.quotes ? normalizedQuotes() : [];
-  const good = quotes.filter(q => Number.isFinite(q.value)
-    && ['daily', 'delayed', 'live', 'monthly'].includes(q.status) && !q.deploymentBackup);
-  const delayed = quotes.filter(q => q.status === 'stale' || q.deploymentBackup);
+  const good = quotes.filter(isHealthyObservation);
+  const delayed = quotes.filter(isOutdatedObservation);
   const missing = quotes.filter(q => !Number.isFinite(q.value));
   const complete = quotes.length > 0 && good.length === quotes.length;
   const summary = quotes.length ? `지표 ${good.length}/${quotes.length} 정상 수신` : '데이터 연결 필요';
-  const issues = [...missing, ...delayed].map(q => q.name).filter(Boolean);
+  const issues = [...new Set([...missing, ...delayed].map(q => q.name).filter(Boolean))];
   const explanation = issues.length
     ? `수신 확인 필요: ${issues.slice(0, 4).join(', ')}${issues.length > 4 ? ` 외 ${issues.length - 4}개` : ''}`
     : '모든 지표의 최신 유효 관측값을 수신했습니다.';
@@ -583,6 +589,11 @@ function dataState() {
     'aria-label': `${summary}. 데이터 연결 현황 보기`,
     onClick: () => navigate('sources')}, E('i', {class: 'dot'}), summary);
 }
+function refreshDataState() {
+  const status = document.querySelector('.data-state-action');
+  if (status !== document.activeElement) status?.replaceWith(dataState());
+}
+
 async function refreshCurrent() {
   if (state.demo) { renderView(); return; }
   if (['users', 'activity'].includes(state.view)) { await loadAdmin(state.view); return; }
@@ -837,9 +848,8 @@ function quoteStatus(quote, showFxDate = false) {
   if (quote.fallbackPeriod === 'D') return ['최근 일봉 종가', 'saved'];
   if (quote.status === 'monthly') return ['월간 평균', ''];
   if (quote.status === 'daily' && fxById.has(quote.id)) return ['일별 기준환율', ''];
-  if (quote.marketPhase === 'intraday' || (quote.group === 'korea' && quote.timestampPrecision === 'retrieval')) {
-    const age = Date.now() - Date.parse(quote.retrievedAt || quote.observedAt);
-    if (!koreaOpen() || age > 2 * koreaRefreshMs) return [flow ? '이전 집계' : '마지막 조회', 'saved'];
+  if (isKoreaIntraday(quote)) {
+    if (!freshKoreaIntraday(quote)) return [flow ? '이전 집계' : '마지막 조회', 'saved'];
     return [flow ? '장중 집계' : '장중 조회', ''];
   }
   if (quote.status === 'daily') return [flow ? '일별 집계' : quote.group === 'equity' || ['kospi', 'kosdaq'].includes(quote.id) ? '일별 종가' : '일별', ''];
@@ -879,23 +889,25 @@ function quoteCard(quote) {
     E('div', {class: 'quote-bottom'}, !available ? E('span', {class: 'quote-missing'}, '시세 수신 대기')
       : E('span', {class: `quote-change ${tone}`, title:Number.isFinite(quote.change) ? '전일 대비' : null}, changeText),
       available && !state.demo && !sharedKoreaTime ? E('span', {class: `quote-status ${statusTone}`}, statusLabel) : null),
-    state.demo || !available || currency || sharedKoreaTime ? null : E('div', {class: 'quote-provenance'}, E('span', {}, observed)));
+    state.demo || !available || currency || sharedKoreaTime ? null : E('div', {class: 'quote-provenance'},
+      E('span', {}, quote.group === 'crypto' && quote.venue && quote.source ? `${observed} · ${quote.source}` : observed)));
 }
 
 let refreshFuturesChart = null;
+let refreshKoreaChart = null;
 function openIndexChart(quote) {
   const future = futuresById.get(quote.id);
   const currency = fxById.get(quote.id);
   const observationLabel = currency ? '기준환율' : future ? '마크 가격' : '종가';
-  const observations = chartSeries(quote.history);
-  const hasOfficialCandles = ['kospi','kosdaq'].includes(quote.id)
-    && quote.provider === 'kis' && !!quote.chartPeriods;
-  const isIndexStale = quote.status === 'stale' || quote.deploymentBackup;
+  const domestic = ['kospi', 'kosdaq'].includes(quote.id);
+  const hasOfficialCandles = q => domestic && q.provider === 'kis' && !!q.chartPeriods;
   showModal(`${quote.name} · ${future ? '캔들 차트' : currency ? '일별 원화 환율 차트' : '지수 차트'}`,
-    future ? '마크 가격 캔들' : currency ? `${fxAmountLabel(currency)}당 원화 · 일별 기준환율` : hasOfficialCandles ? '시가·고가·저가·종가' :
+    future ? '마크 가격 캔들' : currency ? `${fxAmountLabel(currency)}당 원화 · 일별 기준환율` : hasOfficialCandles(quote) ? '시가·고가·저가·종가' :
       '관측된 종가로 표시하는 추이 차트 · 실제 봉 시고저종 데이터 없음',
     body => {
-      const domestic = ['kospi', 'kosdaq'].includes(quote.id);
+      let chartQuote = quote;
+      let retainedMinutes = false;
+      const latestMinute = q => Date.parse(q.minuteCandles?.at(-1)?.date || '') || 0;
       const frequencies = future ? futuresPeriods : [...(domestic ? minuteFrequencies : []), ['D','일봉'],['W','주봉'],['M','월봉']];
       const ranges = currency ? [['1m','1개월'],['3m','3개월'],['all','전체']] : [['1m','1개월'],['3m','3개월'],['1y','1년'],['all','전체']];
       const frequencyMenu = E('div',{class:'market-chart-ranges',role:'group','aria-label':'차트 봉 주기'});
@@ -927,6 +939,18 @@ function openIndexChart(quote) {
         }
       }
       if (future) refreshFuturesChart = () => body.isConnected ? loadFuturesFrame() : (refreshFuturesChart = null);
+      if (domestic) refreshKoreaChart = (failed = false) => {
+        if (!body.isConnected) { refreshKoreaChart = null; return; }
+        const latest = state.market?.quotes?.find(q => q.id === quote.id);
+        if (failed || !latest || !hasValue(latest)) {
+          retainedMinutes = latestMinute(chartQuote) > 0;
+        } else {
+          const savedBars = chartQuote.minuteCandles;
+          retainedMinutes = latestMinute(latest) < latestMinute(chartQuote);
+          chartQuote = retainedMinutes ? {...latest, minuteCandles:savedBars} : latest;
+        }
+        redraw();
+      };
       const frequenciesButtons = frequencies.map(([value,label]) => E('button',{
         type:'button',class:'market-chart-range',onClick:()=>{activeTimeframe=value;redraw();if (future) loadFuturesFrame();}
       },label));
@@ -952,11 +976,12 @@ function openIndexChart(quote) {
         const intraday = minutes !== null;
         periodMenu.hidden = intraday;
         const futureFrame = futuresFrames.get(activeTimeframe);
-        const all = future ? (futureFrame?.bars || []) : intraday ? aggregateIndexMinutes(quote.minuteCandles, minutes) :
-          hasOfficialCandles ? candleSeries(quote.chartPeriods?.[activeTimeframe]) :
-          chartFrequency(observations,activeTimeframe);
+        const officialCandles = hasOfficialCandles(chartQuote);
+        const all = future ? (futureFrame?.bars || []) : intraday ? aggregateIndexMinutes(chartQuote.minuteCandles, minutes) :
+          officialCandles ? candleSeries(chartQuote.chartPeriods?.[activeTimeframe]) :
+          chartFrequency(chartSeries(chartQuote.history),activeTimeframe);
         const series=intraday ? all : chartPeriod(all,activePeriod);
-        const candleMode=Boolean(future) || intraday || hasOfficialCandles;
+        const candleMode=Boolean(future) || intraday || officialCandles;
         const label=frequencies.find(x=>x[0]===activeTimeframe)?.[1]||'일봉';
         plot.replaceChildren();
         const change=chartPeriodChange(series);
@@ -1057,7 +1082,8 @@ function openIndexChart(quote) {
           future ? null : E('p',{},currency ? `${fxAmountLabel(currency)}당 원화` : candleMode ?
             `${label} ${all.length}개${intraday ? ' · 첫 봉과 마지막 봉은 일부 구간일 수 있습니다.' : ''}` :
             '주간·월간은 각 기간의 마지막 관측 종가입니다.'),
-          (future ? futureFrame?.status === 'stale' : isIndexStale) ? E('p',{class:'market-chart-stale'},'최근 저장한 관측값입니다.') : null);
+          (future ? futureFrame?.status === 'stale' : chartQuote.status === 'stale' || chartQuote.deploymentBackup || (intraday && retainedMinutes))
+            ? E('p',{class:'market-chart-stale'},'최근 저장한 관측값입니다.') : null);
       }
       redraw();
       if (future) loadFuturesFrame();
@@ -1234,9 +1260,9 @@ function failureLabel(code) {
 function renderSources() {
   const sources = state.market?.sources || [];
   const quotes = normalizedQuotes();
-  const good = quotes.filter(q => hasValue(q) && ['daily', 'delayed', 'live', 'monthly'].includes(q.status) && !q.deploymentBackup);
+  const good = quotes.filter(isHealthyObservation);
   const missing = quotes.filter(q => !hasValue(q));
-  const outdated = quotes.filter(q => q.status === 'stale' || q.deploymentBackup);
+  const outdated = quotes.filter(isOutdatedObservation);
   const panel = E('section', {class: 'panel'},
     panelHead('데이터 연결 현황', '설정 여부와 실제 수신, 오래된 값, API 장애를 구분합니다.',
       badge(state.demo ? '체험용 데이터' : `${good.length} / ${quotes.length} 지표 정상 수신`, state.demo ? 'amber' : 'blue')));
@@ -1570,6 +1596,7 @@ async function loadMarket() {
   const data = await api('/api/market');
   if (generation !== state.sessionGeneration || !state.user || state.demo) return;
   state.market = {...defaultMarket(), ...data, briefing: data.briefing || state.market?.briefing || null};
+  refreshKoreaChart?.();
 }
 const futuresRequests = new Map();
 async function loadFutures(scope) {
@@ -1620,8 +1647,7 @@ async function autoRefreshFutures(scope = 'indices') {
     replaceFuturesSection(document.getElementById('us-sector-panel'),renderSectors());
     replaceFuturesSection(document.getElementById('us-stock-panel'),renderLeaders());
   }
-  const status = document.querySelector('.data-state-action');
-  if (status !== document.activeElement) status?.replaceWith(dataState());
+  refreshDataState();
 }
 let koreaRequest = null;
 async function autoRefreshKorea() {
@@ -1642,6 +1668,7 @@ async function autoRefreshKorea() {
   if (state.view === 'overview') replaceFuturesSection(document.querySelector('#metrics-korea'),
     renderQuotes().querySelector('#metrics-korea'));
   if (state.view === 'markets' && !document.querySelector('[role="dialog"]')) renderMarketRows();
+  refreshDataState();
 }
 async function loadCalendar() {
   const generation = state.sessionGeneration;
@@ -1716,8 +1743,8 @@ async function autoRefreshMarket() {
       // Avoid replacing an open index-chart dialog or interrupting navigation.
       if(!document.querySelector('[role="dialog"]')) renderView();
     }
-  } catch (_) { /* Keep the last observed data; the manual refresh remains available. */ }
-  finally { marketAutoRefreshBusy=false; }
+  } catch (_) { refreshKoreaChart?.(true); /* Keep the last observed data. */ }
+  finally { refreshDataState(); marketAutoRefreshBusy=false; }
 }
 function refreshOutlookPanel() {
   const panel = document.querySelector('#outlook-panel');
