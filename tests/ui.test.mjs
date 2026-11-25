@@ -56,6 +56,15 @@ test('standalone demo renders every destination without accessing member APIs',a
         {id:'kr_foreign_kospi',name:'코스피 외국인', value:-300, change:150, changeUnit:'억원', unit:'억원',
           observedAt:'2026-11-23', timestampPrecision:'day', source:'KIS'}],
       missing:[]};
+    state.market.impact = {
+      kospi:{state:'부담',available:1,total:6,drivers:[{text:'나스닥 100 하락 (-1.99%)',stance:'부담', observedAt:'2026-11-23'}]},
+      kosdaq:{state:'혼재',available:0,total:6,drivers:[]},
+      domestic:{kospi:{id:'kospi',value:3200,unit:'pt',change:1.25,changeUnit:'%',
+        observedAt:'2026-11-23T11:00:00Z',timestampPrecision:'retrieval'}},
+      validation:{minimumClassifiedDays:40,kospi:{agreementRate:57.1,classifiedDays:42,from:'2026-09-14',until:'2026-11-23'},
+        kosdaq:{agreementRate:null,classifiedDays:12},limitations:['미래 적중률을 뜻하지 않습니다.']},
+      cautions:['지수의 실제 등락을 예측하는 값은 아닙니다.'],
+    };
     updateBriefing();
     state.demo = true;
   `, ctx);
@@ -63,6 +72,10 @@ test('standalone demo renders every destination without accessing member APIs',a
   assert.match(document.querySelector('.brief-headline').textContent,/코스피 \+1.25% · 코스닥 -0.40%/);
   assert.match(document.querySelector('.brief-evidence').textContent,/코스피 외국인 순매도 300.00억원/);
   assert.doesNotMatch(document.querySelector('.brief-content').textContent,/KIS|미국 시장|무기한|150/);
+  const details = document.querySelector('.brief-details').textContent;
+  assert.doesNotMatch(details,/2026-11-23|KST 조회|적중률|예측하는 값/);
+  assert.doesNotMatch(document.querySelector('.brief-evidence').textContent,/\(11-23\)/);
+  assert.match(details,/나스닥 100 하락 \(-1\.99%\).*일치율 57\.1% · 42거래일/);
 
   const topics=[...document.querySelectorAll('.metric-section-title')].map(el=>el.textContent);
   assert.deepEqual(topics,[

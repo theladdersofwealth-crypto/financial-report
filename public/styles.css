@@ -1371,7 +1371,7 @@ td strong {
 .brief-points { display: grid; gap: 7px; padding-inline-start: 18px; margin: 10px 0 0; font-size: 13.5px; }
 .brief-footer {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
   border-top: 1px solid var(--line);
   background: var(--surface-alt);
@@ -3078,8 +3078,6 @@ td strong {
   }
   .brief-footer {
     padding: 11px 16px;
-    flex-direction: column;
-    align-items: flex-start;
   }
   .impact-index-grid,
   .impact-themes-grid,

@@ -31,7 +31,8 @@ function direction(quote, inverse = false) {
 }
 function describe(quote, label) {
   const move = quote.change > 0 ? '상승' : quote.change < 0 ? '하락' : '보합';
-  return `${label} ${move} (${quote.change > 0 ? '+' : ''}${quote.change}${quote.changeUnit}; ${quote.observedAt.slice(0, 10)} 관측)`;
+  const amount = quote.change.toLocaleString('en-US', {maximumFractionDigits:2, signDisplay:'exceptZero'});
+  return `${label} ${move} (${amount}${quote.changeUnit})`;
 }
 function marketImpact(name, factors, indexed, now) {
   const totalWeight = factors.reduce((sum, [, weight]) => sum + weight, 0);
@@ -56,10 +57,10 @@ function marketImpact(name, factors, indexed, now) {
   return {
     name, state, coverage, available: drivers.length, total: factors.length, drivers,
     summary: state === '판단 보류'
-      ? '최근 관측된 서로 다른 지표가 부족해 해외 환경 판단을 보류합니다.'
+      ? '해외 지표 부족'
       : state === '혼재'
-        ? '해외 지표의 신호가 엇갈립니다. 국내 수급·장중 가격 확인 전 방향 판단을 보류합니다.'
-        : `해외 관측 지표 조합은 ${name}에 ${state === '우호' ? '상대적으로 우호적인' : '부담이 될 수 있는'} 환경입니다. 지수의 실제 등락을 예측하는 값은 아닙니다.`,
+        ? '해외 지표 신호 혼재'
+        : `${name}에 ${state === '우호' ? '우호적인' : '부담이 되는'} 해외 여건`,
   };
 }
 function theme(indexed, id, title, positive, negative, now, inverse = false) {
@@ -111,8 +112,8 @@ export function buildImpact(market, now = Date.now()) {
       '미국 금리 하락은 성장주 가치평가 부담을 완화할 가능성이 있습니다.',
       '미국 금리 상승은 성장주 가치평가 부담을 키울 가능성이 있습니다.', now, true),
     theme(indexed, 'usdkrw', '원화·외국인 수급 환경',
-      '원화 강세 환경은 외국인 투자심리에 우호적일 수 있습니다. 실제 순매수 자료는 확인하지 않았습니다.',
-      '원화 약세 환경은 외국인 투자심리에 부담일 수 있습니다. 실제 순매도 자료는 확인하지 않았습니다.', now, true),
+      '원화 강세는 외국인 투자심리에 우호적인 여건입니다.',
+      '원화 약세는 외국인 투자심리에 부담이 될 수 있습니다.', now, true),
     theme(indexed, 'wti', '에너지·원가',
       '유가 하락은 에너지 수입 비용에 우호적일 수 있으나 업종 영향은 기업별로 다릅니다.',
       '유가 상승은 에너지 수입 비용에 부담일 수 있으나 업종 영향은 기업별로 다릅니다.', now, true),
@@ -122,9 +123,8 @@ export function buildImpact(market, now = Date.now()) {
     method: 'weighted_directional_checklist_v1', asOf: new Date(now).toISOString(),
     kospi, kosdaq, domestic, themes, mixedDates: new Set(dated).size > 1,
     cautions: [
-      domestic.foreignKospi || domestic.foreignKosdaq ? '국내 외국인 순매수는 확인된 시장별 일별 관측값만 사용합니다. 장중 거래대금과 기업 실적은 별도 확인이 필요합니다.' : '국내 외국인 수급·거래대금·기업 실적을 확인하지 못한 조건부 해외 환경 점검입니다.',
-      '일별 종가와 환율·금리의 관측일 및 비교 기준이 다르며, 지수 상승·하락 확률이 아닙니다.',
-      '규칙 기반 가중치는 과거 성과로 보정된 예측모형이 아닙니다.',
+      ...(domestic.foreignKospi || domestic.foreignKosdaq ? ['국내 수급은 시장별 일별 관측값과 장중 집계를 사용합니다.'] : []),
+      '해외 시장 지표에는 규칙 기반 가중치를 적용합니다.',
     ],
   };
 }

@@ -493,7 +493,7 @@ async function finnhubList(entries, group, env, readURL) {
 function fact(quote) {
   if (!quote || quote.value === null || quote.deploymentBackup || quote.status === 'stale') return null;
   const change = quote.change === null ? '등락 자료 없음' : `${quote.change > 0 ? '+' : ''}${quote.change.toFixed(2)}${quote.changeUnit}`;
-  return `${quote.name} ${quote.value.toLocaleString('en-US', { maximumFractionDigits: 2 })}${quote.unit} / ${change} (${quote.observedAt})`;
+  return `${quote.name} ${quote.value.toLocaleString('en-US', { maximumFractionDigits: 2 })}${quote.unit} · ${change}`;
 }
 
 function buildAnalysis(quotes, session, company) {
@@ -512,17 +512,17 @@ function buildAnalysis(quotes, session, company) {
     const second = byId[secondId];
     const valid = (quote) => quote && quote.value !== null && quote.change !== null && quote.status !== 'stale' && quote.status !== 'missing' && !quote.deploymentBackup;
     if (!valid(first) || !matchesUsClose(first, session)) {
-      return {state: '판단 보류', text: `${session.date} 미국 정규장 ${first?.name || firstId} 종가를 아직 확인하지 못해 판단을 보류합니다.`};
+      return {state: '판단 보류', text: `${first?.name || firstId} 종가 확인 대기`};
     }
     const firstMove = first.change > 0 ? firstLabel[0] : first.change < 0 ? firstLabel[1] : firstLabel[2];
     if (!valid(second) || second.observedAt < session.date) {
-      return {state: '판단 보류', text: `${session.date} 미국 정규장 기준 ${firstMove}. ${second?.name || secondId}은 해당 거래일 관측이 없어 국내 증시 여건 판단을 보류합니다.`};
+      return {state: '판단 보류', text: `${firstMove} · ${second?.name || secondId} 자료 대기`};
     }
     const a = Math.sign(first.change);
     const b = Math.sign(second.change) * (secondInverse ? -1 : 1);
     const state = a > 0 && b > 0 ? '우호' : a < 0 && b < 0 ? '부담' : '혼재';
     const secondMove = second.change > 0 ? secondLabel[0] : second.change < 0 ? secondLabel[1] : secondLabel[2];
-    return { state, text: `${firstMove}·${secondMove} 조합상 개장 전 외부 여건은 ${state === '우호' ? '우호적' : state === '부담' ? '부담 요인 우세' : '혼재'}입니다. 국내 수급을 확인하기 전 지수 방향은 확정하지 않습니다.` };
+    return { state, text: `${firstMove} · ${secondMove} · 외부 여건 ${state}` };
   }
   const kospiDay = pairConditions('sox', 'usdkrw', ['미국 반도체 상승', '미국 반도체 하락', '미국 반도체 보합'], ['원화 약세', '원화 강세', '원화 보합'], true);
   const kosdaqDay = pairConditions('nasdaq', 'usreal10y', ['나스닥 100 상승', '나스닥 100 하락', '나스닥 100 보합'], ['미 실질금리 상승', '미 실질금리 하락', '미 실질금리 보합'], true);
@@ -530,8 +530,8 @@ function buildAnalysis(quotes, session, company) {
     ['day', `오늘의 개장 여건 · 미국 ${session.date} 정규장`, kospiDay.text, kosdaqDay.text, ['미국 정규장 이후 움직임은 미국 선물에서 확인하세요.', '외국인 수급·국내 거래대금·개별 실적이 외부 여건과 다르게 움직일 수 있습니다.'], ['한국 장중 환율·반도체 흐름이 관측 조합과 반대로 전환하면 해석을 철회합니다.', '외국인 수급·거래대금이 동반 확인될 때에만 국내 방향 판단을 갱신합니다.']],
     ['short', '2~3거래일 · 흐름 지속 여부', '반도체 상대강도·환율·외국인 수급의 2~3일 지속 여부를 확인합니다. 현재 방향 판단 보류.', '거래대금 확산과 성장주 상대강도가 함께 지속되는지 확인합니다. 현재 방향 판단 보류.', ['하루의 반등은 추세 전환 근거로 부족합니다.'], ['미국 금리 재상승·원화 약세 전환 시 우호적 조건을 철회합니다.']],
     ['week', '1주 · 이벤트와 업종 순환', '경제 일정, 실적 발표와 주간 수급을 함께 확인해야 합니다. 실적·수급 자료가 부족해 방향 판단을 보류합니다.', '성장주 실적과 업종 내 상승 종목 확산을 확인해야 합니다. 실적 자료 미연동으로 판단 보류.', ['발표 전 전망과 발표 후 반응은 다를 수 있습니다.'], ['경제지표·실적 발표 후 금리와 이익 전망이 달라지면 다시 검토합니다.']],
-    ['month', '1개월 · 거시와 이익 추세', '수출·이익 추정치·원화·글로벌 경기의 동반 개선 여부를 확인합니다. 해당 자료 미연동으로 판단 보류.', '실질금리·유동성·이익 추정치 개선이 함께 나타나는지 확인합니다. 해당 자료 미연동으로 판단 보류.', ['지수 상승과 이익 개선은 같은 의미가 아닙니다.'], ['실적 하향과 실질금리 상승이 지속되면 우호적 조건을 철회합니다.']],
-    ['quarter', '분기 · 구조적 추세', '정책·수출 사이클·이익·밸류에이션으로 검토해야 합니다. 현재 자료만으로 분기 방향 판단 보류.', '정책·자금조달·기업 실적의 구조적 변화를 확인해야 합니다. 현재 자료만으로 분기 방향 판단 보류.', ['일별 시세만으로 분기 전망을 만들 수 없습니다.'], ['정책·이익 사이클의 변화가 확인되면 분석 전제를 갱신합니다.']],
+    ['month', '1개월 · 거시와 이익 추세', '수출·이익 추정치·원화·글로벌 경기', '실질금리·유동성·이익 추정치', ['이익 추정치와 실질금리'], ['실적 하향과 실질금리 상승이 지속되면 우호적 조건을 철회합니다.']],
+    ['quarter', '분기 · 구조적 추세', '정책·수출 사이클·이익·밸류에이션', '정책·자금 조달·기업 실적', ['경기와 기업 이익 흐름'], ['정책·이익 사이클의 변화가 확인되면 분석 전제를 갱신합니다.']],
   ];
   return {
     summary: {
@@ -547,7 +547,7 @@ function buildAnalysis(quotes, session, company) {
       horizon, title, kospi, kosdaq, evidence: horizon === 'day' ? dayEvidence : evidence.slice(0, 5), counter, invalidation,
       ...(horizon === 'day' ? {usSessionDate: session.date} : {}),
       confidence: horizon === 'day' && (kospiDay.state !== '판단 보류' || kosdaqDay.state !== '판단 보류') ? '낮음 · 국내 수급 미확인' : '판단 보류',
-      method: 'rules', label: horizon === 'day' ? '관측 조합의 조건부 해석 · 지수 방향 예측 아님' : '일반 조건 · 현재 방향 예측 아님',
+      method: 'rules', label: horizon === 'day' ? '개장 여건' : '기간별 점검',
     })),
   };
 }
@@ -788,7 +788,7 @@ async function loadOrRefresh(env, force) {
   if (pending.has(key)) return structuredClone(await pending.get(key));
   const task = (async () => {
     const cache = edgeCache();
-    const cacheRequest = new Request(`https://market-desk-cache.invalid/snapshot/v10/${key}`);
+    const cacheRequest = new Request(`https://market-desk-cache.invalid/snapshot/v11/${key}`);
     if (!force && cache) {
       try {
         const response = await cache.match(cacheRequest);

@@ -66,7 +66,8 @@ test('mixed observation dates are disclosed and neutral evidence is not called b
   assert.equal(impact.kospi.drivers.some(driver => driver.id === 'nasdaq'), false);
   assert.equal(impact.kospi.state, '혼재');
   assert.equal(impact.mixedDates, true);
-  assert.ok(impact.cautions.some(text => text.includes('예측모형')));
+  assert.ok(impact.cautions.some(text => text.includes('규칙 기반 가중치')));
+  assert.ok(impact.kospi.drivers.every(driver => !driver.text.includes('관측')));
 });
 
 test('KOSPI and KOSDAQ use independent factor sets', () => {

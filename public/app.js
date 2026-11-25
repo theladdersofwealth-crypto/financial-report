@@ -74,7 +74,7 @@ function brand() {
   return E('div', {class: 'brand'}, E('div', {class: 'brand-mark', 'aria-hidden': 'true'}, 'M'), E('div', {}, E('div', {class: 'brand-name'}, '마켓데스크'), E('div', {class: 'brand-caption'}, 'THE MARKET DESK')));
 }
 function empty(title, description, name = 'source') {
-  return E('div', {class: 'empty-state'}, icon(name), E('strong', {}, title), E('p', {}, description));
+  return E('div', {class: 'empty-state'}, icon(name), E('strong', {}, title), description ? E('p', {}, description) : null);
 }
 function panelHead(title, subtitle = '', action = null, iconName = null) {
   return E('div', {class: 'panel-head'}, E('div', {}, E('h2', {class: 'panel-title'}, iconName ? icon(iconName) : null, title), subtitle ? E('p', {class: 'panel-subtitle'}, subtitle) : null), action);
@@ -206,7 +206,7 @@ function coreQuotes() {
   ].map(([id, name, group, unit]) => ({id, name, group, unit, value: null, change: null, status: 'unconfigured', source: null}));
 }
 function defaultMarket() {
-  return {asOf: null, mode: 'unconfigured', quotes: coreQuotes(), sectors: [], leaders: [], events: [], outlooks: [], summary: {headline: '시장의 연결고리, 데이터에서 시작합니다.', points: ['시세 공급사가 연결되면 미국 증시·금리·환율·원자재를 한 화면에서 확인할 수 있습니다.', '확인된 지표와 출처를 바탕으로 한국시장 영향과 기간별 전망을 제공합니다.', '현재 연결되지 않은 항목은 수치와 전망을 생성하지 않습니다.']}, sources: []};
+  return {asOf: null, mode: 'unconfigured', quotes: coreQuotes(), sectors: [], leaders: [], events: [], outlooks: [], summary: {headline: '시세 수신 대기', points: []}, sources: []};
 }
 
 function demoMarket() {
@@ -226,13 +226,13 @@ function demoMarket() {
     {horizon: 'short', title: '첫날의 반응보다 수급과 주도 업종의 지속성을 확인할 구간', kospi: '해외 반도체 강세가 국내 실적 기대와 수급으로 이어지는지 관찰하는 예시입니다.', kosdaq: '주도주의 상승이 다른 성장 업종으로 확산되는지를 확인합니다.', evidence: ['미국 기술주의 연속 강세를 가정', '원화 안정이 유지되는 조건'], counter: ['단기 급등 이후 차익실현 가능성'], invalidation: ['반도체 상대강도 약화 또는 장중 원화 변동성 확대'], confidence: '예시 · 평가 없음'},
     {horizon: 'week', title: '경제지표 발표 이후 금리 기대가 유지되는지가 주간 방향의 핵심', kospi: '기업 실적과 글로벌 금리 방향을 함께 확인하는 주간 시나리오 예시입니다.', kosdaq: '이벤트 전후 변동성 확대와 거래대금 변화를 확인합니다.', evidence: ['물가 둔화가 확인된다는 가정', '미국 실적 발표의 시장 기대 충족을 가정'], counter: ['예상보다 강한 물가 지표가 금리 기대를 바꿀 수 있음'], invalidation: ['미 국채 금리 급등과 신용스프레드 확대가 동반될 때'], confidence: '예시 · 평가 없음'},
     {horizon: 'month', title: '금리와 이익 전망이 같은 방향으로 움직이는지 점검할 한 달', kospi: '기업 이익 추정치 상향과 수출 회복이 확인되는 업종의 상대적 우위를 가정합니다.', kosdaq: '금리 안정에 더해 실적 확인이 필요한 시나리오입니다.', evidence: ['실질금리 안정이 유지되는 가정', '이익 추정치의 개선을 가정'], counter: ['달러 강세 재개와 에너지 비용 상승 가능성'], invalidation: ['이익 전망 하향이 광범위하게 이어질 경우'], confidence: '예시 · 평가 없음'},
-    {horizon: 'quarter', title: '3~6개월은 경기·정책·기업 이익의 조합으로 판단합니다', kospi: '수출 경기와 이익 사이클이 동반 개선되는 조건에서의 중기 시나리오 예시입니다.', kosdaq: '유동성 확대만으로 방향을 단정하지 않고 자금조달 환경과 실적을 함께 봅니다.', evidence: ['통화정책 경로의 불확실성이 줄어든다는 가정', '글로벌 수요 회복과 실적 개선의 동행을 가정'], counter: ['지정학적 공급 충격과 정책 전환 위험'], invalidation: ['경기 지표와 이익 전망이 함께 악화될 때'], confidence: '예시 · 평가 없음'},
+    {horizon: 'quarter', title: '3~6개월 · 경기와 기업 이익', kospi: '수출과 기업 이익의 동반 개선', kosdaq: '유동성·자금 조달·실적의 동반 개선', evidence: ['통화정책 경로의 불확실성이 줄어든다는 가정', '글로벌 수요 회복과 실적 개선의 동행을 가정'], counter: ['지정학적 공급 충격과 정책 전환 위험'], invalidation: ['경기 지표와 이익 전망이 함께 악화될 때'], confidence: '예시'},
   ];
   return {mode: 'demo', asOf: null, quotes, outlooks,
     summary: {headline: '코스피 +0.47% · 코스닥 +0.93%', points: ['두 시장이 함께 올랐고 코스닥 상승폭이 0.46%p 더 컸습니다.']},
     sectors: [['정보기술', 1.68], ['커뮤니케이션', 1.24], ['경기소비재', .92], ['금융', .38], ['산업재', .21], ['에너지', -.72], ['헬스케어', -.18], ['필수소비재', -.34]].map(([name, change]) => ({name, change, changeUnit: '%'})),
     leaders: [['NVDA', '엔비디아', 138.24, 3.12], ['AAPL', '애플', 228.42, 1.18], ['MSFT', '마이크로소프트', 421.84, .86], ['TSLA', '테슬라', 342.16, -1.42]].map(([symbol, name, value, change]) => ({symbol, name, value, change, changeUnit: '%', unit: 'USD'})),
-    events: [{name: '미국 소비자물가지수', time: '22:30', country: 'US', importance: 3, description: '예시 일정 · 실제 발표일과 무관합니다. 금리 기대 변화를 확인합니다.'}, {name: '한국은행 기준금리 결정', time: '10:00', country: 'KR', importance: 3, description: '예시 일정 · 실제 발표일과 무관합니다. 국내 금리와 원화 반응을 확인합니다.'}, {name: '미국 신규 실업수당 청구건수', time: '22:30', country: 'US', importance: 2, description: '예시 일정 · 실제 발표일과 무관합니다. 고용의 둔화 속도를 점검합니다.'}],
+    events: [{name: '미국 소비자물가지수', time: '22:30', country: 'US', importance: 3, description: '금리 기대 변화'}, {name: '한국은행 기준금리 결정', time: '10:00', country: 'KR', importance: 3, description: '국내 금리와 원화 흐름'}, {name: '미국 신규 실업수당 청구건수', time: '22:30', country: 'US', importance: 2, description: '고용 흐름'}],
     sources: [{name: '화면 체험용 생성 데이터', status: 'demo', note: '시세·전망·일정은 모두 화면 구성을 설명하기 위한 가상 예시입니다. 실제 시장 데이터 공급사에 연결되지 않았습니다.'}],
   };
 }
@@ -310,7 +310,7 @@ function renderWelcome(mode = 'pin') {
 function storyIllustration() {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 410 95');
-  svg.setAttribute('aria-label', '세계를 연결하는 흐름의 장식 일러스트. 시세 차트가 아닙니다.');
+  svg.setAttribute('aria-hidden', 'true');
   const specs = [{d: 'M0 75H410 M0 42H410 M0 10H410', stroke: '#ffffff0d'}, {d: 'M1 75 25 65 51 69 77 50 103 56 129 36 155 47 181 29 207 37 233 18 259 26 285 12 311 22 337 8 363 17 388 2 409 10', stroke: '#d5b781'}, {d: 'M1 87 25 77 51 80 77 68 103 71 129 56 155 65 181 47 207 52 233 40 259 46 285 32 311 39 337 25 363 34 388 20 409 25', stroke: '#65829e'}];
   specs.forEach(attrs => { const path = document.createElementNS(svg.namespaceURI, 'path'); Object.entries({...attrs, fill: 'none', 'stroke-width': '1.5'}).forEach(([k,v]) => path.setAttribute(k, v)); svg.append(path); });
   return svg;
@@ -365,9 +365,9 @@ function renderDesk() {
   const topbar = E('header', {class: 'topbar'}, E('div', {class: 'topbar-left'}, iconButton('menu', '메뉴 열기', toggleMenu, {class: 'icon-button menu-button'}), E('div', {class: 'breadcrumb'}, E('span', {}, 'Workspace'), E('span', {}, '/'), E('strong', {id: 'breadcrumb-current'}, '시황 데스크'))), E('div', {class: 'topbar-right'}, E('div', {class: 'kst-clock'}, icon('clock'), E('span', {id: 'kst-clock'})), E('div', {class: 'topbar-separator'}), E('button', {type: 'button', class: 'profile-button', onClick: profileModal, 'aria-label': '내 계정 관리'}, E('span', {class: 'avatar'}, String(state.user.name || state.user.username).slice(0, 1)), E('span', {class: 'profile-label'}, state.user.name || state.user.username, E('small', {}, state.demo ? 'DEMO WORKSPACE' : state.user.role === 'admin' ? 'ADMINISTRATOR' : 'MEMBER')), icon('down'))));
   const chatEnabled = !state.user.pinLogin;
   const rail = E('aside', {class: 'desk-rail', id: 'desk-rail', 'aria-label': chatEnabled ? '데스크 대화방' : '데스크 정보'}, railDate(), chatEnabled ? E('div', {class: 'panel chat-panel', id: 'chat-panel'}) : null, railNote());
-  const main = E('main', {class: 'workspace', id: 'main-content', tabindex: '-1'}, E('div', {id: 'page-header'}), E('div', {class: 'content-layout'}, E('div', {class: 'main-column', id: 'main-column'}), rail), E('footer', {class: 'page-footer'}, E('span', {}, '본 서비스의 정보와 시나리오는 투자 판단의 참고 자료입니다. 투자 결정과 책임은 투자자 본인에게 있습니다.'), E('span', {}, '© THE MARKET DESK')));
+  const main = E('main', {class: 'workspace', id: 'main-content', tabindex: '-1'}, E('div', {id: 'page-header'}), E('div', {class: 'content-layout'}, E('div', {class: 'main-column', id: 'main-column'}), rail), E('footer', {class: 'page-footer'}, '© THE MARKET DESK'));
   const body = E('div', {class: 'shell-body'}, topbar);
-  if (state.demo) body.append(E('div', {class: 'demo-banner', role: 'note'}, E('span', {}, E('strong', {}, '체험 모드 · 예시 데이터 · 가상 계정/접속현황'), '시세·전망·일정은 실제 정보가 아닙니다. 채팅과 관리 기능은 이 브라우저에서만 작동합니다.'), E('button', {type: 'button', class: 'text-button', onClick: exitDemo}, '체험 종료', icon('logout'))));
+  if (state.demo) body.append(E('div', {class: 'demo-banner', role: 'note'}, E('strong', {}, '체험 모드 · 예시 데이터'), E('button', {type: 'button', class: 'text-button', onClick: exitDemo}, '체험 종료', icon('logout'))));
   body.append(main);
   app.replaceChildren(E('div', {class: 'app-shell'}, sidebar, body));
   if (chatEnabled) app.append(E('button', {class: 'rail-close-overlay', id: 'chat-overlay', type: 'button', 'aria-label': '대화방 닫기', onClick: () => toggleChat(false)}), E('button', {class: 'chat-toggle', type: 'button', onClick: () => toggleChat(true)}, icon('chat'), '데스크 라운지', E('span', {id: 'chat-toggle-count'}, state.onlineCount)));
@@ -435,7 +435,7 @@ function renderView() {
   if (state.view === 'markets') main.replaceChildren(renderMarketTable(), E('div', {class:'section-pair'}, renderSectors(), renderLeaders()));
   if (state.view === 'fx') main.replaceChildren(renderFxView());
   if (state.view === 'instrument') main.replaceChildren(renderInstrumentSearch());
-  if (state.view === 'outlooks') main.replaceChildren(renderImpact(), renderOutlook(), methodologyPanel());
+  if (state.view === 'outlooks') main.replaceChildren(renderImpact(), renderOutlook());
   if (state.view === 'calendar') main.replaceChildren(renderEvents(false));
   if (state.view === 'sources') main.replaceChildren(renderSources());
   if (state.view === 'users') main.replaceChildren(renderUsers());
@@ -495,7 +495,7 @@ async function submitInstrumentSearch() {
   const generation=state.sessionGeneration,market=state.instrumentMarket;
   const query=state.instrumentQuery.trim();
   if(!query){state.instrumentResult={status:'invalid',message:'종목명 또는 코드를 입력해 주세요.'};renderView();return;}
-  if(state.demo){state.instrumentResult={status:'invalid',message:'체험 모드에서는 실시간 조회를 하지 않습니다. 로그인 후 검색해 주세요.'};renderView();return;}
+  if(state.demo){state.instrumentResult={status:'invalid',message:'시세 검색은 로그인 후 이용할 수 있습니다.'};renderView();return;}
   state.instrumentLoading=true;
   state.instrumentResult=null;
   renderView();
@@ -578,7 +578,7 @@ function dataState() {
     onClick: () => navigate('sources')}, E('i', {class: 'dot'}), summary);
 }
 async function refreshCurrent() {
-  if (state.demo) { renderView(); toast('체험용 예시 화면을 다시 표시했습니다. 실제 시세를 조회하지 않았습니다.'); return; }
+  if (state.demo) { renderView(); return; }
   if (['users', 'activity'].includes(state.view)) { await loadAdmin(state.view); return; }
   if (state.view === 'calendar') await loadCalendar();
   else if (state.view === 'overview') await Promise.all([loadMarket(), loadCalendar(), loadFutures(), autoRefreshKorea()]);
@@ -592,12 +592,8 @@ function renderBrief(expanded = false) {
   const title = (state.demo ? state.market?.summary?.headline : briefing?.headline)
     || '한국 증시 브리핑을 불러오는 중입니다';
   const evidence = items.filter(item => item.id.startsWith('kr_foreign_')).map(item =>
-    `${item.name} ${item.value < 0 ? '순매도 ' : '순매수 '}${formatValue({...item, value:Math.abs(item.value)})}억원 (${item.observedAt.slice(5, 10)})`).join(' · ');
+    `${item.name} ${item.value < 0 ? '순매도 ' : '순매수 '}${formatValue({...item, value:Math.abs(item.value)})}억원`).join(' · ');
   const points = (state.demo ? state.market?.summary?.points : briefing?.points) || [];
-  const timing = state.demo ? '화면 체험용 예시' : briefing
-    ? `갱신 ${dateText(briefing.generatedAt)} KST · ${Date.now() < Date.parse(briefing.nextUpdateAt)
-      ? '다음 ' + shortTime(briefing.nextUpdateAt) + ' KST' : '다음 갱신 확인 중'}`
-    : '한국시간 4시간마다 갱신';
   return E('details', {class: 'panel brief-panel', id: 'desk-brief', open: expanded || null,
     'data-brief-generation': briefing?.generatedAt || ''},
     E('summary', {class: 'brief-summary'},
@@ -613,11 +609,10 @@ function renderBrief(expanded = false) {
           items.map(item => E('li', {},
             E('strong', {}, `${item.name} ${formatValue(item)} ${item.unit || ''}`),
             !Number.isFinite(item.change) || item.id.startsWith('kr_foreign_') ? null
-              : E('span', {class: changeClass(item.change)}, ` ${formatChange(item)}`),
-            E('div', {class: 'tiny muted'}, quoteTimestamp(item))))),
+              : E('span', {class: changeClass(item.change)}, ` ${formatChange(item)}`)))),
         briefing?.missing?.length ? E('p', {class: 'tiny muted'}, `자료 미수신 · ${briefing.missing.join(' · ')}`) : null),
       renderImpact(),
-      E('div', {class: 'brief-footer'}, E('span', {class: 'brief-updated'}, timing),
+      E('div', {class: 'brief-footer'},
         E('button', {type: 'button', class: 'text-button', onClick: () => navigate('outlooks')}, '기간별 전망', icon('chevron')))));
 }
 function updateBriefing() {
@@ -631,7 +626,6 @@ function updateBriefing() {
       brief.querySelector(selector).replaceWith(next.querySelector(selector));
     }
   }
-  brief.querySelector('.brief-updated').textContent = next.querySelector('.brief-updated').textContent;
   if (!brief.querySelector('#korea-impact').contains(document.activeElement)) {
     brief.querySelector('#korea-impact').replaceWith(next.querySelector('#korea-impact'));
   }
@@ -640,9 +634,10 @@ function renderBacktest(review) {
   const outer = E('div', {class:'source-cards'});
   for (const [name,item] of [['KOSPI',review.kospi],['KOSDAQ',review.kosdaq]]) {
     const body = E('div',{class:'source-body'});
-    body.append(E('h3',{class:'source-name'}, name+' · '+(item.status==='exploratory'?'표본 확보':'표본 부족')));
-    body.append(E('p',{class:'source-description'},item.agreementRate===null?('판정 가능한 '+item.classifiedDays+'거래일 · 최소 '+review.minimumClassifiedDays+'일 필요'):('과거 종가 방향 일치 '+item.agreementRate+'% · '+item.classifiedDays+'거래일')));
-    body.append(E('p',{class:'tiny muted'},(item.from||'—')+' ~ '+(item.until||'—')+' · 미래 적중률을 뜻하지 않습니다.'));
+    body.append(E('h3',{class:'source-name'}, name));
+    body.append(E('p',{class:'source-description'},item.agreementRate===null
+      ? `표본 부족 · ${item.classifiedDays}/${review.minimumClassifiedDays}거래일`
+      : `일치율 ${item.agreementRate}% · ${item.classifiedDays}거래일`));
     outer.append(E('div',{class:'source-card'},body));
   }
   return outer;
@@ -650,9 +645,9 @@ function renderBacktest(review) {
 function renderImpact() {
   const impact = state.demo ? null : state.market?.impact;
   const section = E('section', {class: 'panel', id: 'korea-impact'},
-    panelHead('글로벌 → 한국 증시 영향', '해외 지표로 국내 시장의 외부 여건을 점검합니다. 실제 지수 등락 예측은 아닙니다.', badge('OBSERVED FACTORS', 'blue'), 'globe'));
+    panelHead('글로벌 → 한국 증시 영향', '', null, 'globe'));
   if (!impact) {
-    section.append(empty('글로벌 영향 분석 대기', state.demo ? '체험용 예시는 실제 분석을 표시하지 않습니다.' : '연결된 지표를 확인하는 중입니다.', 'chart'));
+    section.append(empty(state.demo ? '영향 분석은 로그인 후 확인' : '글로벌 영향 분석 대기', '', 'chart'));
     return section;
   }
   const stateTone = text => /우호|긍정|완화/.test(String(text || '')) ? 'green' : /주의|부담|비우호|위험|약세/.test(String(text || '')) ? 'amber' : 'blue';
@@ -660,8 +655,7 @@ function renderImpact() {
     return E('div', {class: 'source-card'},
       E('div', {class: 'source-body'},
         E('h3', {class: 'source-name'}, name, badge(item.state, stateTone(item.state))),
-        E('p', {class: 'source-description'}, item.summary),
-        E('p', {class: 'tiny muted'}, `반영 근거 ${item.available}/${item.total}개 · 가중치 커버리지 ${Math.round(item.coverage * 100)}% (예측 확률 아님)`),
+        E('p', {class: 'tiny muted'}, `근거 ${item.available}/${item.total}개`),
         E('ul', {class: 'reason-list'}, item.drivers.slice(0, 4).map(driver =>
           E('li', {}, `${driver.text} · ${driver.stance}`)))));
   });
@@ -674,18 +668,14 @@ function renderImpact() {
     ['코스닥 외국인 순매수', domestic.foreignKosdaq],
   ];
   section.append(E('div', {class: 'panel-foot'}, E('strong', {}, '국내 지수와 수급')));
-  section.append(E('div', {class: 'impact-domestic-grid'}, domesticItems.map(([name, quote]) =>
-    E('div', {class: 'source-card'}, E('div', {class: 'source-body'},
-      E('h3', {class: 'source-name'}, name),
-      quote ? E('p', {class: 'source-description'},
-        `${Number(quote.value).toLocaleString('ko-KR', {maximumFractionDigits: 2})} ${quote.unit || ''} · ${quoteTimestamp(quote)}`) :
-        E('p', {class: 'source-description'}, '데이터 미연결 또는 최신 관측값 부족'),
-      quote?.change !== null && quote?.change !== undefined
-        ? E('p', {class: 'tiny muted'}, `직전 관측 대비 ${quote.change > 0 ? '+' : ''}${quote.change}${quote.changeUnit || ''}`) : null)))));
+  const domesticCards = domesticItems.map(([name, quote])=>E('div', {class: 'source-card'}, E('div', {class: 'source-body'},
+    E('h3', {class: 'source-name'}, name),
+    E('p', {class: 'source-description'}, quote ? `${formatValue(quote)} ${quote.unit || ''}` : '자료 대기',
+      Number.isFinite(quote?.change) ? E('span', {class: changeClass(quote.change), title:'전일 대비'}, ` · ${formatChange(quote)}`) : null))));
+  section.append(E('div', {class: 'impact-domestic-grid'}, domesticCards));
 
   if (impact.validation) {
-    section.append(E('div', {class:'panel-foot'}, '과거 방향 일치 점검 · 탐색적 통계'), renderBacktest(impact.validation),
-      E('div', {class:'source-disclaimer'}, (impact.validation.limitations || []).join(' ')));
+    section.append(E('div', {class:'panel-foot'}, '과거 종가 방향 일치'), renderBacktest(impact.validation));
   }
   const themes = (impact.themes || []).map(theme =>
     E('div', {class: 'source-card'},
@@ -694,8 +684,6 @@ function renderImpact() {
         E('p', {class: 'source-description'}, theme.reason),
         theme.evidence ? E('p', {class: 'tiny muted'}, theme.evidence) : null)));
   section.append(E('div', {class: 'impact-themes-grid'}, themes));
-  section.append(E('div', {class: 'source-disclaimer'},
-    `${impact.mixedDates ? '관측 날짜가 다른 지표가 섞여 있습니다. ' : ''}${(impact.cautions || []).join(' ')}`));
   return section;
 }
 function fxPlaceholder({id, name, code, amount}) {
@@ -817,9 +805,9 @@ function quoteTimestamp(quote) {
   if (quote.timestampPrecision === 'provider_clock') return `${value} 기준`;
   if (quote.timestampPrecision === 'month') return `${String(value).slice(0, 7)} 기준`;
   if (quote.timestampPrecision === 'day') return `${String(value).slice(0, 10)} 기준`;
-  if (quote.timestampPrecision === 'retrieval' || !quote.observedAt) return `${dateText(value)} KST 조회`;
+  if (quote.timestampPrecision === 'retrieval' || !quote.observedAt) return dateText(value);
   if (quote.timestampPrecision === 'window_end') return `${dateText(value)} KST 24시간 집계 종료`;
-  return `${dateText(value)} KST 관측`;
+  return dateText(value);
 }
 function marketObservation(quotes) {
   const available = quotes.filter(q=>hasValue(q) && q.observedAt);
@@ -976,7 +964,7 @@ function openIndexChart(quote) {
           E('span',{class:`market-chart-change ${changeClass(change)}`},changeText));
         if (!series.length || (!candleMode && series.length<2)) {
           plot.append(E('div',{class:'market-chart-empty'}, future ? (futureFrame ? '거래소에서 해당 주기의 마크 가격 봉을 기다리는 중입니다.' : '선물 봉을 불러오는 중입니다.') : candleMode ?
-            `연결된 ${label} 시가·고가·저가·종가가 없습니다. 실제 응답이 확인될 때까지 봉을 생성하지 않습니다.` :
+            `${label} 자료 수신 대기` :
             `해당 기간의 ${observationLabel} 관측값이 2개 미만입니다.`));
         } else {
           const dims={w:760,h:310,left:76,right:24,top:20,bottom:45};
@@ -1109,19 +1097,24 @@ const horizons = [{id: 'day', label: '오늘', aliases: ['day', 'today', 'daily'
 function renderOutlook() {
   const active = horizons.find(x => x.id === state.horizon) || horizons[0];
   const outlook = (state.market?.outlooks || []).find(item => active.aliases.includes(item.horizon));
-  const section = E('section', {class: 'panel', id: 'outlook-panel'}, panelHead('한국시장, 어떻게 연결될까요?', '단정적인 예측 대신 확인 가능한 조건과 시나리오', badge(state.demo ? '예시 전망' : 'CONDITIONAL VIEW', state.demo ? 'amber' : 'blue')), E('div', {class: 'outlook-tabs', role: 'tablist', 'aria-label': '전망 기간'}, horizons.map(item => E('button', {type: 'button', class: `tab ${item.id === state.horizon ? 'active' : ''}`, role: 'tab', 'aria-selected': item.id === state.horizon, id: `tab-${item.id}`, 'aria-controls': 'outlook-content', onClick: () => { state.horizon = item.id; section.replaceWith(renderOutlook()); document.querySelector(`#tab-${item.id}`)?.focus(); }}, item.label))));
+  const section = E('section', {class: 'panel', id: 'outlook-panel'}, panelHead('한국시장 전망', '', state.demo ? badge('예시', 'amber') : null), E('div', {class: 'outlook-tabs', role: 'tablist', 'aria-label': '전망 기간'}, horizons.map(item => E('button', {type: 'button', class: `tab ${item.id === state.horizon ? 'active' : ''}`, role: 'tab', 'aria-selected': item.id === state.horizon, id: `tab-${item.id}`, 'aria-controls': 'outlook-content', onClick: () => { state.horizon = item.id; section.replaceWith(renderOutlook()); document.querySelector(`#tab-${item.id}`)?.focus(); }}, item.label))));
   if (!outlook) {
-    section.append(E('div', {id: 'outlook-content', role: 'tabpanel', 'aria-labelledby': `tab-${active.id}`}, empty(`${active.label} 전망을 위한 근거가 아직 없습니다.`, '연결된 시황과 경제 일정이 확보되면 근거·반대 증거·판단 변경 조건을 함께 제공합니다.', 'chart')));
+    section.append(E('div', {id: 'outlook-content', role: 'tabpanel', 'aria-labelledby': `tab-${active.id}`}, empty(`${active.label} 전망 자료 대기`, '', 'chart')));
     return section;
   }
-  section.append(E('div', {class: 'outlook-body', id: 'outlook-content', role: 'tabpanel', 'aria-labelledby': `tab-${active.id}`}, E('h3', {class: 'outlook-headline'}, outlook.title), E('div', {class: 'outlook-markets'}, E('div', {class: 'outlook-market'}, E('strong', {}, 'KOSPI'), E('p', {}, outlook.kospi || '분석 근거 부족')), E('div', {class: 'outlook-market'}, E('strong', {}, 'KOSDAQ'), E('p', {}, outlook.kosdaq || '분석 근거 부족'))), E('div', {class: 'outlook-reason-grid'}, E('div', {class: 'outlook-reason-box'}, E('h3', {class: 'reason-title'}, E('i', {class: 'dot'}), '이 판단을 지지하는 근거'), reasonList(outlook.evidence, '확인된 근거 없음')), E('div', {class: 'outlook-reason-box risk'}, E('h3', {class: 'reason-title risk'}, E('i', {class: 'dot'}), '함께 볼 반대 증거'), reasonList(outlook.counter, '반대 증거 미제공'))), E('div', {class: 'invalidation'}, E('strong', {}, '판단을 바꿀 조건'), E('span', {}, arrayText(outlook.invalidation) || '판단 변경 조건 미제공')), E('div', {class: 'outlook-confidence'}, icon('info'), `판단 확신도: ${outlook.confidence ?? '평가 없음'} · ${state.demo ? '체험용 예시이며 실제 시장 전망이 아닙니다.' : '검증되지 않은 숫자 확률은 표시하지 않습니다.'}`)));
+  section.append(E('div', {class: 'outlook-body', id: 'outlook-content', role: 'tabpanel', 'aria-labelledby': `tab-${active.id}`},
+    E('h3', {class: 'outlook-headline'}, outlook.title),
+    E('div', {class: 'outlook-markets'}, [['KOSPI',outlook.kospi], ['KOSDAQ',outlook.kosdaq]].map(([name, text])=>
+      E('div', {class:'outlook-market'}, E('strong', {}, name), E('p', {}, text || '근거 부족')))),
+    E('div', {class: 'outlook-reason-grid'},
+      E('div', {class: 'outlook-reason-box'}, E('h3', {class: 'reason-title'}, E('i', {class: 'dot'}), '근거'), reasonList(outlook.evidence, '자료 대기')),
+      E('div', {class: 'outlook-reason-box risk'}, E('h3', {class: 'reason-title risk'}, E('i', {class: 'dot'}), '변수'), reasonList(outlook.counter, '자료 대기'))),
+    E('div', {class: 'invalidation'}, E('strong', {}, '판단 변경 조건'), E('span', {}, arrayText(outlook.invalidation) || '자료 대기')),
+    outlook.confidence && !state.demo ? E('div', {class:'outlook-confidence'}, `근거 수준 · ${outlook.confidence}`) : null));
   return section;
 }
 function arrayText(value) { return Array.isArray(value) ? value.map(x => typeof x === 'string' ? x : x.text || x.title || '').join(' · ') : typeof value === 'string' ? value : ''; }
 function reasonList(values, fallback) { const rows = Array.isArray(values) ? values : values ? [values] : []; return E('ul', {class: 'reason-list'}, (rows.length ? rows : [fallback]).map(value => E('li', {}, typeof value === 'string' ? value : value.text || value.title || ''))); }
-function methodologyPanel() {
-  return E('section', {class: 'panel'}, panelHead('전망을 읽는 방법', '기간이 달라지면 확인해야 할 근거도 달라집니다.', null, 'info'), E('div', {class: 'source-cards'}, [['오늘 · 2~3일', '해외 장 마감, 원화, 외국인 수급과 주도 업종의 지속성을 확인합니다.'], ['주간 · 월간', '경제지표·통화정책·기업실적이 금리와 이익 기대를 어떻게 바꾸는지 봅니다.'], ['3~6개월', '경기와 정책, 기업 이익의 조합을 평가합니다. 단기 등락으로 중기 방향을 단정하지 않습니다.']].map(([title, text]) => E('div', {class: 'source-card'}, E('div', {class: 'source-body'}, E('h3', {class: 'source-name'}, title), E('p', {class: 'source-description'}, text))))), E('div', {class: 'source-disclaimer'}, '전망은 관측 시점의 조건부 시나리오입니다. 새 정보가 들어오거나 명시한 판단 변경 조건이 충족되면 해석이 달라질 수 있습니다.'));
-}
 const calendarProviderLabels = {
   bls: '미국 노동통계국 · CPI·고용·PPI·JOLTS',
   fed: '미국 연방준비제도 · FOMC',
@@ -1157,7 +1150,7 @@ function renderEvents(compact = false) {
     const importance = Number(item.importance) || (item.impact === 'high' ? 3 : 1);
     return E('div', {class: 'event-row'}, E('div', {class: 'event-time'}, actualTime, E('small', {}, state.demo ? '가상 일정' : item.date && !item.at ? `${item.date} · 미 동부 기준` : rawTime ? dateText(rawTime, {hour: undefined, minute: undefined}) : 'KST')), E('div', {class: 'event-country'}, item.country || item.region || 'GL'), E('div', {class: 'event-info'}, E('div', {class: 'event-name'}, item.name || item.title), E('p', {class: 'event-description'}, item.description || item.note || ''), !state.demo && item.sourceUrl ? link(item.source, item.sourceUrl) : null, ['cache', 'build'].includes(item.route) ? E('small', {class: 'event-saved'}, calendarRouteLabels[item.route]) : null), E('div', {class: 'event-importance', 'aria-label': `중요도 ${Math.min(3, importance)}/3`}, [1, 2, 3].map(x => E('i', {class: x <= importance ? '' : 'dim'}))));
   })));
-  section.append(E('div', {class: 'panel-foot'}, state.demo ? '예시 일정은 실제 발표 예정일·시각·중요도를 나타내지 않습니다.' : calendar?.status === 'partial' ? '일부 공급처의 최신 일정 확인이 필요합니다.' : '발표 일정은 변경될 수 있습니다.'));
+  if (!state.demo && calendar?.status === 'partial') section.append(E('div', {class: 'panel-foot'}, '일부 일정 확인 중'));
   return section;
 }
 
@@ -1244,7 +1237,7 @@ function renderSources() {
       const details = [];
       if (source.expected != null) details.push(`정상 수신 ${source.received || 0}/${source.expected}`);
       if (source.stale) details.push(`오래된 값 ${source.stale}개`);
-      if (source.monthly) details.push(`월간 평균 ${source.monthly}개 · 실시간 가격 아님`);
+      if (source.monthly) details.push(`월간 평균 ${source.monthly}개`);
       if (source.backup) details.push(`백업 값 ${source.backup}개`);
       if (source.missing) details.push(`미수신 ${source.missing}개`);
       const errors = (source.failures || []).filter(x => x.count > 0)
@@ -1264,14 +1257,11 @@ function renderSources() {
   }
   if (outdated.length && !state.demo) panel.append(E('div', {class: 'source-disclaimer'},
     E('strong', {}, '오래된 관측 또는 저장값'),
-    E('p', {}, outdated.map(q => q.name).join(' · ')),
-    E('p', {}, '과거 관측값은 최근 시장 방향 분석에 사용하지 않습니다.')));
+    E('p', {}, outdated.map(q => q.name).join(' · '))));
   if (missing.length && !state.demo) panel.append(E('div', {class: 'source-disclaimer'},
     E('strong', {}, '연결 또는 수신 확인이 필요한 항목'),
     E('p', {}, missing.map(q => q.name).join(' · '))));
-  panel.append(E('div', {class: 'source-disclaimer'}, E('strong', {}, '관측 시각과 데이터 기준'),
-    E('p', {}, '수신 시각과 관측 시각은 다릅니다. ECB 기준환율은 서울 현물환이 아니며, 배포 백업값은 실시간 가격이 아닙니다.'),
-    E('p', {}, state.market?.asOf ? `최근 데스크 갱신: ${dateText(state.market.asOf)} KST` : '현재 실제 데이터 갱신 시각이 없습니다.')));
+  if (state.market?.asOf) panel.append(E('div', {class: 'panel-foot'}, `최근 갱신 ${dateText(state.market.asOf)}`));
   return panel;
 }
 function sourceStatus(status) {
@@ -1307,7 +1297,7 @@ function renderActivity() {
   const prefix = state.demo ? '가상 ' : '';
   const onlineCount = activity?.online?.length ?? state.onlineCount;
   const summary = E('div', {class: 'summary-grid'}, statBox(`${prefix}현재 접속`, String(onlineCount), '회원 기준 · 여러 탭은 한 명'), statBox(`${prefix}기록된 세션`, activity ? String(sessions.length) : '—', '최근 로그인 기록 최대 500개'), statBox(`${prefix}활동 추정 시간`, totals.length ? duration(totals.reduce((sum, item) => sum + Number(item.activeSeconds || 0), 0)) : state.demo ? '34분' : '—', '회원별 중복 접속 시간 제외'));
-  const note = E('div', {class: 'admin-note'}, state.demo ? '체험 모드 · 아래 계정, 접속 수, 이용 시간은 가상 예시입니다. 실제 사용자 기록을 조회하지 않습니다.' : activity?.measurement || '접속 현황은 서버가 수신한 화면 표시·최근 활동 신호로 집계합니다. 이용 시간은 추정치입니다.');
+  const note = E('div', {class: 'admin-note'}, state.demo ? '체험 모드 · 가상 접속 기록' : activity?.measurement || '화면 표시·최근 활동을 기준으로 집계한 이용 시간');
   const settings = E('section', {class: 'panel'}, panelHead('데스크 라운지 운영', '동시에 접속한 회원이 기준 인원 이상이면 대화할 수 있습니다.', null, 'chat'));
   const threshold = field('대화 가능한 최소 접속 인원', 'chatThreshold', {type: 'number', min: 1, max: 100, step: 1, value: state.threshold});
   const save = E('button', {type: 'submit', class: 'button primary small'}, state.demo ? '가상 설정 적용' : '설정 저장');
