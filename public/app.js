@@ -595,36 +595,33 @@ async function refreshCurrent() {
 function renderBrief(expanded = false) {
   const briefing = state.demo ? null : state.market?.briefing;
   const items = briefing?.items || [];
-  const title = (state.demo ? state.market?.summary?.headline : briefing?.headline)
+  const insight = briefing?.insight;
+  const title = insight?.title || (state.demo ? '코스피·코스닥 동반 상승' : briefing?.headline)
     || '한국 증시 브리핑을 불러오는 중입니다';
-  const [session, ...moves] = title.split(' · ');
-  const evidence = items.filter(item => item.id.startsWith('kr_foreign_'));
-  const points = (state.demo ? state.market?.summary?.points : briefing?.points) || [];
+  const summary = insight?.summary || (state.demo ? state.market?.summary?.points?.[0] : null);
+  const points = briefing?.points || [];
   return E('details', {class: 'panel brief-panel', id: 'desk-brief', open: expanded || null,
     'data-brief-generation': briefing?.generatedAt || ''},
     E('summary', {class: 'brief-summary'},
       E('span', {class: 'brief-label'}, icon('brief'), '오늘의 브리핑 · 한국 증시', state.demo ? badge('예시', 'amber') : null),
-      E('span', {class: 'brief-headline', 'aria-live': 'polite'},
-        E('span', {class:'brief-session'}, session),
-        moves.length ? E('span', {class:'brief-moves'}, moves.map(move=>E('span', {}, move))) : null),
-      E('span', {class: 'brief-evidence', hidden: !evidence.length || null},
-        evidence.length ? E('strong', {}, '외국인') : null,
-        evidence.map(item => E('span', {},
-          `${item.id.endsWith('kospi') ? '코스피' : '코스닥'} ${item.value > 0 ? '+' : ''}${formatValue(item)}억원`))),
+      E('span', {class: 'brief-copy', 'aria-live': 'polite'},
+        E('span', {class: 'brief-headline'}, title),
+        briefing?.previousSession ? E('span', {class: 'brief-reference'}, briefing.session) : null,
+        summary ? E('span', {class: 'brief-narrative'}, summary) : null,
+        insight?.watch ? E('span', {class: 'brief-watch'}, E('strong', {}, '관전 포인트'), insight.watch) : null),
       E('span', {class: 'brief-more'}, E('span', {class: 'brief-more-closed'}, '근거·상세 보기'),
         E('span', {class: 'brief-more-open'}, '상세 접기'), icon('down'))),
     E('div', {class: 'brief-details'},
       E('div', {class: 'brief-content', hidden: !items.length && !points.length && !briefing?.missing?.length || null},
-        E('h2', {}, state.demo ? '브리핑 근거' : '국내 지수·수급과 환율·금리'),
-        E('ul', {class: 'brief-points'}, points.map(point => E('li', {}, point)),
-          items.map(item => E('li', {},
+        E('h2', {}, '브리핑 근거'),
+        points.map(point => E('p', {class: 'brief-context'}, point)),
+        items.length ? E('ul', {class: 'brief-points'}, items.map(item => E('li', {},
             E('strong', {}, `${item.name} ${formatValue(item)} ${item.unit || ''}`),
-            !Number.isFinite(item.change) || item.id.startsWith('kr_foreign_') ? null
-              : E('span', {class: changeClass(item.change)}, ` ${formatChange(item)}`)))),
+            !Number.isFinite(item.change) || /^kr_(foreign|pension)_/.test(item.id) ? null
+              : E('span', {class: changeClass(item.change)}, ` ${formatChange(item)}`)))) : null,
         briefing?.missing?.length ? E('p', {class: 'tiny muted'}, `자료 미수신 · ${briefing.missing.join(' · ')}`) : null),
-      renderImpact(),
       E('div', {class: 'brief-footer'},
-        E('button', {type: 'button', class: 'text-button', onClick: () => navigate('outlooks')}, '기간별 전망', icon('chevron')))));
+        E('button', {type: 'button', class: 'text-button', onClick: () => navigate('outlooks')}, '한국 증시 영향·전망', icon('chevron')))));
 }
 function updateBriefing() {
   const brief = document.querySelector('#desk-brief');
@@ -632,12 +629,9 @@ function updateBriefing() {
   const next = renderBrief(brief.hasAttribute('open'));
   if (brief.dataset.briefGeneration !== next.dataset.briefGeneration) {
     brief.dataset.briefGeneration = next.dataset.briefGeneration;
-    for (const selector of ['.brief-headline', '.brief-evidence', '.brief-content']) {
+    for (const selector of ['.brief-copy', '.brief-content']) {
       brief.querySelector(selector).replaceWith(next.querySelector(selector));
     }
-  }
-  if (!brief.querySelector('#korea-impact').contains(document.activeElement)) {
-    brief.querySelector('#korea-impact').replaceWith(next.querySelector('#korea-impact'));
   }
 }
 function renderBacktest(review) {

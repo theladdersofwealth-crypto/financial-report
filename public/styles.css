@@ -1347,33 +1347,35 @@ td strong {
 }
 .brief-label { color: #795a26; }
 .brief-label .icon, .brief-more .icon { width: 16px; height: 16px; }
+.brief-copy {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
 .brief-headline {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 2px 12px;
   color: var(--ink);
   font-size: clamp(19px, 2.2vw, 24px);
   font-weight: 800;
   line-height: 1.4;
-  word-break: keep-all;
 }
-.brief-moves, .brief-evidence:not([hidden]) {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 3px 12px;
+.brief-reference { color: var(--muted); font-size: 12px; }
+.brief-narrative { color: var(--ink); font-size: 14px; line-height: 1.55; }
+.brief-watch {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
 }
-.brief-moves > span, .brief-evidence > span { white-space: nowrap; }
-.brief-evidence { color: var(--muted); font-size: 13px; font-weight: 550; }
+.brief-watch strong { margin-inline-end: 6px; color: var(--navy); white-space: nowrap; }
 .brief-more { margin-top: 4px; color: var(--navy); }
 .brief-more-open, .brief-panel[open] .brief-more-closed { display: none; }
 .brief-panel[open] .brief-more-open { display: inline; }
 .brief-panel[open] .brief-more .icon { transform: rotate(180deg); }
 .brief-details { border-top: 1px solid var(--line); }
-.brief-details > #korea-impact { border: 0; box-shadow: none; border-radius: 0; }
-.brief-content { padding: 18px 24px 10px; }
+.brief-content { padding: 18px 24px; }
 .brief-content h2 { font-size: 16px; }
+.brief-context { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
 .brief-points { display: grid; gap: 7px; padding-inline-start: 18px; margin: 10px 0 0; font-size: 13.5px; }
 .brief-footer {
   display: flex;
@@ -3571,10 +3573,7 @@ td strong {
   .chat-toggle { bottom: max(12px, env(safe-area-inset-bottom)); right: 12px; white-space: nowrap; }
 
   .brief-summary { padding: 14px; }
-  .brief-headline { flex-direction: column; gap: 4px; }
-  .brief-session { font-size: 19px; }
-  .brief-moves { gap: 6px 12px; font-size: 16px; font-variant-numeric: tabular-nums; }
-  .brief-evidence { font-size: 12px; }
+  .brief-content { padding: 14px; }
 
   .metric-jump { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; padding: 9px; }
   .metric-jump-label, .metric-jump-number, .metric-section-number { display: none; }

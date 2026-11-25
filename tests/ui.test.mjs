@@ -43,14 +43,16 @@ test('standalone demo renders every destination without accessing member APIs',a
   assert.equal(brief.hasAttribute('open'), false);
   assert.match(brief.querySelector('.brief-label').textContent, /오늘의 브리핑/);
   assert.equal(brief.querySelector('.brief-more-closed').textContent, '근거·상세 보기');
-  assert.ok(brief.querySelector('.brief-details #korea-impact'));
+  assert.match(brief.querySelector('.brief-narrative').textContent, /코스닥 상승폭/);
   brief.setAttribute('open', '');
   vm.runInContext('renderView()',ctx);
   assert.ok(overview.firstElementChild.hasAttribute('open'));
   vm.runInContext(`
     state.demo = false;
     state.market.briefing = {headline:'11월 23일 종가 · 코스피 +1.25% · 코스닥 -0.40%', generatedAt:'2026-11-23T15:00:00Z',
-      nextUpdateAt:'2026-11-23T19:00:00Z', items: [
+      nextUpdateAt:'2026-11-23T19:00:00Z', previousSession:true, session:'11월 23일 종가',
+      insight:{title:'코스피 상승 · 코스닥 하락', summary:'외국인은 코스피에서 300억원 순매도했습니다.',
+        watch:'코스피 외국인 순매도가 줄어드는지 보세요.'}, items: [
         {id:'kospi',name:'코스피', value:3200, change:1.25, changeUnit:'%', unit:'pt',
           observedAt:'2026-11-23', timestampPrecision:'day', source:'KIS'},
         {id:'kr_foreign_kospi',name:'코스피 외국인', value:-300, change:150, changeUnit:'억원', unit:'억원',
@@ -69,14 +71,16 @@ test('standalone demo renders every destination without accessing member APIs',a
     state.demo = true;
   `, ctx);
   assert.ok(overview.firstElementChild.hasAttribute('open'));
-  assert.deepEqual([...document.querySelectorAll('.brief-moves > span')].map(node=>node.textContent),
-    ['코스피 +1.25%', '코스닥 -0.40%']);
-  assert.match(document.querySelector('.brief-evidence').textContent,/외국인.*코스피 -300\.00억원/);
+  assert.equal(document.querySelector('.brief-headline').textContent, '코스피 상승 · 코스닥 하락');
+  assert.equal(document.querySelector('.brief-reference').textContent, '11월 23일 종가');
+  assert.match(document.querySelector('.brief-narrative').textContent,/외국인은 코스피에서 300억원 순매도/);
+  assert.match(document.querySelector('.brief-watch').textContent,/코스피 외국인 순매도가 줄어드는지/);
   assert.doesNotMatch(document.querySelector('.brief-content').textContent,/KIS|미국 시장|무기한|150/);
   const details = document.querySelector('.brief-details').textContent;
   assert.doesNotMatch(details,/2026-11-23|KST 조회|적중률|예측하는 값/);
-  assert.doesNotMatch(document.querySelector('.brief-evidence').textContent,/\(11-23\)/);
-  assert.match(details,/나스닥 100 하락 \(-1\.99%\).*일치율 57\.1% · 42거래일/);
+  assert.match(details,/코스피 3,200\.00 pt.*\+1\.25%.*코스피 외국인 -300\.00 억원/);
+  const impact = vm.runInContext("state.demo = false; const impactText = renderImpact().textContent; state.demo = true; impactText;",ctx);
+  assert.match(impact,/나스닥 100 하락 \(-1\.99%\).*일치율 57\.1% · 42거래일/);
 
   const topics=[...document.querySelectorAll('.metric-section-title')].map(el=>el.textContent);
   assert.deepEqual(topics,[

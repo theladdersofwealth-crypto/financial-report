@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import { collectKisIntraday, issueKisToken, kisConfigured, koreaSessionOpen } from './kis.js';
-import { briefingWindow, buildKoreaBriefing } from './briefing.js';
+import { briefingWindow, buildKoreaBriefing, koreaBriefingQuotes } from './briefing.js';
 import { collectLiveFutures, withFuturesChanges } from './live-futures.js';
 import { FUTURES_FRESHNESS_MS } from '../public/futures-config.js';
 
@@ -57,7 +57,7 @@ export class MarketBriefing extends DurableObject {
 
   #currentWindow(saved) {
     const now = Date.now();
-    return saved?.windowStart === briefingWindow(now).windowStart
+    return saved?.insight && saved.windowStart === briefingWindow(now).windowStart
       && (!saved.missing.length || now - Date.parse(saved.generatedAt) < 5 * 60000);
   }
 
@@ -74,7 +74,8 @@ export class MarketBriefing extends DurableObject {
   }
 
   async #publish(quotes) {
-    const briefing = buildKoreaBriefing(quotes, Date.now());
+    const futures = await this.latestFutures().catch(() => ({quotes:[]}));
+    const briefing = buildKoreaBriefing([...quotes, ...koreaBriefingQuotes(futures.quotes)], Date.now());
     await this.ctx.storage.put(KOREA_BRIEFING_KEY, briefing);
     console.info('Korea market briefing refreshed', {
       generatedAt:briefing.generatedAt, nextUpdateAt:briefing.nextUpdateAt,

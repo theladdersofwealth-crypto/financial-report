@@ -238,9 +238,21 @@ test('KIS token broker shares one OAuth issuance across concurrent callers', asy
 });
 
 test('the shared market briefing publishes once within a four-hour window', async t => {
+  let bookRequests = 0;
   const mf = new Miniflare(convertV4MiniflareOptions({
     modules:workerModules, compatibilityDate:'2026-11-01',
     durableObjects:{US_BRIEFING:{className:'MarketBriefing',useSQLite:true}},
+    outboundService: async request => {
+      const url = new URL(request.url);
+      if (url.pathname.endsWith('/order_book')) {
+        bookRequests++;
+        return Response.json({update_us:Date.now()*1000, bids:[{p:'101'}], asks:[{p:'103'}]});
+      }
+      if (url.pathname.endsWith('/candlesticks')) {
+        return Response.json([{t:(Math.floor(Date.now()/86400000)-1)*86400, c:'100'}]);
+      }
+      return new Response(null, {status:404});
+    },
   }));
   t.after(()=>mf.dispose());
   const namespace = await mf.getDurableObjectNamespace('US_BRIEFING');
@@ -251,8 +263,13 @@ test('the shared market briefing publishes once within a four-hour window', asyn
     value:3200, change:1, changeUnit:'%'};
   const release = await first.current([{...sample, id:'kospi'}, {...sample, id:'kosdaq'}]);
   assert.match(release.headline, /종가 · 코스피 \+1\.00% · 코스닥 \+1\.00%/);
+  assert.deepEqual(release.items.filter(item=>item.id.startsWith('fut_')).map(item=>item.change), [2,2]);
+  assert.match(release.insight.summary, /미국 지수선물은 동반 상승/);
+  assert.ok(bookRequests > 0);
+  const initialRequests = bookRequests;
   assert.equal(await another.needsRefresh(), false);
   const sameWindow = await another.current([{...sample, id:'kospi', change:2}]);
   assert.equal(sameWindow.generatedAt, release.generatedAt);
   assert.equal(sameWindow.headline, release.headline);
+  assert.equal(bookRequests, initialRequests);
 });

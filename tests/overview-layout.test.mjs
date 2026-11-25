@@ -11,7 +11,8 @@ test('market desk overview starts with a collapsible briefing before market indi
   const briefing = code.slice(code.indexOf('function renderBrief('),code.indexOf('function renderBacktest('));
   assert.match(briefing,/E\('details'/);
   assert.match(briefing,/E\('summary'/);
-  assert.match(briefing,/renderImpact\(\)/);
+  assert.match(briefing,/insight\?\.title/);
+  assert.match(briefing,/insight\.watch/);
 });
 
 test('KIS Korea indexes and signed foreign flows are rendered before global indicators', async () => {
