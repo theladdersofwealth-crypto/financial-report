@@ -49,25 +49,29 @@ test('standalone demo renders every destination without accessing member APIs',a
   assert.ok(overview.firstElementChild.hasAttribute('open'));
   vm.runInContext(`
     state.demo = false;
-    state.market.briefing = {headline:'S&P 500 선물 상승', generatedAt:'2026-11-23T15:00:00Z',
+    state.market.briefing = {headline:'11월 23일 종가 · 코스피 +1.25% · 코스닥 -0.40%', generatedAt:'2026-11-23T15:00:00Z',
       nextUpdateAt:'2026-11-23T19:00:00Z', items: [
-        {name:'S&P 500 무기한', type:'future', value:7000, change:1.25, changeUnit:'%', unit:'USDT',
-          observedAt:'2026-11-23', basis:'호가 중간값', contract:'SPX500_USDT', source:'Gate'},
-        {name:'나스닥100 무기한', type:'future', value:24000, change:-0.4, changeUnit:'%', unit:'USDT',
-          observedAt:'2026-11-22', basis:'호가 중간값', contract:'NAS100_USDT', source:'Gate'}],
-      missing:['다우 선물']};
+        {id:'kospi',name:'코스피', value:3200, change:1.25, changeUnit:'%', unit:'pt',
+          observedAt:'2026-11-23', timestampPrecision:'day', source:'KIS'},
+        {id:'kr_foreign_kospi',name:'코스피 외국인', value:-300, change:150, changeUnit:'억원', unit:'억원',
+          observedAt:'2026-11-23', timestampPrecision:'day', source:'KIS'}],
+      missing:[]};
     updateBriefing();
     state.demo = true;
   `, ctx);
   assert.ok(overview.firstElementChild.hasAttribute('open'));
-  assert.match(document.querySelector('.brief-headline').textContent,/S&P 500 선물 상승/);
-  assert.match(document.querySelector('.brief-evidence').textContent,/나스닥100 무기한 -0.40%/);
-  assert.match(document.querySelector('.brief-content').textContent,/SPX500_USDT.*Gate.*NAS100_USDT.*Gate.*다우 선물/);
+  assert.match(document.querySelector('.brief-headline').textContent,/코스피 \+1.25% · 코스닥 -0.40%/);
+  assert.match(document.querySelector('.brief-evidence').textContent,/코스피 외국인 순매도 300.00억원/);
+  assert.doesNotMatch(document.querySelector('.brief-content').textContent,/KIS|미국 시장|무기한|150/);
 
   const topics=[...document.querySelectorAll('.metric-section-title')].map(el=>el.textContent);
-  assert.deepEqual(topics.slice(0,7),[
-    '한국 증시 · 외국인·연기금 수급','미국 지수선물','일본 지수선물','금리','원화 환율','원자재 선물','코인 선물'
+  assert.deepEqual(topics,[
+    '한국 증시 · 외국인·연기금 수급','미국 지수선물','금리','원화 환율','원자재 선물','코인 선물'
   ],'distinct trading instrument and reference sections stay in order');
+  const namesIn = id => [...document.querySelectorAll('#'+id+' .quote-name')].map(node => node.textContent);
+  assert.deepEqual(namesIn('metrics-macro'), ['미 국채 2년','미 국채 10년','한국 국고채 3년','한국 국고채 10년']);
+  assert.deepEqual(namesIn('metrics-commodities'), ['WTI','브렌트유','금','은']);
+  assert.deepEqual(namesIn('metrics-crypto'), ['비트코인','이더리움']);
   assert.equal(document.querySelectorAll('.metric-jump-button').length,topics.length);
   assert.equal(document.querySelectorAll('.overview-section-intro').length, 2,
     'sector and outlook sections keep their own headings');
@@ -80,6 +84,11 @@ test('standalone demo renders every destination without accessing member APIs',a
     await new Promise(r=>nativeTimeout(r,5));
     assert.ok(document.querySelector('#main-column').textContent.trim().length>20,`${view} content`);
     assert.ok(document.querySelector('.demo-banner'),`${view} retains demo warning`);
+    if (view === 'markets') {
+      const table = document.querySelector('#market-table-body').textContent;
+      assert.doesNotMatch(table, /닛케이|구리|니켈|솔라나|달러 인덱스|무기한/);
+      assert.match(table, /미 국채 2년.*한국 국고채 10년/);
+    }
   }
   vm.runInContext('renderWelcome()',ctx);
   const formFields = () => [...document.querySelectorAll('.welcome-form form input, .welcome-form form select')].map(field => field.name);
@@ -102,7 +111,7 @@ test('standalone demo renders every destination without accessing member APIs',a
       ]};
     document.getElementById('app').replaceChildren(quoteCard(saved));`,ctx);
   assert.equal(document.querySelector('.quote-status').textContent, '최근 저장값');
-  assert.match(document.querySelector('.quote-provenance').textContent, /한국투자증권.*2026-11-20 기준/);
+  assert.equal(document.querySelector('.quote-provenance').textContent, '2026-11-20 기준');
   document.querySelector('.quote-card').click();
   const button = label => [...document.querySelectorAll('.market-chart-range')].find(el => el.textContent === label);
   button('1분봉').click();
@@ -139,8 +148,8 @@ test('standalone demo renders every destination without accessing member APIs',a
   vm.runInContext('openIndexChart(futuresRows()[0])',ctx);
   await new Promise(r=>nativeTimeout(r,10));
   assert.equal(requested.at(-1), '/api/futures?id=fut_es&period=5min');
-  assert.match(document.querySelector('#modal-title').textContent, /S&P 500 무기한 · 캔들 차트/);
+  assert.match(document.querySelector('#modal-title').textContent, /S&P 500 · 캔들 차트/);
   assert.equal(document.querySelectorAll('.market-chart-body').length, 2);
-  assert.match(document.querySelector('.market-chart-footnote').textContent, /SPX500_USDT.*Gate.*마크 가격.*거래소 원자료/);
+  assert.doesNotMatch(document.querySelector('#modal-root').textContent, /SPX500_USDT|Gate|거래소 원자료/);
   timers.forEach(nativeClearTimeout);
 });

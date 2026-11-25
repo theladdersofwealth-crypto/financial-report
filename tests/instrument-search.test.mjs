@@ -93,7 +93,7 @@ test('worker search endpoint requires same authenticated active member as privat
   const stub={DESK:{idFromName:()=> 'private',get:()=>({
     fetch:async req=>{requested.push(new URL(req.url).pathname);return Response.json({user:{id:'member',role:'member',mustChangePassword:false}});}
   })}};
-  const url='https://example.com/api/instrument?market=CRYPTO&symbol=SOL';
+  const url='https://example.com/api/instrument?market=CRYPTO&symbol=ETH';
   const response=await worker.fetch(new Request(url),stub);
   assert.equal(response.status,200);
   assert.equal((await response.json()).quote.value,110);

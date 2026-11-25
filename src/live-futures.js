@@ -30,7 +30,7 @@ function contractFields(product, venue, symbol) {
   const productType = product.productType || (venue === 'binance' || product.id === 'fut_sox' ? 'ETF 연동' : '지수 연동');
   const etfName = symbol.split(/_?USDT$/)[0];
   return {
-    id:product.id, name:etfFallback ? `${etfName} ETF 무기한` : product.liveName,
+    id:product.id, name:etfFallback ? `${etfName} ETF` : product.liveName,
     group:product.group || 'futures', venue, contract:symbol, exchange:labels[venue], unit:'USDT',
     source:labels[venue], sourceUrl:links[venue] + symbol, productType,
   };
@@ -120,7 +120,7 @@ export async function lookupLiveFuture(env, market, ticker) {
   if (instrument?.status !== 'Trading' || instrument.contractType !== 'LinearPerpetual'
       || instrument.baseCoin !== base || instrument.quoteCoin !== 'USDT' || !types.includes(instrument.symbolType)) return null;
   const productType = market === 'CRYPTO' ? '코인 선물' : instrument.symbolType === 'ETF' ? 'ETF 연동' : '주식 연동';
-  return quoteFor({id:`search_${base}`,liveName:`${ticker} 무기한`,group:group[0],productType},
+  return quoteFor({id:`search_${base}`,liveName:ticker,group:group[0],productType},
     'bybit',symbol,fetcher,Date.now,()=>{});
 }
 

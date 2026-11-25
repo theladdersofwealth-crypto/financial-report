@@ -55,7 +55,7 @@ export async function searchInstrument(env,market,query,exchange=''){
     ? {status:'ok',quote:{...quote,market:normalized.market,symbol:domestic ? quote.symbol : quote.contract,
       productType:domestic ? '국내 현물' : quote.productType}}
     : {status:'unavailable',message:domestic ? '해당 국내 현물 종목의 시세를 확인하지 못했습니다.'
-      : '해당 종목의 상장 무기한 선물과 최신 호가를 확인하지 못했습니다.'};
+      : '해당 선물의 최신 호가를 확인하지 못했습니다.'};
   if(recent.size>80)recent.clear();
   recent.set(key,{time:Date.now(),result});
   return structuredClone(result);

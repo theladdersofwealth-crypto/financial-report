@@ -17,9 +17,9 @@ test('fresh exchange books recover from stale or invalid primaries with the true
   const issues = [];
   const rows = await collectLiveFutures(env,event=>issues.push(event),()=>now);
   assert.deepEqual(rows.map(q=>[q.id,q.venue,q.name,q.value]), [
-    ['fut_es','binance','SPY ETF 무기한',701],
-    ['fut_nq','gate','나스닥100 무기한',26001],
-    ['fut_ym','mexc','다우 무기한',50002],
+    ['fut_es','binance','SPY ETF',701],
+    ['fut_nq','gate','나스닥100',26001],
+    ['fut_ym','mexc','다우',50002],
   ]);
   assert.equal(issues.find(event=>event.symbol === 'SPX500_USDT').reason,'quote_time');
 });

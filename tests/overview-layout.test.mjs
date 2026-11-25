@@ -21,9 +21,10 @@ test('KIS Korea indexes and signed foreign flows are rendered before global indi
   for (const id of ['kospi', 'kosdaq', 'kr_foreign_kospi', 'kr_foreign_kosdaq', 'kr_pension_kospi', 'kr_pension_kosdaq']) {
     assert.ok(section.includes(`['${id}',`), `missing domestic indicator ${id}`);
   }
-  for (const title of ['한국 증시 · 외국인·연기금 수급','미국 지수선물','일본 지수선물','금리','원화 환율','원자재 선물','코인 선물']) {
+  for (const title of ['한국 증시 · 외국인·연기금 수급','미국 지수선물','금리','원화 환율','원자재 선물','코인 선물']) {
     assert.ok(section.includes(title), `missing topic title: ${title}`);
   }
+  assert.doesNotMatch(section, /metrics-asia|metrics-other|무기한/);
   const groups=['metrics-korea','metrics-global','metrics-macro','metrics-commodities','metrics-crypto'];
   for(let i=1;i<groups.length;i++)
     assert.ok(section.indexOf(groups[i-1])<section.indexOf(groups[i]),'market topics must stay in reading order');

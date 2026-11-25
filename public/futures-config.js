@@ -1,32 +1,27 @@
 export const usFutures = [
   {id: 'fut_es', name: 'S&P 500 선물', root: 'ES', exchange: 'CME', ticker: 'CME_MINI:ES1!',
-    liveName: 'S&P 500 무기한', markets: {gate:'SPX500_USDT', binance:'SPYUSDT'}},
+    liveName: 'S&P 500', markets: {gate:'SPX500_USDT', binance:'SPYUSDT'}},
   {id: 'fut_nq', name: '나스닥100 선물', root: 'NQ', exchange: 'CME', ticker: 'CME_MINI:NQ1!',
-    liveName: '나스닥100 무기한', markets: {gate:'NAS100_USDT', binance:'QQQUSDT'}},
+    liveName: '나스닥100', markets: {gate:'NAS100_USDT', binance:'QQQUSDT'}},
   {id: 'fut_ym', name: '다우 선물', root: 'YM', exchange: 'CBOT', ticker: 'CBOT_MINI:YM1!',
-    liveName: '다우 무기한', markets: {gate:'US30_USDT', mexc:'US30_USDT'}},
+    liveName: '다우', markets: {gate:'US30_USDT', mexc:'US30_USDT'}},
   {id: 'fut_rty', name: '러셀2000 선물', root: 'RTY', exchange: 'CME', ticker: 'CME_MINI:RTY1!',
-    liveName: '러셀2000 무기한', markets: {gate:'US2000_USDT', binance:'IWMUSDT'}},
+    liveName: '러셀2000', markets: {gate:'US2000_USDT', binance:'IWMUSDT'}},
   {id: 'fut_sox', name: '필라델피아 반도체 선물', root: 'SOX', exchange: 'CME', ticker: 'CME_MINI:SOX1!',
-    liveName: '미국 반도체 ETF 무기한', markets: {binance:'SOXXUSDT', gate:'SOXX_USDT'}},
+    liveName: '미국 반도체 ETF', markets: {binance:'SOXXUSDT', gate:'SOXX_USDT'}},
 ];
 
 function perpetual(id, name, group, productType, markets, symbol = null) {
-  return {id, liveName:`${name} 무기한`, group, productType, markets, symbol};
+  return {id, liveName:name, group, productType, markets, symbol};
 }
 
 export const assetFutures = [
-  perpetual('fut_jpx','닛케이225','asia-futures','지수 연동',{gate:'JPN225_USDT',mexc:'JP225_USDT'}),
-  perpetual('wti','WTI 원유','energy','원자재 연동',{gate:'CL_USDT',bybit:'CLUSDT',binance:'CLUSDT'}),
+  perpetual('wti','WTI','energy','원자재 연동',{gate:'CL_USDT',bybit:'CLUSDT',binance:'CLUSDT'}),
   perpetual('brent','브렌트유','energy','원자재 연동',{gate:'BZ_USDT',bybit:'BZUSDT',binance:'BZUSDT'}),
   perpetual('gold','금','metals','원자재 연동',{gate:'XAU_USDT',mexc:'XAU_USDT',bybit:'XAUUSDT'}),
   perpetual('silver','은','metals','원자재 연동',{gate:'XAG_USDT',bybit:'XAGUSDT',binance:'XAGUSDT'}),
-  perpetual('copper','구리','metals','원자재 연동',{gate:'XCU_USDT',mexc:'COPPER_USDT',binance:'COPPERUSDT'}),
-  perpetual('nickel','니켈','metals','원자재 연동',{mexc:'NICKEL_USDT'}),
   perpetual('btc','비트코인','crypto','코인 선물',{gate:'BTC_USDT',mexc:'BTC_USDT',bybit:'BTCUSDT'},'BTC'),
   perpetual('eth','이더리움','crypto','코인 선물',{gate:'ETH_USDT',mexc:'ETH_USDT',bybit:'ETHUSDT'},'ETH'),
-  perpetual('sol','솔라나','crypto','코인 선물',{gate:'SOL_USDT',mexc:'SOL_USDT',bybit:'SOLUSDT'},'SOL'),
-  perpetual('dxy','달러지수','risk','달러지수 연동',{gate:'USDEX_USDT',bybit:'USDEXUSDT',binance:'USDEXUSDT'}),
 ];
 
 export const stockFutures = [

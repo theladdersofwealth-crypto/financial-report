@@ -128,10 +128,6 @@ function shortTime(value) {
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat('ko-KR', {timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hour12: false}).format(date) : '';
 }
-function sourceName(source) {
-  if (typeof source === 'string') return source;
-  return source?.name || source?.provider || '출처 미제공';
-}
 function hasValue(quote) { return quote?.value !== null && quote?.value !== undefined && quote?.value !== '' && Number.isFinite(Number(quote.value)); }
 function changeClass(change) { return Number(change) > 0 ? 'gain' : Number(change) < 0 ? 'loss' : 'neutral'; }
 function formatValue(quote) {
@@ -149,7 +145,10 @@ function formatChange(quote) {
 }
 const fxById = new Map(fxCurrencies.map(currency => [currency.id, currency]));
 const futuresById = new Map(futuresProducts.map(product => [product.id, product]));
-const cashUSIndexes = new Set(['sp500', 'nasdaq', 'nasdaqcom', 'sox', 'vix']);
+const rateLabels = [
+  ['us2y', '미 국채 2년'], ['us10y', '미 국채 10년'],
+  ['kr3y', '한국 국고채 3년'], ['kr10y', '한국 국고채 10년'],
+];
 const futuresIssueLabels = {
   configuration: '거래소 호가 연결 설정을 확인하는 중입니다', network: '거래소 호가 재연결 중',
 };
@@ -162,16 +161,21 @@ function futuresRows(products = usFutures) {
     const scope = usFutures.includes(product) ? 'indices' : 'extended';
     return byId.get(product.id) || {id:product.id, name:product.liveName, group:product.group || 'futures',
       unit:'USDT', value:null, change:null, status:'missing', source:'공개 거래소 시세',
-      reason:state.demo ? '체험 화면' : !Object.keys(product.markets).length ? '확인된 무기한 계약 없음'
+      reason:state.demo ? '체험 화면' : !Object.keys(product.markets).length ? '연결된 선물 없음'
         : !state.futuresQuotes[scope] ? '실시간 호가 확인 중'
         : futuresIssueLabels[state.futuresIssue[scope]] || '최근 30초 내 유효한 호가 대기'};
   });
 }
 function normalizedQuotes() {
   const quotes = state.market?.quotes?.length ? state.market.quotes : coreQuotes();
-  return [...futuresRows([...usFutures, ...assetFutures]), ...quotes.filter(quote =>
-    !cashUSIndexes.has(quote.id) && !futuresById.has(quote.id) &&
-    (groupName(quote.group) !== '외환' || fxById.has(quote.id)))];
+  const rates = rateLabels.map(([id, name]) => ({
+    id, unit:'%', value:null, change:null, status:'missing', ...quotes.find(quote => quote.id === id),
+    group:'rates', name,
+  }));
+  const domestic = quotes.filter(quote => ['kospi', 'kosdaq'].includes(quote.id)
+    || /^kr_(foreign|pension)_(kospi|kosdaq)$/.test(quote.id));
+  return [...domestic, ...futuresRows([...usFutures, ...assetFutures]), ...rates,
+    ...quotes.filter(quote => fxById.has(quote.id))];
 }
 function coreQuotes() {
   return [
@@ -190,7 +194,7 @@ function demoMarket() {
   const changes = [0.82, 1.24, 2.16, -4.2, -2.8, -0.34, -0.28, 1.06, 0.67, 1.32, -4.08, 2.45];
   const wave = [0.1, 0.21, 0.16, 0.35, 0.3, 0.42, 0.34, 0.49, 0.67, 0.61, 0.76, 0.85];
   const quotes = coreQuotes().map((q, i) => ({...q, value: numbers[i], change: changes[i], changeUnit: q.group === '금리' ? 'bp' : '%', status: 'demo', source: '체험용 예시', observedAt: null, history: wave.map((x, j) => numbers[i] * (1 + (changes[i] > 0 ? x - 1 : 1 - x) * .015) + (j % 3) * numbers[i] * .0008)}));
-  const extras = [['kospi', '코스피', '주식', 'pt', 2540.72, .47], ['kosdaq', '코스닥', '주식', 'pt', 738.42, .93], ['eth', '이더리움', '디지털자산', 'USD', 3265.84, 1.87], ['silver', '은', '원자재', 'USD/oz', 30.21, 1.24], ['nickel', '니켈', '원자재', 'USD/t', 15780, -.62], ['brent', '브렌트 원유', '원자재', 'USD/bbl', 76.82, .94], ['kr3y', '한국 국고채 3년', '금리', '%', 2.68, -1.2], ['kr10y', '한국 국고채 10년', '금리', '%', 2.94, -1.6]];
+  const extras = [['kospi', '코스피', 'korea', 'pt', 2540.72, .47], ['kosdaq', '코스닥', 'korea', 'pt', 738.42, .93], ['kr3y', '한국 국고채 3년', '금리', '%', 2.68, -1.2], ['kr10y', '한국 국고채 10년', '금리', '%', 2.94, -1.6]];
   extras.forEach(([id, name, group, unit, value, change]) => quotes.push({id, name, group, unit, value, change, changeUnit: group === '금리' ? 'bp' : '%', status: 'demo', source: '체험용 예시'}));
   const sampleFx = {JPY: 922.54, VND: 51.7, EUR: 1570.4, CNY: 199.2, THB: 41.3, TWD: 44.24, SGD: 1072.52};
   for (const [code, value] of Object.entries(sampleFx)) {
@@ -205,7 +209,7 @@ function demoMarket() {
     {horizon: 'quarter', title: '3~6개월은 경기·정책·기업 이익의 조합으로 판단합니다', kospi: '수출 경기와 이익 사이클이 동반 개선되는 조건에서의 중기 시나리오 예시입니다.', kosdaq: '유동성 확대만으로 방향을 단정하지 않고 자금조달 환경과 실적을 함께 봅니다.', evidence: ['통화정책 경로의 불확실성이 줄어든다는 가정', '글로벌 수요 회복과 실적 개선의 동행을 가정'], counter: ['지정학적 공급 충격과 정책 전환 위험'], invalidation: ['경기 지표와 이익 전망이 함께 악화될 때'], confidence: '예시 · 평가 없음'},
   ];
   return {mode: 'demo', asOf: null, quotes, outlooks,
-    summary: {headline: '금리는 내려가고, 기술주는 앞서갑니다.\n시장의 시선은 다시 성장으로.', points: ['[예시] 미국 기술주·반도체의 상대적 강세가 국내 반도체 업종에 우호적인 조건을 만듭니다.', '[예시] 달러와 국채금리의 동반 하락은 성장주 부담을 덜지만, 유가 상승은 확인할 변수입니다.', '[예시] 국내장에서는 원화 안정과 외국인 선물 수급이 이 흐름을 확인하는지 살펴봅니다.']},
+    summary: {headline: '코스피 +0.47% · 코스닥 +0.93%', points: ['두 시장이 함께 올랐고 코스닥 상승폭이 0.46%p 더 컸습니다.']},
     sectors: [['정보기술', 1.68], ['커뮤니케이션', 1.24], ['경기소비재', .92], ['금융', .38], ['산업재', .21], ['에너지', -.72], ['헬스케어', -.18], ['필수소비재', -.34]].map(([name, change]) => ({name, change, changeUnit: '%'})),
     leaders: [['NVDA', '엔비디아', 138.24, 3.12], ['AAPL', '애플', 228.42, 1.18], ['MSFT', '마이크로소프트', 421.84, .86], ['TSLA', '테슬라', 342.16, -1.42]].map(([symbol, name, value, change]) => ({symbol, name, value, change, changeUnit: '%', unit: 'USD'})),
     events: [{name: '미국 소비자물가지수', time: '22:30', country: 'US', importance: 3, description: '예시 일정 · 실제 발표일과 무관합니다. 금리 기대 변화를 확인합니다.'}, {name: '한국은행 기준금리 결정', time: '10:00', country: 'KR', importance: 3, description: '예시 일정 · 실제 발표일과 무관합니다. 국내 금리와 원화 반응을 확인합니다.'}, {name: '미국 신규 실업수당 청구건수', time: '22:30', country: 'US', importance: 2, description: '예시 일정 · 실제 발표일과 무관합니다. 고용의 둔화 속도를 점검합니다.'}],
@@ -313,7 +317,7 @@ const navigation = [
   {id: 'instrument', title: '개별 종목 검색', english: 'INSTRUMENT SEARCH', icon: 'search', subtitle: '국내 종목코드·미국 주식 티커·바이낸스 USDT 현물 시세를 직접 확인합니다.'},
   {id: 'outlooks', title: '기간별 전망', english: 'MARKET PERSPECTIVE', icon: 'chart', subtitle: '오늘부터 3~6개월까지, 근거와 조건을 함께 읽는 시나리오.'},
   {id: 'calendar', title: '경제 일정', english: 'WHAT TO WATCH', icon: 'calendar', subtitle: '시장의 다음 움직임을 바꿀 주요 이벤트를 확인하세요.'},
-  {id: 'sources', title: '데이터 출처', english: 'DATA & TRANSPARENCY', icon: 'source', subtitle: '어디에서 왔는지, 언제 관측됐는지. 숫자의 맥락을 확인하세요.'},
+  {id: 'sources', title: '데이터 연결', icon: 'source'},
   {id: 'users', title: '회원 관리', english: 'MEMBER MANAGEMENT', icon: 'users', admin: true, subtitle: '계정 생성과 접근 권한을 관리합니다.'},
   {id: 'activity', title: '접속 현황', english: 'ACCESS & ACTIVITY', icon: 'activity', admin: true, subtitle: '로그인 세션과 대화방 운영 상태를 확인합니다.'},
 ];
@@ -403,7 +407,7 @@ function renderView() {
   if (state.view === 'overview') main.replaceChildren(
     renderBrief(main.querySelector('#desk-brief')?.hasAttribute('open')),
     renderQuotes(),
-    overviewSectionIntro('미국 주식·업종 선물','대표 기업과 업종 ETF의 무기한 선물 호가입니다.','layers'),
+    overviewSectionIntro('미국 주식·업종 선물','대표 기업과 업종 ETF 선물','layers'),
     E('div', {class: 'section-pair'}, renderSectors(), renderLeaders()),
     overviewSectionIntro('앞으로 볼 변수','기간별 조건과 예정된 경제 이벤트를 분리해서 확인합니다.','calendar'),
     renderOutlook(), renderEvents(true));
@@ -421,7 +425,7 @@ function renderView() {
 const searchSamples={
   KR:[['삼성전자','005930'],['SK하이닉스','000660'],['현대차','005380'],['네이버','035420']],
   US:[['엔비디아','NVDA'],['애플','AAPL'],['마이크로소프트','MSFT'],['테슬라','TSLA']],
-  CRYPTO:[['비트코인','BTC'],['이더리움','ETH'],['솔라나','SOL'],['도지코인','DOGE']],
+  CRYPTO:[['비트코인','BTC'],['이더리움','ETH']],
 };
 async function submitInstrumentSearch() {
   if(state.instrumentLoading)return;
@@ -474,8 +478,8 @@ function renderInstrumentSearch() {
   form.append(tabs,E('div',{class:'instrument-search-row'},E('div',{},label,input),
     action),E('p',{id:'instrument-hint',class:'tiny muted'},active==='KR'
     ?'코스피·코스닥 개별 주식·ETF의 현물 시세를 6자리 코드로 확인합니다.'
-    :active==='US'?'미국 주식 또는 ETF가 기초자산인 상장 무기한 계약을 티커로 찾습니다.'
-    :'코인 이름 또는 티커로 상장 USDT 무기한 선물을 찾습니다.'));
+    :active==='US'?'미국 주식·ETF 선물을 종목명이나 티커로 찾습니다.'
+    :'코인 이름이나 티커로 USDT 선물을 찾습니다.'));
   const samples=E('div',{class:'instrument-samples'},E('span',{class:'tiny muted'},'빠른 조회'),
     searchSamples[active].map(([name,code])=>
       E('button',{type:'button',class:'instrument-sample',disabled:state.instrumentLoading,
@@ -493,18 +497,16 @@ function renderInstrumentSearch() {
       E('div',{class:'instrument-result-heading'},
         E('div',{},E('p',{class:'eyebrow'},q.productType),
           E('h3',{},q.name||q.symbol),
-          E('p',{class:'instrument-code'},q.symbol, q.exchange?` · ${q.exchange}`:'')),
+          E('p',{class:'instrument-code'},q.symbol)),
         badge(q.market==='KR'?'현물 시세':'조회 시점 호가',q.market==='KR'?'blue':'green')),
       E('div',{class:'instrument-result-quote'},E('strong',{},valid?`${formatValue(q)} ${q.unit}`:'—'),
         E('span',{class:changeClass(q.change)},q.timestampPrecision==='book'?'호가 중간값':formatChange(q))),
-      E('p',{class:'tiny muted'},`${sourceName(q.source)} · ${quoteTimestamp(q)}`),
-      q.delay?E('p',{class:'tiny muted'},q.delay):null,
-      hasIndexChart(q)?B('선물 차트',()=>openIndexChart(q),'small','chart'):null,
-      q.sourceUrl?link('거래소 원자료',q.sourceUrl):null);
+      E('p',{class:'tiny muted'},`${quoteTimestamp(q)} · ${quoteStatus(q)[0]}`),
+      hasIndexChart(q)?B('선물 차트',()=>openIndexChart(q),'small','chart'):null);
   }else resultNode=E('div',{class:'instrument-search-feedback','aria-live':'polite'},
     result?.message||'종목을 선택하거나 검색어를 입력해 시세를 확인해 보세요.');
   return E('section',{class:'panel instrument-search-panel'},
-    panelHead('개별 종목 검색','국내 현물 및 해외 무기한 선물 시세',null,'search'),
+    panelHead('개별 종목 검색','국내 현물 및 해외 선물 시세',null,'search'),
     form,samples,resultNode);
 }
 function dataState() {
@@ -538,11 +540,10 @@ function renderBrief(expanded = false) {
   const briefing = state.demo ? null : state.market?.briefing;
   const items = briefing?.items || [];
   const title = (state.demo ? state.market?.summary?.headline : briefing?.headline)
-    || '미국 시장 브리핑을 불러오는 중입니다';
-  const evidence = items.slice(0, 3).map(item =>
-    `${item.name} ${item.change === null ? formatValue(item) + ' ' + item.unit : formatChange(item)}`).join(' · ');
-  const points = state.demo ? (state.market?.summary?.points || [])
-    .map(point => typeof point === 'string' ? point : point?.text || point?.title).filter(Boolean) : [];
+    || '한국 증시 브리핑을 불러오는 중입니다';
+  const evidence = items.filter(item => item.id.startsWith('kr_foreign_')).map(item =>
+    `${item.name} ${item.value < 0 ? '순매도 ' : '순매수 '}${formatValue({...item, value:Math.abs(item.value)})}억원 (${item.observedAt.slice(5, 10)})`).join(' · ');
+  const points = (state.demo ? state.market?.summary?.points : briefing?.points) || [];
   const timing = state.demo ? '화면 체험용 예시' : briefing
     ? `갱신 ${dateText(briefing.generatedAt)} KST · ${Date.now() < Date.parse(briefing.nextUpdateAt)
       ? '다음 ' + shortTime(briefing.nextUpdateAt) + ' KST' : '다음 갱신 확인 중'}`
@@ -550,20 +551,20 @@ function renderBrief(expanded = false) {
   return E('details', {class: 'panel brief-panel', id: 'desk-brief', open: expanded || null,
     'data-brief-generation': briefing?.generatedAt || ''},
     E('summary', {class: 'brief-summary'},
-      E('span', {class: 'brief-label'}, icon('brief'), '오늘의 브리핑', state.demo ? badge('예시', 'amber') : null),
+      E('span', {class: 'brief-label'}, icon('brief'), '오늘의 브리핑 · 한국 증시', state.demo ? badge('예시', 'amber') : null),
       E('span', {class: 'brief-headline', 'aria-live': 'polite'}, title),
       E('span', {class: 'brief-evidence', hidden: !evidence || null}, evidence),
       E('span', {class: 'brief-more'}, E('span', {class: 'brief-more-closed'}, '근거·상세 보기'),
         E('span', {class: 'brief-more-open'}, '상세 접기'), icon('down'))),
     E('div', {class: 'brief-details'},
       E('div', {class: 'brief-content', hidden: !items.length && !points.length && !briefing?.missing?.length || null},
-        E('h2', {}, state.demo ? '브리핑 근거' : '미국 시장 관측'),
+        E('h2', {}, state.demo ? '브리핑 근거' : '국내 지수·수급과 환율·금리'),
         E('ul', {class: 'brief-points'}, points.map(point => E('li', {}, point)),
           items.map(item => E('li', {},
             E('strong', {}, `${item.name} ${formatValue(item)} ${item.unit || ''}`),
-            item.change === null ? null : E('span', {class: changeClass(item.change)}, ` ${formatChange(item)}`),
-            E('div', {class: 'tiny muted'}, [item.contract, item.productType, item.basis, item.changeBasis,
-              quoteTimestamp(item), sourceName(item.source)].filter(Boolean).join(' · '))))),
+            !Number.isFinite(item.change) || item.id.startsWith('kr_foreign_') ? null
+              : E('span', {class: changeClass(item.change)}, ` ${formatChange(item)}`),
+            E('div', {class: 'tiny muted'}, quoteTimestamp(item))))),
         briefing?.missing?.length ? E('p', {class: 'tiny muted'}, `자료 미수신 · ${briefing.missing.join(' · ')}`) : null),
       renderImpact(),
       E('div', {class: 'brief-footer'}, E('span', {class: 'brief-updated'}, timing),
@@ -612,7 +613,7 @@ function renderImpact() {
         E('p', {class: 'source-description'}, item.summary),
         E('p', {class: 'tiny muted'}, `반영 근거 ${item.available}/${item.total}개 · 가중치 커버리지 ${Math.round(item.coverage * 100)}% (예측 확률 아님)`),
         E('ul', {class: 'reason-list'}, item.drivers.slice(0, 4).map(driver =>
-          E('li', {}, `${driver.text} · ${driver.stance} · ${sourceName(driver.source)}`)))));
+          E('li', {}, `${driver.text} · ${driver.stance}`)))));
   });
   section.append(E('div', {class: 'impact-index-grid'}, cards));
   const domestic = impact.domestic || {};
@@ -631,8 +632,7 @@ function renderImpact() {
         `${Number(quote.value).toLocaleString('ko-KR', {maximumFractionDigits: 2})} ${quote.unit || ''} · ${String(quote.observedAt).slice(0, 10)} 기준`) :
         E('p', {class: 'source-description'}, '데이터 미연결 또는 최신 관측값 부족'),
       quote?.change !== null && quote?.change !== undefined
-        ? E('p', {class: 'tiny muted'}, `직전 관측 대비 ${quote.change > 0 ? '+' : ''}${quote.change}${quote.changeUnit || ''} · ${quote.changeBasis || '전일 대비'}`) : null,
-      quote?.source ? E('p', {class: 'tiny muted'}, sourceName(quote.source)) : null)))));
+        ? E('p', {class: 'tiny muted'}, `직전 관측 대비 ${quote.change > 0 ? '+' : ''}${quote.change}${quote.changeUnit || ''}`) : null)))));
 
   if (impact.validation) {
     section.append(E('div', {class:'panel-foot'}, '과거 방향 일치 점검 · 탐색적 통계'), renderBacktest(impact.validation),
@@ -734,9 +734,7 @@ function renderQuotes() {
     if(seen.has(q.id)||!predicate(q))return false;
     seen.add(q.id);return true;
   });
-  const domesticPlus=take(q=>groupName(q.group)==='한국시장');
   const futures = take(q => q.group === 'futures');
-  const asia = take(q => q.group === 'asia-futures');
   const rates = take(q => groupName(q.group) === '금리');
   const currencyQuotes = new Map(take(q => groupName(q.group) === '외환').map(quote => [quote.id, quote]));
   const featuredFx = featuredFxCodes.map(code => {
@@ -744,17 +742,14 @@ function renderQuotes() {
     return fxQuote(currency, currencyQuotes);
   });
   const commodities=take(q=>groupName(q.group)==='원자재');
-  const crypto=take(q=>groupName(q.group)==='디지털자산');
-  const other=take(()=>true);
+  const crypto=take(q=>groupName(q.group)==='코인');
   const groups=[
-    ['01','metrics-korea','한국 증시 · 외국인·연기금 수급','국내 현물 지수와 투자자 수급','korea',[...domestic,...domesticPlus]],
-    ['02','metrics-global','미국 지수선물','지수·ETF 연동 무기한 · 실시간 호가 · 화면 8초 갱신','global',futures],
-    ['03','metrics-asia','일본 지수선물','닛케이225 연동 무기한','global',asia],
-    ['04','metrics-macro','금리','미국·한국 채권 수익률 참고 지표','macro',rates],
-    ['05','metrics-fx','원화 환율','원화 환산과 여행 환전을 위한 기준환율','fx',featuredFx],
-    ['06','metrics-commodities','원자재 선물','금·은·원유·산업금속 무기한 선물','commodities',commodities],
-    ['07','metrics-crypto','코인 선물','BTC·ETH·SOL 무기한 선물','crypto',crypto],
-    ['08','metrics-other','그 밖의 지표','달러지수 선물과 참고 지표','other',other],
+    ['01','metrics-korea','한국 증시 · 외국인·연기금 수급','국내 현물 지수와 투자자 수급','korea',domestic],
+    ['02','metrics-global','미국 지수선물','지수·ETF 연동 선물 호가','global',futures],
+    ['03','metrics-macro','금리','미 국채와 한국 국고채 수익률','macro',rates],
+    ['04','metrics-fx','원화 환율','원화 환산과 여행 환전을 위한 기준환율','fx',featuredFx],
+    ['05','metrics-commodities','원자재 선물','WTI·브렌트유·금·은','commodities',commodities],
+    ['06','metrics-crypto','코인 선물','비트코인·이더리움','crypto',crypto],
   ].filter(group=>group[5].length);
   const jump=E('nav',{class:'metric-jump','aria-label':'핵심 지표 주제 바로가기'},
     E('span',{class:'metric-jump-label'},'주제별 이동'),
@@ -771,7 +766,7 @@ function renderQuotes() {
     E('div',{class:'panel-foot'},
       E('span',{class:'gain'},'● 상승·순매수'),'　',
       E('span',{class:'loss'},'● 하락·순매도'),
-      '　외국인 수급은 등락률이 아닌 순매수액입니다. 서로 다른 지표의 관측일과 출처를 함께 확인하세요.'));
+      '　수급은 순매수 금액을 표시합니다.'));
 }
 const CHART_INDEX_IDS = new Set(['kospi','kosdaq','dxy','broadusd']);
 function hasIndexChart(quote) {
@@ -784,7 +779,7 @@ function quoteTimestamp(quote) {
   const value = quote.observedAt || quote.retrievedAt;
   if (!value) return '관측 시각 미제공';
   if (quote.timestampPrecision === 'book') return `${dateText(value, {second:'2-digit'})} KST 호가`;
-  if (quote.timestampPrecision === 'provider_clock') return `${value} · KIS 표기 시각`;
+  if (quote.timestampPrecision === 'provider_clock') return `${value} 기준`;
   if (quote.timestampPrecision === 'month') return `${String(value).slice(0, 7)} 기준`;
   if (quote.timestampPrecision === 'day') return `${String(value).slice(0, 10)} 기준`;
   if (quote.timestampPrecision === 'retrieval' || !quote.observedAt) return `${dateText(value)} KST 조회`;
@@ -828,17 +823,14 @@ function quoteCard(quote) {
     onKeydown: chartable ? event => {
       if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openIndexChart(quote); }
     } : null,
-    title: `${quote.name} · ${state.demo ? '체험용 예시 데이터' : `${sourceName(quote.source)} · ${observed}${quote.basis ? ` · ${quote.basis}` : ''}${quote.reason ? ` · ${quote.reason}` : ''}`}`},
+    title: `${quote.name} · ${state.demo ? '체험용 예시 데이터' : available ? observed : '시세 확인 중'}`},
     E('div', {class: 'quote-top'}, E('h3', {class: 'quote-name'}, shortName),
       chartable ? E('span', {class:'quote-drilldown','aria-hidden':'true'}, icon('chevron')) : null),
     currency ? E('span', {class: 'fx-unit-label'}, `${fxAmountLabel(currency)} 기준`) : null,
-    future && quote.contract ? E('span', {class: 'fx-unit-label'}, `${quote.contract} · ${quote.exchange} · ${quote.productType}`) : null,
     E('div', {class: 'quote-value-row'}, E('span', {class: 'quote-value'}, formatValue(quote)), E('span', {class: 'quote-unit'}, quote.unit || '')),
     E('div', {class: 'quote-bottom'}, available ? E('span', {class: `quote-change ${tone}`}, changeText) : E('span', {class: 'quote-missing'}, '데이터 연결 필요'),
       available && !state.demo ? E('span', {class: `quote-status ${statusTone}`}, statusLabel) : null),
-    state.demo ? null : E('div', {class: 'quote-provenance'},
-      E('span', {}, sourceName(quote.source)), E('span', {}, available ? observed : quote.reason || '수신된 관측 없음'),
-      future && quote.session ? E('span', {}, quote.session) : null));
+    state.demo || !available ? null : E('div', {class: 'quote-provenance'}, E('span', {}, observed)));
 }
 
 let refreshFuturesChart = null;
@@ -851,7 +843,7 @@ function openIndexChart(quote) {
     && quote.provider === 'kis' && !!quote.chartPeriods;
   const isIndexStale = quote.status === 'stale' || quote.deploymentBackup;
   showModal(`${quote.name} · ${future ? '캔들 차트' : currency ? '일별 원화 환율 차트' : '지수 차트'}`,
-    future ? '공급 거래소의 마크 가격 캔들 · 카드에는 매수·매도 호가 중간값 표시' : currency ? `${fxAmountLabel(currency)}당 원화 · 일별 기준환율` : hasOfficialCandles ? '한투 KIS 실제 시가·고가·저가·종가 · 주기별 원자료' :
+    future ? '마크 가격 캔들 · 시세 카드는 호가 중간값' : currency ? `${fxAmountLabel(currency)}당 원화 · 일별 기준환율` : hasOfficialCandles ? '시가·고가·저가·종가' :
       '관측된 종가로 표시하는 추이 차트 · 실제 봉 시고저종 데이터 없음',
     body => {
       const domestic = ['kospi', 'kosdaq'].includes(quote.id);
@@ -945,7 +937,7 @@ function openIndexChart(quote) {
           const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
           svg.setAttribute('viewBox',`0 0 ${dims.w} ${dims.h}`);
           svg.setAttribute('role','img');
-          svg.setAttribute('aria-label',`${quote.name} ${label}: ${series[0].date}부터 ${series.at(-1).date}까지 ${future?'거래소 마크 가격 OHLC 봉':candleMode?'KIS 실제 OHLC 봉':`확인된 ${observationLabel} 추이`}`);
+          svg.setAttribute('aria-label',`${quote.name} ${label}: ${series[0].date}부터 ${series.at(-1).date}까지 ${future?'마크 가격 OHLC 봉':candleMode?'실제 OHLC 봉':`확인된 ${observationLabel} 추이`}`);
           svg.setAttribute('class',`market-chart-svg ${changeClass(change)}`);
           const draw=(tag,attributes={},content=null)=>{
             const node=document.createElementNS(svg.namespaceURI,tag);
@@ -1013,12 +1005,10 @@ function openIndexChart(quote) {
           highlight(series.length-1);
         }
         foot.replaceChildren(
-          E('p',{},future ? [futureFrame?.contract || quote.contract, sourceName(futureFrame?.source || quote.source), '거래소 마크 가격'].filter(Boolean).join(' · ') : currency ? `출처: ${sourceName(quote.source)} · ${fxAmountLabel(currency)}당 원화 · 확인된 날짜의 기준환율` : candleMode ?
-            `출처: ${sourceName(quote.source)} · ${label} ${all.length}개 · ${intraday ? '수신한 분봉 범위로 집계하며 첫 봉과 마지막 봉은 일부 구간일 수 있습니다.' : '실측 시가·고가·저가·종가'}` :
-            `출처: ${sourceName(quote.source)} · 종가만 제공되어 선 차트로 표시합니다. 주간·월간은 그 기간 마지막 실제 관측 종가이며 OHLC 캔들이 아닙니다.`),
-          (future ? futureFrame?.status === 'stale' : isIndexStale) ? E('p',{class:'market-chart-stale'},'최근 저장한 관측값입니다.') : null,
-          future && (futureFrame?.sourceUrl || quote.sourceUrl) ? link('거래소 원자료 확인',futureFrame?.sourceUrl || quote.sourceUrl) :
-            quote.sourceUrl ? link('원자료 확인',quote.sourceUrl) : null);
+          future ? null : E('p',{},currency ? `${fxAmountLabel(currency)}당 원화` : candleMode ?
+            `${label} ${all.length}개${intraday ? ' · 첫 봉과 마지막 봉은 일부 구간일 수 있습니다.' : ''}` :
+            '주간·월간은 각 기간의 마지막 관측 종가입니다.'),
+          (future ? futureFrame?.status === 'stale' : isIndexStale) ? E('p',{class:'market-chart-stale'},'최근 저장한 관측값입니다.') : null);
       }
       redraw();
       if (future) loadFuturesFrame();
@@ -1037,7 +1027,8 @@ function sparkline(quote) {
   return svg;
 }
 function groupName(group) {
-  return ({equities: '주식', equity: '주식', stocks: '주식', indices: '주식', rates: '금리', yields: '금리', bonds: '금리', fx: '외환', currencies: '외환', commodities: '원자재', commodity: '원자재', energy: '원자재', metals: '원자재', korea: '한국시장', crypto: '디지털자산', volatility: '변동성', risk: '변동성', futures: '미국 선물', 'asia-futures':'일본 선물'})[group] || group || '기타';
+  return ({rates: '금리', fx: '외환', energy: '원자재', metals: '원자재',
+    korea: '한국시장', crypto: '코인', futures: '미국 선물'})[group] || group || '기타';
 }
 function renderSectors() {
   return renderFuturesPanel('us-sector-panel','미국 업종 ETF 선물',sectorFutures,8);
@@ -1077,13 +1068,12 @@ const calendarRouteLabels = {
   primary: '공식 일정 수신', alternate: '공식 대체 일정', limited: '공식 회의 날짜만 확인',
   cache: '최근 저장 일정', build: '배포 시 저장한 일정', unavailable: '일정 조회 실패',
 };
-function renderCalendarProviders(providers, compact) {
-  const rows = (providers || []).filter(provider => !compact || provider.periods.some(period => period.route !== 'primary'));
+function renderCalendarProviders(providers) {
+  const rows = providers || [];
   if (!rows.length) return null;
   return E('ul', {class: 'calendar-providers'}, rows.map(provider => {
-    const periods = provider.periods.filter(period => !compact || period.route !== 'primary');
     return E('li', {}, E('strong', {}, calendarProviderLabels[provider.id]),
-      E('span', {}, periods.map(period => {
+      E('span', {}, provider.periods.map(period => {
         const checked = ['cache', 'build'].includes(period.route) && period.checkedAt ? ` (${dateText(period.checkedAt)} 확인)` : '';
         return `${period.month} ${calendarRouteLabels[period.route]}${checked}`;
       }).join(' · ')));
@@ -1093,7 +1083,7 @@ function renderEvents(compact = false) {
   const calendar = state.calendar;
   const events = (state.demo ? state.market?.events : calendar?.events) || [];
   const section = E('section', {class: 'panel'}, panelHead(compact ? '다음으로 볼 이벤트' : '주요 경제 일정', state.demo ? '화면 체험용 예시' : compact ? '한국시간 · 가까운 발표 일정' : '앞으로 35일간 예정된 주요 미국 지표와 FOMC', compact ? E('button', {type: 'button', class: 'text-button', onClick: () => navigate('calendar')}, '전체 일정', icon('chevron')) : badge('한국 시간 KST')));
-  const providerStatus = state.demo ? null : renderCalendarProviders(calendar?.providers, compact);
+  const providerStatus = state.demo || compact ? null : renderCalendarProviders(calendar?.providers);
   if (providerStatus) section.append(providerStatus);
   if (!events.length) {
     const message = !calendar ? '공식 일정을 불러오는 중입니다.' : calendar.status === 'ready' ? '확인된 예정 일정이 없습니다.' : '예정 일정을 확인하지 못했습니다.';
@@ -1114,7 +1104,13 @@ function renderMarketTable() {
   const groups = ['전체', ...new Set(normalizedQuotes().map(q => groupName(q.group)))];
   const filters = E('div', {class: 'filter-list'});
   groups.forEach(group => filters.append(E('button', {type: 'button', class: `filter-chip ${state.marketFilter === group ? 'active' : ''}`, onClick: () => { state.marketFilter = group; filters.querySelectorAll('button').forEach(node => node.classList.toggle('active', node.textContent === group)); renderMarketRows(); }}, group)));
-  const panel = E('section', {class: 'panel'}, panelHead('자산별 전체 시세', '지표별 출처·기준시각·현물/선물 구분을 확인하세요', E('button', {type: 'button', class: 'text-button', onClick: () => navigate('sources')}, '연동 안내', icon('chevron'))), E('div', {class: 'toolbar'}, filters, E('div', {class: 'search-field'}, icon('search'), search)), E('div', {class: 'table-wrap'}, E('table', {}, E('caption', {class: 'sr-only'}, '자산별 가격, 변동, 기준과 데이터 출처'), E('thead', {}, E('tr', {}, E('th', {}, '지표 / 기준'), E('th', {class: 'num'}, '최근 관측값'), E('th', {class: 'num'}, '변동'), E('th', {}, '관측 시점'), E('th', {}, '출처 / 상태'))), E('tbody', {id: 'market-table-body'}))), E('div', {class: 'panel-foot'}, '수익률 변화는 bp, 가격 변화는 표시된 단위를 따릅니다. 1bp = 0.01%p. 장중 시세와 일별 종가, 24시간 등락을 같은 기준으로 비교하지 마세요.'));
+  const panel = E('section', {class: 'panel'}, panelHead('자산별 전체 시세'),
+    E('div', {class: 'toolbar'}, filters, E('div', {class: 'search-field'}, icon('search'), search)),
+    E('div', {class: 'table-wrap'}, E('table', {}, E('caption', {class: 'sr-only'}, '자산별 시세와 관측 시점'),
+      E('thead', {}, E('tr', {}, E('th', {}, '지표'), E('th', {class: 'num'}, '최근 관측값'),
+        E('th', {class: 'num'}, '변동'), E('th', {}, '관측 시점'), E('th', {}, '상태'))),
+      E('tbody', {id: 'market-table-body'}))),
+    E('div', {class: 'panel-foot'}, '금리 변동 1bp = 0.01%p'));
   queueMicrotask(renderMarketRows);
   return panel;
 }
@@ -1122,10 +1118,15 @@ function renderMarketRows() {
   const tbody = document.querySelector('#market-table-body');
   if (!tbody) return;
   const rows = normalizedQuotes().filter(q => (state.marketFilter === '전체' || groupName(q.group) === state.marketFilter) && `${q.name || ''} ${q.fxCurrency || ''} ${fxById.get(q.id)?.destinations || ''}`.toLowerCase().includes(state.marketSearch.toLowerCase()));
-  tbody.replaceChildren(...rows.map(q => E('tr', {}, E('td', {}, E('strong', {class: 'data-table-name'},
-  hasIndexChart(q) ? E('button', {type:'button',class:'market-table-chart-link',
-    'aria-label':`${q.name} ${chartLabel(q)} 차트 열기`,onClick:()=>openIndexChart(q)},q.name, icon('chart')) : q.name,
-  E('small', {}, q.basis || groupName(q.group)))), E('td', {class: 'num mono'}, E('strong', {}, formatValue(q)), E('div', {class: 'tiny muted'}, q.unit || '')), E('td', {class: `num mono ${changeClass(q.change)}`}, hasValue(q) ? formatChange(q) : '—'), E('td', {}, E('div', {}, state.demo ? '예시 · 실제 시각 아님' : hasValue(q) ? quoteTimestamp(q) : '—'), E('div', {class: 'tiny muted'}, q.delay || (state.demo ? '가상 데이터' : ''))), E('td', {}, q.sourceUrl ? link(sourceName(q.source), q.sourceUrl) : E('span', {}, state.demo ? '체험용 예시' : sourceName(q.source)), E('div', {class: 'tiny muted', title: q.reason || ''}, state.demo ? '예시 데이터' : hasValue(q) ? quoteStatus(q)[0] : q.reason || '— 데이터 연결 필요')))));
+  tbody.replaceChildren(...rows.map(q => E('tr', {},
+    E('td', {}, E('strong', {class: 'data-table-name'}, hasIndexChart(q)
+      ? E('button', {type:'button',class:'market-table-chart-link',
+        'aria-label':`${q.name} ${chartLabel(q)} 차트 열기`, onClick:()=>openIndexChart(q)}, q.name, icon('chart'))
+      : q.name), fxById.has(q.id) ? E('small', {}, `${fxAmountLabel(fxById.get(q.id))} 기준`) : null),
+    E('td', {class: 'num mono'}, E('strong', {}, formatValue(q)), E('div', {class: 'tiny muted'}, q.unit || '')),
+    E('td', {class: `num mono ${changeClass(q.change)}`}, hasValue(q) && Number.isFinite(q.change) ? formatChange(q) : '—'),
+    E('td', {}, state.demo || !hasValue(q) ? '—' : quoteTimestamp(q)),
+    E('td', {}, state.demo ? '예시' : hasValue(q) ? quoteStatus(q)[0] : '수신 대기'))));
   if (rows.length) {
     // Retain every existing row/quote link, but add strong category dividers.
     const byCategory=new Map();
@@ -1134,24 +1135,14 @@ function renderMarketRows() {
       if(!byCategory.has(category))byCategory.set(category,[]);
       byCategory.get(category).push(row);
     });
-    const order=['한국시장','미국 선물','주식','변동성','금리','외환','원자재','디지털자산','기타'];
-    const descriptions={
-      '한국시장':'국내 주가지수와 외국인 순매수액',
-      '주식':'해외 대표 주가지수',
-      '미국 선물':'CME·CBOT 지수선물 · 지연 가능',
-      '변동성':'시장 위험 및 불안 심리',
-      '금리':'국채금리와 채권시장 지표',
-      '외환':'달러·원 환율과 달러 지수',
-      '원자재':'원유·금속 등 실물자산 가격',
-      '디지털자산':'가상자산 현물 가격',
-    };
+    const order=['한국시장','미국 선물','금리','외환','원자재','코인'];
     const ordered=[...byCategory.keys()].sort((a,b)=>
       (order.indexOf(a)<0?99:order.indexOf(a))-(order.indexOf(b)<0?99:order.indexOf(b)));
     const content=ordered.flatMap(name=>[
       E('tr',{class:'market-table-section'},
         E('td',{colspan:5},
           E('div',{class:'market-table-section-inner'},
-            E('strong',{},name),E('span',{},descriptions[name]||'시장 관측 지표'),
+            E('strong',{},name),
             E('small',{},`${byCategory.get(name).length}개 지표`)))),
       ...byCategory.get(name),
     ]);
@@ -1213,8 +1204,7 @@ function renderSources() {
     E('p', {}, '과거 관측값은 최근 시장 방향 분석에 사용하지 않습니다.')));
   if (missing.length && !state.demo) panel.append(E('div', {class: 'source-disclaimer'},
     E('strong', {}, '연결 또는 수신 확인이 필요한 항목'),
-    E('p', {}, missing.map(q => q.name).join(' · ')),
-    E('p', {}, '자산별 시장 표에서 각 항목의 실패 원인과 공급원을 확인해 주세요.')));
+    E('p', {}, missing.map(q => q.name).join(' · '))));
   panel.append(E('div', {class: 'source-disclaimer'}, E('strong', {}, '관측 시각과 데이터 기준'),
     E('p', {}, '수신 시각과 관측 시각은 다릅니다. ECB 기준환율은 서울 현물환이 아니며, 배포 백업값은 실시간 가격이 아닙니다.'),
     E('p', {}, state.market?.asOf ? `최근 데스크 갱신: ${dateText(state.market.asOf)} KST` : '현재 실제 데이터 갱신 시각이 없습니다.')));
@@ -1522,7 +1512,7 @@ async function autoRefreshFutures(scope = 'indices') {
   if (generation !== state.sessionGeneration) return;
   if (state.view === 'overview') {
     const panel = renderQuotes();
-    const sections = scope === 'indices' ? ['metrics-global'] : ['metrics-asia','metrics-commodities','metrics-crypto','metrics-other'];
+    const sections = scope === 'indices' ? ['metrics-global'] : ['metrics-commodities','metrics-crypto'];
     for (const id of sections) replaceFuturesSection(document.getElementById(id),panel.querySelector('#'+id));
   } else if (state.view === 'markets' && !document.querySelector('[role="dialog"]')) renderMarketRows();
   if (scope === 'extended' && ['overview','markets'].includes(state.view)) {

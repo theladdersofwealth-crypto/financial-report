@@ -161,7 +161,9 @@ test('keyless provider requests and configured Finnhub calls share the connectio
   const { getMarket } = await freshModule();
   const data = await getMarket({ FINNHUB_API_KEY: 'test-token' });
   assert.equal(peak, 4);
-  assert.ok(data.sectors.every(sector => sector.value === 100));
+  // Core Korean observations may use part of the shared budget before optional US sectors.
+  assert.ok(data.sectors.some(sector => sector.value === 100));
+  assert.ok(data.sectors.every(sector => sector.value === 100 || sector.value === null));
   for (const id of ['sp500', 'usdkrw', 'btc', 'eth']) {
     assert.ok(data.quotes.find(quote => quote.id === id)?.value > 0);
   }
@@ -196,6 +198,7 @@ test('optional ECOS feeds return official Korean daily yields and basis-point ch
   installFetch(t, async (input, options) => {
     const url = new URL(String(input));
     if (url.hostname !== 'ecos.bok.or.kr') return base(input, options);
+    if (url.pathname.includes('/sample/')) return Response.json({StatisticSearch:{row:[]}});
     ecosCalls++;
     const item = url.pathname.split('/').at(-1);
     const prior = day(2).replace(/-/g, '');
@@ -228,21 +231,36 @@ test('optional ECOS feeds return official Korean daily yields and basis-point ch
   assert.equal(data.impact.method, 'weighted_directional_checklist_v1');
 });
 
-test('without an ECOS key, Korean yields remain missing without fetching ECOS', async t => {
+test('public ECOS fallback verifies daily Korean yields, index levels and signed flows', async t => {
   const base = providerFixture();
   let count = 0;
   installFetch(t, (input, options) => {
-    if (new URL(String(input)).hostname === 'ecos.bok.or.kr') count++;
-    return base(input, options);
+    const url = new URL(String(input));
+    if (url.hostname !== 'ecos.bok.or.kr') return base(input, options);
+    count++;
+    const match = url.pathname.match(/^\/api\/StatisticSearch\/sample\/json\/kr\/1\/10\/(817Y002|802Y001)\/D\/\d{8}\/\d{8}\/(\d+)$/);
+    assert.ok(match);
+    const [, table, item] = match;
+    const values = table === '817Y002' ? [3.5, 3.4] : item === '0030000' ? [-100, -300] : [3000, 3300];
+    return Response.json({StatisticSearch:{row:values.map((value, index) => ({
+      STAT_CODE:table, ITEM_CODE1:item, TIME:day(2-index).replace(/-/g, ''), DATA_VALUE:String(value),
+    }))}});
   });
   const { collectMarket } = await freshModule();
   const data = await collectMarket({});
-  assert.equal(count, 0);
-  assert.equal(data.quotes.find(q => q.id === 'kr3y').value, null);
-  assert.equal(data.sources.find(source => source.id === 'ecos')?.status, 'unconfigured');
-  for (const id of ['kospi', 'kosdaq', 'kr_foreign_kospi']) {
-    assert.equal(data.quotes.find(q => q.id === id)?.value, null);
+  assert.equal(count, 5);
+  const quotes = new Map(data.quotes.map(quote => [quote.id, quote]));
+  for (const id of ['kr3y', 'kr10y']) {
+    assert.equal(quotes.get(id).value, 3.4);
+    assert.equal(quotes.get(id).change, -10);
+    assert.equal(quotes.get(id).changeUnit, 'bp');
   }
+  for (const id of ['kospi', 'kosdaq']) {
+    assert.equal(quotes.get(id).value, 3300);
+    assert.equal(quotes.get(id).change, 10);
+  }
+  assert.equal(quotes.get('kr_foreign_kospi').value, -300);
+  assert.equal(data.sources.find(source => source.id === 'ecos').received, 5);
 });
 
 test('ECOS daily stock indices and KOSPI foreign flow distinguish levels from absolute net flows', async t => {

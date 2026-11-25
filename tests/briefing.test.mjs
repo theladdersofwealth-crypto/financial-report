@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {briefingWindow, buildUsBriefing} from '../src/briefing.js';
+import {briefingWindow, buildKoreaBriefing, koreaBriefingQuotes} from '../src/briefing.js';
 
 test('briefing windows advance at four-hour boundaries in Korea time', () => {
   assert.deepEqual(briefingWindow(Date.parse('2026-11-23T18:59:59Z')), {
@@ -11,18 +11,26 @@ test('briefing windows advance at four-hour boundaries in Korea time', () => {
   });
 });
 
-test('briefing compares fresh quotes only across matching contracts and venues', () => {
-  const now = Date.parse('2026-11-23T19:00:00Z');
-  const quote = {id:'fut_es',name:'S&P 500 무기한',venue:'gate',contract:'SPX500_USDT',value:7000,
-    status:'live',unit:'USDT',observedAt:new Date(now).toISOString()};
-  const old = {...quote, value:6900};
-  const previous = {nextUpdateAt:new Date(now).toISOString(),items:[old]};
-  const result = buildUsBriefing([quote,{id:'fut_nq',status:'daily',value:24000}],previous,now);
-  assert.equal(result.headline,'S&P 500 무기한 상승');
-  assert.equal(result.items[0].change,1.45);
-  assert.ok(result.missing.includes('나스닥100 무기한'));
-  const switched = buildUsBriefing([{...quote,venue:'binance',contract:'SPYUSDT',value:700}],previous,now);
-  assert.equal(switched.items[0].change,null);
-  const stale = buildUsBriefing([{...quote,observedAt:new Date(now-30001).toISOString()}],previous,now);
-  assert.equal(stale.items.length,0);
+test('Korea briefing leads with dated domestic moves and keeps signed flows separate', () => {
+  const now = Date.parse('2026-11-25T19:00:00Z');
+  const quote = {value:3200, change:1.25, changeUnit:'%', status:'daily', observedAt:'2026-11-25', source:'공급자'};
+  const rows = koreaBriefingQuotes([
+    {...quote, id:'fut_es'}, {...quote, id:'kospi'}, {...quote, id:'kosdaq', change:-0.75},
+    {...quote, id:'kr_foreign_kospi', value:-150, change:10, changeUnit:'억원'},
+    {...quote, id:'kr3y', value:3.02}, {...quote, id:'usdkrw', value:1400, savedFrom:'cache'},
+  ]);
+  const result = buildKoreaBriefing(rows, now);
+  assert.equal(result.headline, '11월 25일 종가 · 코스피 +1.25% · 코스닥 -0.75%');
+  assert.deepEqual(result.points, ['코스피가 코스닥을 2.00%p 앞섰습니다.']);
+  assert.deepEqual(result.items.map(item => item.id), ['kospi', 'kosdaq', 'kr_foreign_kospi', 'kr3y']);
+  assert.equal(result.items[2].value, -150);
+  assert.ok(result.items.every(item => !Object.hasOwn(item, 'source')));
+  const mixed = buildKoreaBriefing([
+    {...quote, id:'kospi'}, {...quote, id:'kosdaq', observedAt:'2026-11-24'},
+  ], now);
+  assert.equal(mixed.headline, '11월 25일 종가 · 코스피 +1.25%');
+  assert.deepEqual(mixed.points, []);
+  const stale = buildKoreaBriefing([{...quote, id:'kospi', observedAt:'2026-11-17'}], now);
+  assert.match(stale.headline, /한국 증시.*시세 확인 중/);
+  assert.deepEqual(stale.missing, ['코스피', '코스닥']);
 });

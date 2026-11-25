@@ -306,17 +306,17 @@ async function treasuryFallback(quotes, readURL) {
   return results.flat().filter((quote) => quote.value !== null);
 }
 
-async function ecosQuote(instrument, env, readURL) {
-  // ECOS 817Y002 daily yields and 802Y001 daily stock market; never access without a key.
-  const token = env.ECOS_API_KEY;
-  if (typeof token !== 'string' || !/^[A-Za-z0-9]{8,128}$/.test(token)) {
+async function ecosQuote(instrument, env, readURL, publicAccess = false) {
+  const token = publicAccess ? 'sample' : env.ECOS_API_KEY;
+  if (!publicAccess && (typeof token !== 'string' || !/^[A-Za-z0-9]{8,128}$/.test(token))) {
     return missing(instrument, '한국은행 ECOS 인증키가 연결되지 않았습니다');
   }
   const ymd = (date) => date.replace(/-/g, '');
-  const from = ymd(daysAgo(100)), until = ymd(daysAgo(0));
+  const from = ymd(daysAgo(publicAccess ? 12 : 100)), until = ymd(daysAgo(0));
+  const limit = publicAccess ? 10 : 100;
   // ECOS requires the API key in the path; never log the URL or response body.
   const table = instrument.ecosTable || '817Y002';
-  const url = `https://ecos.bok.or.kr/api/StatisticSearch/${token}/json/kr/1/100/${table}/D/${from}/${until}/${instrument.ecos}`;
+  const url = `https://ecos.bok.or.kr/api/StatisticSearch/${token}/json/kr/1/${limit}/${table}/D/${from}/${until}/${instrument.ecos}`;
   const result = await readURL(url);
   const entries = result?.data?.StatisticSearch?.row;
   if (!Array.isArray(entries)) return missing(instrument, '한국은행 ECOS 응답 또는 이용권한을 확인할 수 없습니다');
@@ -326,6 +326,12 @@ async function ecosQuote(instrument, env, readURL) {
     provider: 'ecos', source: instrument.ecosTable ? '한국은행 ECOS / 한국거래소' : '한국은행 ECOS',
     sourceUrl: 'https://ecos.bok.or.kr/', retrievedAt: result.retrievedAt,
   });
+}
+
+async function publicEcosFallback(quotes, readURL) {
+  const received = new Set(quotes.filter(isFreshQuote).map(quote => quote.id));
+  const needed = INSTRUMENTS.filter(instrument => instrument.ecos && !received.has(instrument.id));
+  return Promise.all(needed.map(instrument => ecosQuote(instrument, {}, readURL, true)));
 }
 
 async function fxQuotes(readURL) {
@@ -486,7 +492,7 @@ async function finnhubList(entries, group, env, readURL) {
 function fact(quote) {
   if (!quote || quote.value === null || quote.deploymentBackup || quote.status === 'stale') return null;
   const change = quote.change === null ? '등락 자료 없음' : `${quote.change > 0 ? '+' : ''}${quote.change.toFixed(2)}${quote.changeUnit}`;
-  return `${quote.name} ${quote.value.toLocaleString('en-US', { maximumFractionDigits: 2 })}${quote.unit} / ${change} (${quote.observedAt}, ${quote.source})`;
+  return `${quote.name} ${quote.value.toLocaleString('en-US', { maximumFractionDigits: 2 })}${quote.unit} / ${change} (${quote.observedAt})`;
 }
 
 function buildAnalysis(quotes, session, company) {
@@ -557,7 +563,7 @@ function sourceList(quotes, sectors, leaders, env, failures = new Map()) {
     ['coinbase', 'Coinbase Spot', 'https://docs.cdp.coinbase.com/coinbase-app/docs/api-prices', 'Binance·Bitstamp 모두 실패할 때 USD 현물 대체 (24시간 등락 미제공)', true, ['api.coinbase.com']],
     ['goldapi', 'Gold API', 'https://gold-api.com/docs', '금·은·구리 참고 현물가격 · 구리는 USD/파운드 · 키 불필요', true, ['api.gold-api.com']],
     ['finnhub', 'Finnhub', 'https://finnhub.io/docs/api/quote', '미국 섹터 ETF·대표 종목 · API 키 필요 · 등락 시각과 가입 권한 확인', Boolean(env.FINNHUB_API_KEY), ['finnhub.io']],
-    ['ecos', '한국은행 ECOS', 'https://ecos.bok.or.kr/', 'KIS 수신 실패 시 일부 지수·수급 대체 · 국고채 금리 일별 자료', Boolean(env.ECOS_API_KEY), ['ecos.bok.or.kr']],
+    ['ecos', '한국은행 ECOS', 'https://ecos.bok.or.kr/', '국내 지수·수급·국고채 일별 자료 · 인증 연결 실패 시 공개 최근 관측', true, ['ecos.bok.or.kr']],
     ['kis', '한국투자증권 KIS', 'https://apiportal.koreainvestment.com/', '국내 지수·외국인 수급 및 미국 지수·주식·섹터 ETF 우선 공급원 (권한 또는 종목 확인 실패 시 기존 자료 유지)', kisConfigured(env), ['openapi.koreainvestment.com']],
   ];
   const expected = {
@@ -671,10 +677,11 @@ export async function collectMarket(env, backup = [], lastGood = [], requestLimi
     Promise.all(INSTRUMENTS.map((instrument) => instrument.fred ? fredQuote(instrument, env, readURL) : instrument.metalSpot ? metalSpotQuote(instrument, readURL) : instrument.ecos ? ecosQuote(instrument, env, readURL) : instrument.crypto ? cryptoQuote(instrument, readURL) : Promise.resolve(missing(instrument)))),
     fxQuotes(readURL), collectKis(kisEnv), collectKisOverseas(kisEnv, 'indices'), collectKisMacro(kisEnv),
   ]);
-  const [treasury, nasdaq, nvda] = await Promise.all([
+  const [treasury, nasdaq, nvda, publicKorea] = await Promise.all([
     treasuryFallback(initialQuotes, readURL), nasdaqIndexFallback(initialQuotes, session, readURL),
     nasdaqClosingQuote({id: 'nvda', name: '엔비디아', group: 'equity', unit: ' USD', basis: '미국 정규장 종가'},
       'NVDA', session, readURL, [], 'stocks'),
+    publicEcosFallback([...initialQuotes, ...kis, ...macro], readURL),
   ]);
   const overseas = remaining > 0 ? await collectKisOverseas(kisEnv, 'securities') : {sectors: [], leaders: []};
   // Actual request priority: KIS FIRST. Ask paid Finnhub only for
@@ -697,7 +704,11 @@ export async function collectMarket(env, backup = [], lastGood = [], requestLimi
         || (quote.observedAt === current.observedAt && current.provider !== 'nasdaq'));
   });
   const replacements = new Map([...fx, ...treasury, ...nasdaq, ...kis, ...verifiedUSIndices, ...macro]
-    .filter(quote => validQuote(quote)).map(quote => [quote.id, quote]));
+    .filter(validQuote).map(quote => [quote.id, quote]));
+  // Foreign net purchases can be negative. A valid ECOS fallback is still usable.
+  for (const quote of publicKorea.filter(quote => isFreshQuote(quote) && (quote.id === 'kr_foreign_kospi' || quote.value > 0))) {
+    replacements.set(quote.id, quote);
+  }
   const obtained = initialQuotes.map(quote => {
     const replacement = replacements.get(quote.id);
     return replacement ? {...quote, ...replacement} : quote;
@@ -771,7 +782,7 @@ async function loadOrRefresh(env, force) {
   if (pending.has(key)) return structuredClone(await pending.get(key));
   const task = (async () => {
     const cache = edgeCache();
-    const cacheRequest = new Request(`https://market-desk-cache.invalid/snapshot/v7/${key}`);
+    const cacheRequest = new Request(`https://market-desk-cache.invalid/snapshot/v8/${key}`);
     if (!force && cache) {
       try {
         const response = await cache.match(cacheRequest);

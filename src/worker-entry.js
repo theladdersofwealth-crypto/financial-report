@@ -1,12 +1,12 @@
 import { DurableObject } from 'cloudflare:workers';
 import { issueKisToken, kisConfigured } from './kis.js';
-import { briefingWindow, buildUsBriefing } from './briefing.js';
+import { briefingWindow, buildKoreaBriefing } from './briefing.js';
 import { collectLiveFutures } from './live-futures.js';
 import { FUTURES_FRESHNESS_MS } from '../public/futures-config.js';
 
 export { default, DeskRoom } from './worker.js';
 
-const LIVE_BRIEFING_KEY = 'latest-live-v2';
+const KOREA_BRIEFING_KEY = 'korea-briefing-v1';
 
 export class MarketBriefing extends DurableObject {
   #refreshing = null;
@@ -35,28 +35,28 @@ export class MarketBriefing extends DurableObject {
   #currentWindow(saved) {
     const now = Date.now();
     return saved?.windowStart === briefingWindow(now).windowStart
-      && (saved.items.length || now - Date.parse(saved.generatedAt) < 60000);
+      && (!saved.missing.length || now - Date.parse(saved.generatedAt) < 5 * 60000);
   }
 
   async needsRefresh() {
-    return !this.#currentWindow(await this.ctx.storage.get(LIVE_BRIEFING_KEY));
+    return !this.#currentWindow(await this.ctx.storage.get(KOREA_BRIEFING_KEY));
   }
 
-  async current() {
-    const saved = await this.ctx.storage.get(LIVE_BRIEFING_KEY);
+  async current(quotes) {
+    const saved = await this.ctx.storage.get(KOREA_BRIEFING_KEY);
     if (this.#currentWindow(saved)) return saved;
-    if (!this.#refreshing) this.#refreshing = this.#publish(saved);
+    if (!this.#refreshing) this.#refreshing = this.#publish(quotes);
     const pending = this.#refreshing;
     try { return await pending; } finally { if (this.#refreshing === pending) this.#refreshing = null; }
   }
 
-  async #publish(previous) {
-    const {quotes, issues} = await this.latestFutures();
-    const briefing = buildUsBriefing(quotes, previous, Date.now());
-    await this.ctx.storage.put(LIVE_BRIEFING_KEY, briefing);
-    console.info('US market briefing refreshed', {
+  async #publish(quotes) {
+    const briefing = buildKoreaBriefing(quotes, Date.now());
+    await this.ctx.storage.put(KOREA_BRIEFING_KEY, briefing);
+    console.info('Korea market briefing refreshed', {
       generatedAt:briefing.generatedAt, nextUpdateAt:briefing.nextUpdateAt,
-      contracts:briefing.items.map(item => `${item.venue}:${item.contract}`), issues,
+      headline:briefing.headline, missing:briefing.missing,
+      metrics:briefing.items.map(({id, observedAt}) => ({id, observedAt})),
     });
     return briefing;
   }
