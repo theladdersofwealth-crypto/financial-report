@@ -69,8 +69,9 @@ test('standalone demo renders every destination without accessing member APIs',a
     state.demo = true;
   `, ctx);
   assert.ok(overview.firstElementChild.hasAttribute('open'));
-  assert.match(document.querySelector('.brief-headline').textContent,/코스피 \+1.25% · 코스닥 -0.40%/);
-  assert.match(document.querySelector('.brief-evidence').textContent,/코스피 외국인 순매도 300.00억원/);
+  assert.deepEqual([...document.querySelectorAll('.brief-moves > span')].map(node=>node.textContent),
+    ['코스피 +1.25%', '코스닥 -0.40%']);
+  assert.match(document.querySelector('.brief-evidence').textContent,/외국인.*코스피 -300\.00억원/);
   assert.doesNotMatch(document.querySelector('.brief-content').textContent,/KIS|미국 시장|무기한|150/);
   const details = document.querySelector('.brief-details').textContent;
   assert.doesNotMatch(details,/2026-11-23|KST 조회|적중률|예측하는 값/);
@@ -79,7 +80,7 @@ test('standalone demo renders every destination without accessing member APIs',a
 
   const topics=[...document.querySelectorAll('.metric-section-title')].map(el=>el.textContent);
   assert.deepEqual(topics,[
-    '한국 증시 · 외국인·연기금 수급','미국 지수선물','금리','원화 환율','원자재 선물','코인 선물'
+    '한국 증시·수급','미국 지수선물','금리','원화 환율','원자재 선물','코인 선물'
   ],'distinct trading instrument and reference sections stay in order');
   const namesIn = id => [...document.querySelectorAll('#'+id+' .quote-name')].map(node => node.textContent);
   assert.deepEqual(namesIn('metrics-macro'), ['미 국채 2년','미 국채 10년','한국 국고채 3년','한국 국고채 10년']);

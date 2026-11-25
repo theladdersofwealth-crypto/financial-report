@@ -18,7 +18,7 @@ test('KIS Korea indexes and signed foreign flows are rendered before global indi
   const code = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
   const section = code.slice(code.indexOf('function renderQuotes()'), code.indexOf('function sparkline('));
   assert.ok(section.includes("panelHead('시장 지표'"));
-  for (const title of ['한국 증시 · 외국인·연기금 수급','미국 지수선물','금리','원화 환율','원자재 선물','코인 선물']) {
+  for (const title of ['한국 증시·수급','미국 지수선물','금리','원화 환율','원자재 선물','코인 선물']) {
     assert.ok(section.includes(title), `missing topic title: ${title}`);
   }
   assert.doesNotMatch(section, /metrics-asia|metrics-other|무기한/);

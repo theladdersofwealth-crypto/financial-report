@@ -143,6 +143,12 @@ function formatChange(quote) {
   const unit = quote.changeUnit || '%';
   return `${change > 0 ? '+' : ''}${change.toFixed(unit.toLowerCase().includes('bp') ? 1 : 2)}${unit}`;
 }
+function flowChange(quote) {
+  const label = formatChange(quote);
+  return isInvestorFlow(quote.id) && quote.changeUnit === '억원'
+    ? E('span', {'aria-label':label}, label.slice(0,-2), E('span',{class:'market-change-unit','aria-hidden':'true'},'억원'))
+    : label;
+}
 const fxById = new Map(fxCurrencies.map(currency => [currency.id, currency]));
 const futuresById = new Map(futuresProducts.map(product => [product.id, product]));
 const rateLabels = [
@@ -151,8 +157,8 @@ const rateLabels = [
 ];
 const domesticLabels = [
   ['kospi','코스피','pt'], ['kosdaq','코스닥','pt'],
-  ['kr_foreign_kospi','외국인 수급 · 코스피','억원'], ['kr_foreign_kosdaq','외국인 수급 · 코스닥','억원'],
-  ['kr_pension_kospi','연기금 수급 · 코스피','억원'], ['kr_pension_kosdaq','연기금 수급 · 코스닥','억원'],
+  ['kr_foreign_kospi','코스피 외국인','억원'], ['kr_foreign_kosdaq','코스닥 외국인','억원'],
+  ['kr_pension_kospi','코스피 연기금','억원'], ['kr_pension_kosdaq','코스닥 연기금','억원'],
 ];
 const isInvestorFlow = id => /^kr_(foreign|pension)_(kospi|kosdaq)$/.test(id);
 const koreaRefreshMs = 30_000;
@@ -591,15 +597,20 @@ function renderBrief(expanded = false) {
   const items = briefing?.items || [];
   const title = (state.demo ? state.market?.summary?.headline : briefing?.headline)
     || '한국 증시 브리핑을 불러오는 중입니다';
-  const evidence = items.filter(item => item.id.startsWith('kr_foreign_')).map(item =>
-    `${item.name} ${item.value < 0 ? '순매도 ' : '순매수 '}${formatValue({...item, value:Math.abs(item.value)})}억원`).join(' · ');
+  const [session, ...moves] = title.split(' · ');
+  const evidence = items.filter(item => item.id.startsWith('kr_foreign_'));
   const points = (state.demo ? state.market?.summary?.points : briefing?.points) || [];
   return E('details', {class: 'panel brief-panel', id: 'desk-brief', open: expanded || null,
     'data-brief-generation': briefing?.generatedAt || ''},
     E('summary', {class: 'brief-summary'},
       E('span', {class: 'brief-label'}, icon('brief'), '오늘의 브리핑 · 한국 증시', state.demo ? badge('예시', 'amber') : null),
-      E('span', {class: 'brief-headline', 'aria-live': 'polite'}, title),
-      E('span', {class: 'brief-evidence', hidden: !evidence || null}, evidence),
+      E('span', {class: 'brief-headline', 'aria-live': 'polite'},
+        E('span', {class:'brief-session'}, session),
+        moves.length ? E('span', {class:'brief-moves'}, moves.map(move=>E('span', {}, move))) : null),
+      E('span', {class: 'brief-evidence', hidden: !evidence.length || null},
+        evidence.length ? E('strong', {}, '외국인') : null,
+        evidence.map(item => E('span', {},
+          `${item.id.endsWith('kospi') ? '코스피' : '코스닥'} ${item.value > 0 ? '+' : ''}${formatValue(item)}억원`))),
       E('span', {class: 'brief-more'}, E('span', {class: 'brief-more-closed'}, '근거·상세 보기'),
         E('span', {class: 'brief-more-open'}, '상세 접기'), icon('down'))),
     E('div', {class: 'brief-details'},
@@ -621,8 +632,7 @@ function updateBriefing() {
   const next = renderBrief(brief.hasAttribute('open'));
   if (brief.dataset.briefGeneration !== next.dataset.briefGeneration) {
     brief.dataset.briefGeneration = next.dataset.briefGeneration;
-    brief.querySelector('.brief-headline').textContent = next.querySelector('.brief-headline').textContent;
-    for (const selector of ['.brief-evidence', '.brief-content']) {
+    for (const selector of ['.brief-headline', '.brief-evidence', '.brief-content']) {
       brief.querySelector(selector).replaceWith(next.querySelector(selector));
     }
   }
@@ -745,7 +755,8 @@ function metricSection(number, id, title, subtitle, theme, quotes) {
     E('div', {class:'metric-section-heading'},
       E('span', {class:'metric-section-number','aria-hidden':'true'},number),
       E('div', {class:'metric-section-copy'},
-        E('h3', {class:'metric-section-title'},title, time ? E('span',{class:'market-group-time'},time) : null),
+        E('div',{class:'metric-title-row'},E('h3', {class:'metric-section-title'},title),
+          time ? E('span',{class:'market-group-time'},time) : null),
         subtitle ? E('p', {class:'metric-section-description'},subtitle) : null),
       E('span', {class:'metric-section-coverage'},
         state.demo ? `예시 ${observed}개` : `수신 ${observed}/${quotes.length}`),
@@ -767,7 +778,7 @@ function renderQuotes() {
   const commodities=take(q=>groupName(q.group)==='원자재');
   const crypto=take(q=>groupName(q.group)==='코인');
   const groups=[
-    ['01','metrics-korea','한국 증시 · 외국인·연기금 수급','국내 현물 지수와 투자자 수급','korea',domestic],
+    ['01','metrics-korea','한국 증시·수급','국내 현물 지수와 투자자 수급','korea',domestic],
     ['02','metrics-global','미국 지수선물','지수·ETF 연동 선물 호가','global',futures],
     ['03','metrics-macro','금리','미 국채와 한국 국고채 수익률','macro',rates],
     ['04','metrics-fx','원화 환율','원화 환산과 여행 환전을 위한 기준환율','fx',featuredFx],
@@ -778,7 +789,7 @@ function renderQuotes() {
     E('span',{class:'metric-jump-label'},'주제별 이동'),
     groups.map(([number,id,title])=>E('button',{type:'button',class:'metric-jump-button',
       onClick:()=>document.getElementById(id)?.scrollIntoView({behavior:'smooth',block:'start'})},
-      number,E('span',{},title.split(' · ')[0]))));
+      E('span',{class:'metric-jump-number','aria-hidden':'true'},number),E('span',{},title))));
   return E('section', {class:'panel quote-overview-panel'},
     panelHead('시장 지표', null,
       E('button',{type:'button',class:'text-button',onClick:()=>navigate('markets')},'전체 시장',icon('chevron'))),
@@ -851,10 +862,11 @@ function quoteCard(quote) {
   const observed = quoteTimestamp(quote);
   const [statusLabel, statusTone] = quoteStatus(quote, true);
   const investor = pension ? '연기금' : '외국인';
-  const changeText = Number.isFinite(quote.change) ? formatChange(quote)
+  const changeText = Number.isFinite(quote.change) ? flowChange(quote)
     : flow ? Number(quote.value) < 0 ? `${investor} 순매도` : Number(quote.value) > 0 ? `${investor} 순매수` : `${investor} 순매수 0` : '—';
   const tone = changeClass(Number.isFinite(quote.change) || !flow ? quote.change : quote.value);
   const sharedKoreaTime = quote.group === 'korea' && statusTone !== 'saved';
+  const value = formatValue(quote);
   return E('article', {class: `quote-card${chartable ? ' quote-card-clickable' : ''}${flow ? ' quote-card-flow' : ''}`,
     'data-quote-id':chartable ? quote.id : null,
     role: chartable ? 'button' : null,
@@ -868,7 +880,8 @@ function quoteCard(quote) {
     E('div', {class: 'quote-top'}, E('h3', {class: 'quote-name'}, quote.name),
       chartable ? E('span', {class:'quote-drilldown','aria-hidden':'true'}, icon('chevron')) : null),
     currency ? E('span', {class: 'fx-unit-label'}, `${fxAmountLabel(currency)} 기준`) : null,
-    E('div', {class: 'quote-value-row'}, E('span', {class: 'quote-value'}, formatValue(quote)), E('span', {class: 'quote-unit'}, quote.unit || '')),
+    E('div', {class: 'quote-value-row' + (value.length >= 10 ? ' quote-value-row-long' : '')},
+      E('span', {class: 'quote-value'}, value), E('span', {class: 'quote-unit'}, quote.unit || '')),
     E('div', {class: 'quote-bottom'}, !available ? E('span', {class: 'quote-missing'}, '시세 수신 대기')
       : E('span', {class: `quote-change ${tone}`, title:Number.isFinite(quote.change) ? '전일 대비' : null}, changeText),
       available && !state.demo && !sharedKoreaTime ? E('span', {class: `quote-status ${statusTone}`}, statusLabel) : null),
@@ -1146,9 +1159,12 @@ function renderEvents(compact = false) {
   }
   else section.append(E('div', {class: 'event-list'}, (compact ? events.slice(0, 3) : events).map(item => {
     const rawTime = item.at || item.dateTime || item.datetime || item.startsAt || item.date;
-    const actualTime = item.time || (item.date && !item.at ? '시각 미확인' : rawTime ? shortTime(rawTime) : '미정');
+    const dateOnly = item.date && !item.at;
+    const actualTime = item.time || (dateOnly ? '시간 미정' : rawTime ? shortTime(rawTime) : '미정');
     const importance = Number(item.importance) || (item.impact === 'high' ? 3 : 1);
-    return E('div', {class: 'event-row'}, E('div', {class: 'event-time'}, actualTime, E('small', {}, state.demo ? '가상 일정' : item.date && !item.at ? `${item.date} · 미 동부 기준` : rawTime ? dateText(rawTime, {hour: undefined, minute: undefined}) : 'KST')), E('div', {class: 'event-country'}, item.country || item.region || 'GL'), E('div', {class: 'event-info'}, E('div', {class: 'event-name'}, item.name || item.title), E('p', {class: 'event-description'}, item.description || item.note || ''), !state.demo && item.sourceUrl ? link(item.source, item.sourceUrl) : null, ['cache', 'build'].includes(item.route) ? E('small', {class: 'event-saved'}, calendarRouteLabels[item.route]) : null), E('div', {class: 'event-importance', 'aria-label': `중요도 ${Math.min(3, importance)}/3`}, [1, 2, 3].map(x => E('i', {class: x <= importance ? '' : 'dim'}))));
+    const dayLabel = state.demo ? '가상 일정' : dateOnly ? `${item.date.slice(5).replace('-','/')} ET`
+      : rawTime ? dateText(rawTime, {hour: undefined, minute: undefined}) : 'KST';
+    return E('div', {class: 'event-row'}, E('div', {class: 'event-time'}, E('span', {}, actualTime), E('small', {}, dayLabel)), E('div', {class: 'event-country'}, item.country || item.region || 'GL'), E('div', {class: 'event-info'}, E('div', {class: 'event-name'}, item.name || item.title), E('p', {class: 'event-description'}, item.description || item.note || ''), !state.demo && item.sourceUrl ? link(item.source, item.sourceUrl) : null, ['cache', 'build'].includes(item.route) ? E('small', {class: 'event-saved'}, calendarRouteLabels[item.route]) : null), E('div', {class: 'event-importance', 'aria-label': `중요도 ${Math.min(3, importance)}/3`}, [1, 2, 3].map(x => E('i', {class: x <= importance ? '' : 'dim'}))));
   })));
   if (!state.demo && calendar?.status === 'partial') section.append(E('div', {class: 'panel-foot'}, '일부 일정 확인 중'));
   return section;
@@ -1197,9 +1213,10 @@ function renderMarketRows() {
               : q.name),
             currency ? E('small', {}, `${fxAmountLabel(currency)} 기준`) : null,
             previous ? E('small',{class:'market-prior-value'},'이전 관측') : null),
-          E('td',{class:'num mono'},E('strong',{},formatValue(q)),E('div',{class:'tiny muted'},q.unit||'')),
+          E('td',{class:'num mono'},E('span',{class:'market-table-value'},E('strong',{},formatValue(q)),
+            E('small',{class:'market-table-unit'},q.unit||''))),
           E('td',{class:`num mono ${changeClass(q.change)}`,title:q.comparisonAt ? `${q.comparisonAt} 대비` : null},
-            comparable ? formatChange(q) : '—'));
+            comparable ? flowChange(q) : '—'));
       }),
     ];
   });
@@ -1278,10 +1295,28 @@ function sourceStatus(status) {
   })[status] || {label: status || '상태 미제공', type: ''};
 }
 
+function adminTable(caption, headings, rows) {
+  return E('div', {class:'table-wrap'}, E('table', {class:'admin-records-table', role:'table'},
+    E('caption', {class:'sr-only'}, caption),
+    E('thead', {role:'rowgroup'}, E('tr', {role:'row'}, headings.map(label=>E('th', {role:'columnheader', scope:'col'}, label)))),
+    E('tbody', {role:'rowgroup'}, rows.map(row=>E('tr', {role:'row'}, row.map((value,index)=>
+      E('td', {role:'cell', 'data-label':headings[index]}, value)))))));
+}
+
 function renderUsers() {
   const section = E('section', {class: 'panel'}, panelHead(state.demo ? '가상 회원 관리' : '회원 계정', state.demo ? '추가·수정 내용은 이 브라우저의 체험 상태에만 반영됩니다.' : 'PIN 계정과 초대 계정을 관리합니다.', B('회원 추가', () => userModal(), 'primary small', 'plus')));
   if (!state.users.length) { section.append(E('div', {class: 'admin-empty'}, state.loading ? '회원 목록을 불러오는 중입니다.' : '회원 목록을 새로고침해 주세요.')); return section; }
-  section.append(E('div', {class: 'table-wrap'}, E('table', {}, E('caption', {class: 'sr-only'}, '회원 계정 관리'), E('thead', {}, E('tr', {}, ['이름 / 아이디', '권한', '계정 상태', '최근 접속', '관리'].map(x => E('th', {}, x)))), E('tbody', {}, state.users.map(user => E('tr', {}, E('td', {}, E('strong', {}, user.name), E('div', {class: 'tiny muted'}, user.username)), E('td', {}, badge(user.role === 'admin' ? '관리자' : user.pinLogin ? 'PIN 열람' : '회원', user.role === 'admin' ? 'blue' : '')), E('td', {}, E('span', {class: `status-dot ${user.disabled ? 'disabled' : ''}`}, E('i', {class: 'dot'}), user.disabled ? '이용 정지' : '이용 가능'), user.mustChangePassword ? E('div', {class: 'tiny muted'}, '비밀번호 변경 필요') : null), E('td', {class: 'tiny muted'}, state.demo ? '가상 접속' : user.lastSeen ? dateText(user.lastSeen) : '접속 기록 없음'), E('td', {}, E('div', {class: 'row-actions'}, B('수정', () => userModal(user), 'small'), B(user.disabled ? '이용 허용' : '이용 정지', () => userStatusModal(user), 'small', null, {disabled: user.id === state.user.id, title: user.id === state.user.id ? '내 계정은 이 화면에서 정지할 수 없습니다.' : ''})))))))));
+  section.append(adminTable('회원 계정 관리', ['이름 / 아이디', '권한', '계정 상태', '최근 접속', '관리'], state.users.map(user=>[
+    E('div', {}, E('strong', {}, user.name), E('div', {class:'tiny muted'}, user.username)),
+    badge(user.role === 'admin' ? '관리자' : user.pinLogin ? 'PIN 열람' : '회원', user.role === 'admin' ? 'blue' : ''),
+    E('div', {}, E('span', {class:`status-dot ${user.disabled ? 'disabled' : ''}`},
+      E('i', {class:'dot'}), user.disabled ? '이용 정지' : '이용 가능'),
+      user.mustChangePassword ? E('div', {class:'tiny muted'}, '비밀번호 변경 필요') : null),
+    E('span', {class:'tiny muted'}, state.demo ? '가상 접속' : user.lastSeen ? dateText(user.lastSeen) : '접속 기록 없음'),
+    E('div', {class:'row-actions'}, B('수정', () => userModal(user), 'small'),
+      B(user.disabled ? '이용 허용' : '이용 정지', () => userStatusModal(user), 'small', null,
+        {disabled:user.id === state.user.id, title:user.id === state.user.id ? '내 계정은 이 화면에서 정지할 수 없습니다.' : ''})),
+  ])));
   section.append(E('div', {class: 'panel-foot'}, state.demo ? '가상 계정에는 실제 비밀번호가 저장되지 않습니다.' : '계정을 정지하거나 비밀번호를 재설정하면 해당 계정의 기존 로그인 세션이 종료됩니다.'));
   return section;
 }
@@ -1309,10 +1344,22 @@ function renderActivity() {
   }}, threshold.node, save));
   const sessionPanel = E('section', {class: 'panel'}, panelHead(`${prefix}로그인 세션`, '로그인·최근 확인·연결 시간과 활동 추정 시간을 구분합니다.', badge(state.demo ? '가상 기록' : '관리자 전용', state.demo ? 'amber' : 'blue')));
   if (!sessions.length) sessionPanel.append(E('div', {class: 'admin-empty'}, state.loading ? '접속 기록을 불러오는 중입니다.' : '표시할 접속 기록이 없습니다.'));
-  else sessionPanel.append(E('div', {class: 'table-wrap'}, E('table', {}, E('caption', {class: 'sr-only'}, '최근 로그인 세션 기록'), E('thead', {}, E('tr', {}, ['회원', '로그인', '최근 확인', '연결 시간', '활동 추정', '상태'].map(x => E('th', {}, x)))), E('tbody', {}, sessions.map(session => E('tr', {}, E('td', {}, E('strong', {}, session.name || session.username), E('div', {class: 'tiny muted'}, session.username || '')), E('td', {class: 'tiny'}, state.demo ? '가상 로그인' : dateText(session.loginAt || session.createdAt)), E('td', {class: 'tiny'}, state.demo ? '가상 접속' : dateText(session.lastSeen || session.lastSeenAt)), E('td', {}, state.demo ? '18분' : duration(session.connectedSeconds)), E('td', {}, state.demo ? '11분 20초' : duration(session.activeSeconds)), E('td', {}, badge(state.demo ? '가상 접속 중' : session.logoutAt ? '종료' : '유효 세션', session.logoutAt ? '' : 'green'))))))));
+  else sessionPanel.append(adminTable('최근 로그인 세션 기록', ['회원', '로그인', '최근 확인', '연결 시간', '활동 추정', '상태'], sessions.map(session=>[
+    E('div', {}, E('strong', {}, session.name || session.username), E('div', {class:'tiny muted'}, session.username||'')),
+    E('time', {class:'tiny'}, state.demo ? '가상 로그인' : dateText(session.loginAt||session.createdAt)),
+    E('time', {class:'tiny'}, state.demo ? '가상 접속' : dateText(session.lastSeen||session.lastSeenAt)),
+    state.demo ? '18분' : duration(session.connectedSeconds),
+    state.demo ? '11분 20초' : duration(session.activeSeconds),
+    badge(state.demo ? '가상 접속 중' : session.logoutAt ? '종료' : '유효 세션', session.logoutAt ? '' : 'green'),
+  ])));
   sessionPanel.append(E('div', {class: 'panel-foot'}, `접속 기록 보관: ${activity?.retentionDays?.activity ?? 90}일 · 대화 기록 보관: ${activity?.retentionDays?.chat ?? 30}일. 유효 세션은 현재 화면을 보고 있다는 의미와 다릅니다.`));
   const result = [summary, note, settings, sessionPanel];
-  if (totals.length) result.push(E('section', {class: 'panel'}, panelHead('회원별 누적 이용', '여러 탭·기기에서 겹친 시간을 한 번만 계산합니다.'), E('div', {class: 'table-wrap'}, E('table', {}, E('thead', {}, E('tr', {}, ['회원', '로그인 횟수', '연결 시간', '활동 추정', '최근 확인'].map(x => E('th', {}, x)))), E('tbody', {}, totals.map(item => E('tr', {}, E('td', {}, E('strong', {}, item.name), E('div', {class: 'tiny muted'}, item.username)), E('td', {}, item.loginCount), E('td', {}, duration(item.connectedSeconds)), E('td', {}, duration(item.activeSeconds)), E('td', {class: 'tiny'}, item.lastSeen ? dateText(item.lastSeen) : '기록 없음'))))))));
+  if (totals.length) result.push(E('section', {class:'panel'}, panelHead('회원별 누적 이용', '여러 탭·기기에서 겹친 시간을 한 번만 계산합니다.'),
+    adminTable('회원별 누적 이용', ['회원', '로그인 횟수', '연결 시간', '활동 추정', '최근 확인'], totals.map(item=>[
+      E('div', {}, E('strong', {}, item.name), E('div', {class:'tiny muted'}, item.username)),
+      item.loginCount, duration(item.connectedSeconds), duration(item.activeSeconds),
+      E('time', {class:'tiny'}, item.lastSeen ? dateText(item.lastSeen) : '기록 없음'),
+    ]))));
   return result;
 }
 function statBox(label, value, caption) { return E('div', {class: 'stat-box'}, E('p', {class: 'stat-label'}, label), E('p', {class: 'stat-value'}, value), E('p', {class: 'stat-caption'}, caption)); }
