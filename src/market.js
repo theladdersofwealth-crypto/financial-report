@@ -782,7 +782,7 @@ async function loadOrRefresh(env, force) {
   if (pending.has(key)) return structuredClone(await pending.get(key));
   const task = (async () => {
     const cache = edgeCache();
-    const cacheRequest = new Request(`https://market-desk-cache.invalid/snapshot/v8/${key}`);
+    const cacheRequest = new Request(`https://market-desk-cache.invalid/snapshot/v9/${key}`);
     if (!force && cache) {
       try {
         const response = await cache.match(cacheRequest);

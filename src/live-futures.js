@@ -26,8 +26,8 @@ async function providerJson(fetcher, venue, path, parameters) {
 }
 
 function contractFields(product, venue, symbol) {
-  const etfFallback = !product.productType && venue === 'binance' && product.id !== 'fut_sox';
-  const productType = product.productType || (venue === 'binance' || product.id === 'fut_sox' ? 'ETF 연동' : '지수 연동');
+  const etfFallback = !product.productType && venue === 'binance';
+  const productType = product.productType || (etfFallback ? 'ETF 연동' : '지수 연동');
   const etfName = symbol.split(/_?USDT$/)[0];
   return {
     id:product.id, name:etfFallback ? `${etfName} ETF` : product.liveName,

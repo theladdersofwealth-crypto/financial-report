@@ -72,6 +72,8 @@ test('standalone demo renders every destination without accessing member APIs',a
   assert.deepEqual(namesIn('metrics-macro'), ['미 국채 2년','미 국채 10년','한국 국고채 3년','한국 국고채 10년']);
   assert.deepEqual(namesIn('metrics-commodities'), ['WTI','브렌트유','금','은']);
   assert.deepEqual(namesIn('metrics-crypto'), ['비트코인','이더리움']);
+  assert.equal(namesIn('metrics-korea').length,6);
+  assert.doesNotMatch(namesIn('metrics-global').join(' '), /반도체/);
   assert.equal(document.querySelectorAll('.metric-jump-button').length,topics.length);
   assert.equal(document.querySelectorAll('.overview-section-intro').length, 2,
     'sector and outlook sections keep their own headings');
@@ -132,6 +134,8 @@ test('standalone demo renders every destination without accessing member APIs',a
   search.dispatchEvent(new domWindow.Event('input'));
   assert.equal(document.querySelectorAll('.fx-list .quote-card').length, 1);
   assert.match(document.querySelector('.fx-unit-label').textContent, /1,000 VND/);
+  assert.equal(document.querySelector('.fx-list .quote-status').textContent, '2026-11-20');
+  assert.equal(document.querySelector('.fx-list .quote-provenance'), null);
   document.querySelector('.fx-list .quote-card').click();
   assert.match(document.querySelector('#modal-root').textContent, /베트남 동 · 일별 원화 환율 차트/);
   assert.ok(document.querySelector('.market-chart-svg'));
@@ -151,5 +155,24 @@ test('standalone demo renders every destination without accessing member APIs',a
   assert.match(document.querySelector('#modal-title').textContent, /S&P 500 · 캔들 차트/);
   assert.equal(document.querySelectorAll('.market-chart-body').length, 2);
   assert.doesNotMatch(document.querySelector('#modal-root').textContent, /SPX500_USDT|Gate|거래소 원자료/);
+  document.querySelector('#modal-root').replaceChildren();
+  ctx.fetch = async path => {
+    requested.push(String(path));
+    return Response.json({status:'ok',quote:{id:'search_SOL',name:'SOL',symbol:'SOLUSDT',value:120,
+      observedAt:new Date().toISOString(),unit:'USDT',status:'live',timestampPrecision:'book'}});
+  };
+  vm.runInContext(`state.futuresQuotes.extended = [{id:'sector_xlk',name:'기술 ETF',value:156.85,
+    unit:'USDT',status:'live',timestampPrecision:'book',observedAt:new Date().toISOString()}];
+    document.getElementById('app').replaceChildren(renderQuotes(), renderSectors());`,ctx);
+  const sector = document.querySelector('#us-sector-panel .futures-list-row');
+  assert.match(sector.textContent, /기술XLK156.85/);
+  assert.doesNotMatch(sector.textContent, /호가 중간값|데이터 연결 필요/);
+  document.querySelector('[data-coin-search]').click();
+  assert.equal(document.querySelector('#modal-title').textContent, '코인 선물 검색');
+  document.querySelector('.coin-search-modal .instrument-sample').click();
+  await new Promise(r=>nativeTimeout(r,10));
+  assert.equal(requested.at(-1), '/api/instrument?market=CRYPTO&symbol=SOL');
+  assert.match(document.querySelector('.coin-search-result').textContent, /SOL.*120.00.*실시간 호가/);
+  assert.doesNotMatch(document.querySelector('.coin-search-result').textContent, /호가 중간값/);
   timers.forEach(nativeClearTimeout);
 });

@@ -21,6 +21,7 @@ test('KIS requires both server-side secrets; without them no requests occur',asy
 });
 
 test('KIS index and market foreign flow are parsed, with a shared cached bearer token',async t=>{
+  t.mock.timers.enable({apis:['Date'], now:new Date('2026-11-25T07:00:00Z')});
   const calls=[];
   withFetch(t,async(input,opts={})=>{
     const url=new URL(String(input));
@@ -89,7 +90,7 @@ test('KIS index and market foreign flow are parsed, with a shared cached bearer 
   assert.equal(byId.kr_pension_kosdaq.value,0);
   assert.equal(byId.kospi.status,'daily');
   assert.equal(calls.filter(c=>c.path==='/oauth2/tokenP').length,1);
-  assert.equal(calls.filter(c=>c.method==='GET').length,12);
+  assert.equal(calls.filter(c=>c.method==='GET').length,10);
   for (const id of ['kospi','kosdaq']) {
     const periods=byId[id].chartPeriods;
     assert.deepEqual(Object.keys(periods),['D','W','M']);
@@ -104,6 +105,35 @@ test('KIS index and market foreign flow are parsed, with a shared cached bearer 
   assert.equal(calls.filter(c=>c.path==='/oauth2/tokenP').length,1,'token must be reused');
   assert.equal(JSON.stringify(quotes).includes('mock-app-secret'),false);
   assert.equal(JSON.stringify(quotes).includes('mock-bearer'),false);
+});
+
+test('intraday KIS polls both markets, retains signed foreign and pension flow, and labels retrieval time', async t => {
+  t.mock.timers.enable({apis:['Date'], now:new Date('2026-11-25T02:00:00Z')});
+  const calls = [];
+  withFetch(t, async (input, init) => {
+    const url = new URL(input);
+    calls.push(init.headers.tr_id);
+    if (url.pathname.endsWith('/tokenP')) return Response.json({access_token:'test-intraday',expires_in:86400});
+    if (init.headers.tr_id === 'FHPUP02100000') {
+      return Response.json({rt_cd:'0', output:{bstp_nmix_prpr:'5000', bstp_nmix_prdy_ctrt:'-1.1'}});
+    }
+    assert.equal(init.headers.tr_id, 'FHPTJ04030000');
+    assert.equal(url.searchParams.get('FID_INPUT_ISCD'), '999');
+    const group = url.searchParams.get('FID_INPUT_ISCD_2');
+    assert.ok(['S001','S101'].includes(group));
+    return Response.json({rt_cd:'0', output:[{frgn_ntby_tr_pbmn:group==='S001'?'-150000':'12000',fund_ntby_tr_pbmn:'0'}]});
+  });
+  const {collectKisIntraday} = await fresh();
+  const env = {KIS_APP_KEY:'intraday-key',KIS_APP_SECRET:'intraday-secret'};
+  const quotes = await collectKisIntraday(env);
+  assert.equal(quotes.length,6);
+  assert.equal(quotes.find(q=>q.id==='kr_foreign_kospi').value,-1500);
+  assert.equal(quotes.find(q=>q.id==='kr_foreign_kosdaq').value,120);
+  assert.equal(quotes.find(q=>q.id==='kr_pension_kospi').value,0);
+  assert.ok(quotes.every(q=>q.timestampPrecision==='retrieval' && q.marketPhase==='intraday'));
+  t.mock.timers.setTime(Date.parse('2026-11-25T06:30:00Z'));
+  assert.deepEqual(await collectKisIntraday(env), []);
+  assert.equal(calls.length,5);
 });
 
 test('KIS rejects failed authentication and never invents an index',async t=>{

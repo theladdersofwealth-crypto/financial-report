@@ -5,6 +5,7 @@ import { enrichAnalysis } from './analysis.js';
 import { searchInstrument } from './instrument-search.js';
 import { loadLiveFuturesChart } from './live-futures.js';
 import { koreaBriefingQuotes } from './briefing.js';
+import { koreaSessionOpen } from './kis.js';
 
 export { DeskRoom };
 
@@ -70,6 +71,18 @@ async function futuresSnapshot(env, scope = 'indices', reportSuccess = false) {
   return {quotes, reason:quotes.length ? null : 'network'};
 }
 
+async function koreaSnapshot(env, report = false) {
+  if (!env.US_BRIEFING || !koreaSessionOpen()) return {quotes:[]};
+  try {
+    const {quotes, issues} = await env.US_BRIEFING.getByName('korea-intraday').latestKorea();
+    if (report) console.info('Korea intraday snapshot', {metrics:quotes.map(q=>q.id), issues});
+    return {quotes};
+  } catch (error) {
+    console.warn('Korea intraday snapshot unavailable', error?.name || 'Error');
+    return {quotes:[]};
+  }
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -82,7 +95,7 @@ export default {
       if (isApi) {
         if (!env.DESK) return protect(Response.json({ error: '서버 저장소가 아직 연결되지 않았습니다.' }, { status: 503 }), true);
         const room = env.DESK.get(env.DESK.idFromName('global-market-desk'));
-        if (url.pathname === '/api/market' || url.pathname === '/api/calendar' || url.pathname === '/api/instrument' || url.pathname === '/api/futures') {
+        if (['/api/market','/api/calendar','/api/instrument','/api/futures','/api/korea'].includes(url.pathname)) {
           const authUrl = new URL(request.url);
           authUrl.pathname = '/api/me';
           const authResponse = await room.fetch(new Request(authUrl, { headers: request.headers }));
@@ -101,6 +114,7 @@ export default {
               : await futuresSnapshot(env, scope);
             return protect(Response.json(result, {status: result.status === 'invalid' ? 400 : 200}), true);
           }
+          if (url.pathname === '/api/korea') return protect(Response.json(await koreaSnapshot(env)), true);
           if (url.pathname === '/api/calendar') return protect(Response.json(await getCalendar()), true);
           if (url.pathname === '/api/instrument') {
             const market=url.searchParams.get('market')||'';
@@ -137,6 +151,7 @@ export default {
     } else if (controller.cron === FUTURES_CHECK_CRON) {
       ctx.waitUntil(Promise.all([
         refreshBriefingIfDue(env),
+        koreaSnapshot(env,true),
         futuresSnapshot(env,'indices',true),
         futuresSnapshot(env,'extended',true),
       ]));

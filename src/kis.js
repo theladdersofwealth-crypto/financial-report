@@ -3,12 +3,16 @@
  * Credentials and bearer tokens never enter market snapshots or logs.
  * Excludes account, balance and order APIs entirely.
  * Official endpoints: FHKUP03500100 (index daily) and
- * FHPTJ04040000 (market daily investor flow).
+ * FHPTJ04030000 (intraday) and FHPTJ04040000 (daily investor flow).
  */
 import {usFutures, futuresPeriods} from '../public/futures-config.js';
 
 const BASE = 'https://openapi.koreainvestment.com:9443';
 const TIMEOUT_MS = 8000;
+const domesticMarkets = [
+  {id:'kospi', index:'0001', daily:'KSP', intraday:'S001'},
+  {id:'kosdaq', index:'1001', daily:'KSQ', intraday:'S101'},
+];
 let tokenCache = null;
 let pendingToken = null;
 
@@ -125,9 +129,10 @@ async function kisGet(env, token, path, trId, parameters, report) {
   return data?.rt_cd==='0' ? data : null;
 }
 function canonicalQuote(id, rows, field, div=1) {
+  const newest = dateOf(todayKst());
   const history=(Array.isArray(rows)?rows:[])
     .map(r=>({date:dateOf(r?.stck_bsop_date),value:val(r?.[field])}))
-    .filter(r=>r.date && r.value!==null && r.date<=new Date().toISOString().slice(0,10))
+    .filter(r=>r.date && r.value!==null && r.date<=newest)
     .map(r=>({date:r.date,value:r.value/div}))
     .sort((a,b)=>a.date.localeCompare(b.date));
   if (!history.length) return null;
@@ -135,7 +140,7 @@ function canonicalQuote(id, rows, field, div=1) {
   const flow=/^kr_(foreign|pension)_/.test(id);
   const age=Date.now()-Date.parse(last.date+'T23:59:59+09:00');
   return {
-    id,provider:'kis',source:'한국투자증권 KIS Open API',
+    id,group:'korea',provider:'kis',source:'한국투자증권 KIS Open API',
     sourceUrl:'https://apiportal.koreainvestment.com/',
     observedAt:last.date,retrievedAt:new Date().toISOString(),
     timestampPrecision:'day',status:age>7*86400000?'stale':'daily',
@@ -167,8 +172,15 @@ function indexCandles(rows) {
   return [...observations.values()].sort((a,b) => a.date.localeCompare(b.date)).slice(-150);
 }
 
-// Intraday index snapshot. Daily OHLC remains the independent chart source.
+export function koreaSessionOpen(now = Date.now()) {
+  const kst = new Date(now + 9 * 3600000);
+  const day = kst.getUTCDay(), minute = kst.getUTCHours() * 60 + kst.getUTCMinutes();
+  return day >= 1 && day <= 5 && minute >= 540 && minute < 930;
+}
+
+// The REST quote supplies the index value but no exchange observation timestamp.
 async function intradayIndexQuote(env,token,id,iscd) {
+  if (!koreaSessionOpen()) return null;
   const data=await kisGet(env,token,
     '/uapi/domestic-stock/v1/quotations/inquire-index-price','FHPUP02100000',
     {FID_COND_MRKT_DIV_CODE:'U',FID_INPUT_ISCD:iscd});
@@ -176,16 +188,13 @@ async function intradayIndexQuote(env,token,id,iscd) {
   const value=val(row?.bstp_nmix_prpr);
   const change=val(row?.bstp_nmix_prdy_ctrt);
   if(value===null || value<=0 || change===null || Math.abs(change)>30) return null;
-  // Do not label a response live unless the exchange is in regular trading hours.
-  const kst=new Date(Date.now()+9*3600000);
-  const day=kst.getUTCDay(),minute=kst.getUTCHours()*60+kst.getUTCMinutes();
-  if(day===0||day===6||minute<540||minute>930) return null;
+  if (!koreaSessionOpen()) return null;
   const observedAt=new Date().toISOString();
-  return {id,provider:'kis',source:'한국투자증권 KIS Open API',
+  return {id,group:'korea',provider:'kis',source:'한국투자증권 KIS Open API',
     sourceUrl:'https://apiportal.koreainvestment.com/',
     value,change,changeUnit:'%',unit:'pt',
     observedAt,retrievedAt:observedAt,timestampPrecision:'retrieval',
-    status:'delayed',delay:'KIS 장중 지수 스냅샷 · 공급자 관측 시각 미제공 · 최대 5분 간격 조회',
+    status:'delayed',marketPhase:'intraday',delay:'장중 지수 조회 · 실제 체결 시각 미제공',
     basis:'KIS 국내 업종지수 현재가 · 장중 조회',reason:null};
 }
 // KIS index minute OHLC; never infer intraday bars from daily closes.
@@ -252,26 +261,74 @@ async function investorQuotes(env,token,iscd,market,suffix) {
       FID_INPUT_DATE_2:date,FID_INPUT_ISCD_1:market,FID_INPUT_ISCD_2:iscd,
     });
   // API may refuse a market/plan. Never replace actual flow with synthetic data.
-  return [
+  const quotes = [
     canonicalQuote(`kr_foreign_${suffix}`,data?.output,'frgn_ntby_tr_pbmn',100),
     canonicalQuote(`kr_pension_${suffix}`,data?.output,'fund_ntby_tr_pbmn',100),
   ].filter(Boolean);
+  const today = dateOf(ymd);
+  return quotes.map(quote => koreaSessionOpen() && quote.observedAt === today
+    ? {...quote, marketPhase:'intraday', status:'delayed', delay:'당일 잠정 집계'} : quote);
 }
+
+async function intradayInvestorQuotes(env, token, market, report) {
+  if (!koreaSessionOpen()) return [];
+  const data = await kisGet(env, token,
+    '/uapi/domestic-stock/v1/quotations/inquire-investor-time-by-market', 'FHPTJ04030000',
+    {FID_INPUT_ISCD:'999', FID_INPUT_ISCD_2:market.intraday},
+    event => { if (event.reason || event.code && event.code !== 'MCA00000') report?.({market:market.id, ...event}); });
+  const row = Array.isArray(data?.output) ? data.output.length === 1 ? data.output[0] : null : data?.output;
+  if (!row || !koreaSessionOpen()) return [];
+  const retrievedAt = new Date().toISOString();
+  return [
+    ['foreign', row.frgn_ntby_tr_pbmn], ['pension', row.fund_ntby_tr_pbmn],
+  ].flatMap(([investor, raw]) => {
+    const amount = val(raw);
+    return amount === null ? [] : [{
+      id:`kr_${investor}_${market.id}`, group:'korea', provider:'kis',
+      source:'한국투자증권 KIS Open API', sourceUrl:'https://apiportal.koreainvestment.com/',
+      unit:'억원', value:amount / 100, change:null, changeUnit:'억원',
+      observedAt:retrievedAt, retrievedAt, timestampPrecision:'retrieval', status:'delayed', marketPhase:'intraday',
+      basis:'장중 누적 순매수 거래대금', delay:'장중 집계 · 실제 집계 시각 미제공',
+    }];
+  });
+}
+
+async function intradayKorea(env, token, report) {
+  return (await Promise.all(domesticMarkets.flatMap(market => [
+    intradayIndexQuote(env, token, market.id, market.index),
+    intradayInvestorQuotes(env, token, market, report),
+  ]))).flat().filter(Boolean);
+}
+
+export async function collectKisIntraday(env, report) {
+  if (!koreaSessionOpen() || !kisConfigured(env)) return [];
+  const token = await tokenFor(env, report);
+  return token ? intradayKorea(env, token, report) : [];
+}
+
+async function currentKorea(env, token) {
+  if (!koreaSessionOpen()) return [];
+  if (env.US_BRIEFING) {
+    try { return (await env.US_BRIEFING.getByName('korea-intraday').latestKorea()).quotes; }
+    catch { /* A cold binding can still use the same read-only endpoint. */ }
+  }
+  return intradayKorea(env, token);
+}
+
 export async function collectKis(env) {
   if(!kisConfigured(env)) return [];
   const token=await tokenFor(env);
   if(!token) return [];
-  const fetched=await Promise.all([
-    indexQuote(env,token,'kospi','0001'),
-    indexQuote(env,token,'kosdaq','1001'),
-    intradayIndexQuote(env,token,'kospi','0001'),
-    intradayIndexQuote(env,token,'kosdaq','1001'),
-    investorQuotes(env,token,'0001','KSP','kospi'),
-    investorQuotes(env,token,'1001','KSQ','kosdaq'),
+  const [charts, current] = await Promise.all([
+    Promise.all(domesticMarkets.map(market => indexQuote(env, token, market.id, market.index))),
+    currentKorea(env, token),
   ]);
+  const flows = await Promise.all(domesticMarkets.filter(({id}) =>
+    !['foreign','pension'].every(investor => current.some(quote => quote.id === `kr_${investor}_${id}`)))
+    .map(market => investorQuotes(env, token, market.index, market.daily, market.id)));
   // Intraday observations override the corresponding daily snapshot only when validated.
   const byId=new Map();
-  for(const quote of fetched.flat().filter(Boolean)) {
+  for(const quote of [...charts, ...flows.flat(), ...current].filter(Boolean)) {
     const prior=byId.get(quote.id);
     byId.set(quote.id,prior ? {...prior,...quote,chartPeriods:prior.chartPeriods,chartBasis:prior.chartBasis,minuteCandles:prior.minuteCandles,history:prior.history} : quote);
   }

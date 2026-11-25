@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { issueKisToken, kisConfigured } from './kis.js';
+import { collectKisIntraday, issueKisToken, kisConfigured, koreaSessionOpen } from './kis.js';
 import { briefingWindow, buildKoreaBriefing } from './briefing.js';
 import { collectLiveFutures } from './live-futures.js';
 import { FUTURES_FRESHNESS_MS } from '../public/futures-config.js';
@@ -12,6 +12,25 @@ export class MarketBriefing extends DurableObject {
   #refreshing = null;
   #quoteCache = null;
   #quoting = null;
+  #koreaCache = null;
+  #koreaPending = null;
+
+  async latestKorea() {
+    const now = Date.now();
+    if (!koreaSessionOpen(now)) return {quotes:[]};
+    if (this.#koreaCache?.expiresAt > now) return this.#koreaCache.snapshot;
+    this.#koreaPending ||= this.#loadKorea();
+    const pending = this.#koreaPending;
+    try { return await pending; } finally { if (this.#koreaPending === pending) this.#koreaPending = null; }
+  }
+
+  async #loadKorea() {
+    const issues = [];
+    const quotes = await collectKisIntraday(this.env, event => issues.push(event));
+    const snapshot = {quotes, issues};
+    this.#koreaCache = {snapshot, expiresAt:Date.now() + 20_000};
+    return snapshot;
+  }
 
   async latestFutures(scope = 'indices') {
     const now = Date.now();

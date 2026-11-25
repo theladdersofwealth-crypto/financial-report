@@ -7,8 +7,6 @@ export const usFutures = [
     liveName: '다우', markets: {gate:'US30_USDT', mexc:'US30_USDT'}},
   {id: 'fut_rty', name: '러셀2000 선물', root: 'RTY', exchange: 'CME', ticker: 'CME_MINI:RTY1!',
     liveName: '러셀2000', markets: {gate:'US2000_USDT', binance:'IWMUSDT'}},
-  {id: 'fut_sox', name: '필라델피아 반도체 선물', root: 'SOX', exchange: 'CME', ticker: 'CME_MINI:SOX1!',
-    liveName: '미국 반도체 ETF', markets: {binance:'SOXXUSDT', gate:'SOXX_USDT'}},
 ];
 
 function perpetual(id, name, group, productType, markets, symbol = null) {

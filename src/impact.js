@@ -85,7 +85,7 @@ function domesticQuote(quote, now) {
     id: quote.id, name: quote.name, value: quote.value, unit: quote.unit,
     change: quote.change ?? null, changeUnit: quote.changeUnit,
     changeBasis: quote.changeBasis || null, observedAt: quote.observedAt,
-    source: quote.source || null, status: quote.status,
+    source: quote.source || null, status: quote.status, timestampPrecision: quote.timestampPrecision,
     basis: quote.basis || null,
   };
 }

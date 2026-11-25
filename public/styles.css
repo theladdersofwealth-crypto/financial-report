@@ -1400,8 +1400,9 @@ td strong {
 /* Sectors & Leaders */
 .section-pair {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 22px;
+  align-items: start;
 }
 
 .sector-list {
@@ -3503,20 +3504,8 @@ td strong {
  .metric-korea .market-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 
-/* Keep index labels visible on the first two Korea cards after live quote refresh. */
-.metric-korea .market-grid > .quote-card:nth-child(1) .quote-top::before,
-.metric-korea .market-grid > .quote-card:nth-child(2) .quote-top::before {
-  display:block;flex:1;min-width:0;font-size:15px;font-weight:800;
-  line-height:1.35;color:#263d55;
-}
-.metric-korea .market-grid > .quote-card:nth-child(1) .quote-top::before {content:'코스피'}
-.metric-korea .market-grid > .quote-card:nth-child(2) .quote-top::before {content:'코스닥'}
-.metric-korea .market-grid > .quote-card:nth-child(-n+2) .quote-top > .quote-name {display:none}
-@media(max-width:760px){
- .metric-korea .market-grid > .quote-card:nth-child(-n+2) .quote-top::before{font-size:13px}
-}
-
 .quote-bottom { flex-wrap: wrap; column-gap: 8px; row-gap: 4px; }
+.quote-time { font-size: 11px; color: var(--muted); white-space: nowrap; }
 .quote-status { font-size: 11px; color: var(--muted); font-weight: 650; }
 .quote-status.saved, .event-saved { color: #8a5b18; }
 .quote-provenance { display: grid; gap: 3px; font-size: 11px; line-height: 1.35; color: var(--muted); overflow-wrap: anywhere; }
@@ -3534,8 +3523,30 @@ td strong {
 .fx-toolbar .search-field { flex: 1 1 210px; }
 .fx-list .metric-section { scroll-margin-top: 14px; }
 .fx-all-button { white-space: nowrap; }
+.coin-search-button { white-space: nowrap; }
+.coin-search-modal .instrument-samples { margin: 12px 0; }
+.coin-search-result:empty { display: none; }
+.coin-search-result { margin-top: 12px; }
+.futures-list { list-style: none; padding: 0; margin: 0; border-top: 1px solid var(--line); }
+.futures-list li + li { border-top: 1px solid var(--line); }
+.futures-list-row {
+  width: 100%; text-align: left; display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 14px;
+  align-items: center; gap: 12px;
+  border: 0; background: transparent; padding: 11px 18px;
+  color: var(--ink); cursor: pointer;
+}
+.futures-list-row:hover, .futures-list-row:focus-visible { background: #f2f6fb; }
+.futures-list-row:focus-visible { outline-offset: -2px; }
+.futures-list-row .icon { width: 14px; height: 14px; color: var(--muted); }
+.futures-list-name { font-weight: 650; font-size: 14px; overflow-wrap: anywhere; }
+.futures-list-name small { margin-left: 7px; color: var(--muted); font-size: 11px; font-weight: 600; }
+.futures-list-price { font-size: 15px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.futures-list-empty { margin: 0; padding: 18px; color: var(--muted); border-top: 1px solid var(--line); font-size: 13px; }
 @media (max-width: 520px) {
   .fx-toolbar .search-field { width: 100%; }
   .metric-fx .metric-section-heading { flex-wrap: wrap; }
   .fx-all-button { margin-left: auto; }
+  .metric-crypto .metric-section-heading { flex-wrap: wrap; }
+  .coin-search-button { margin-left: auto; }
 }

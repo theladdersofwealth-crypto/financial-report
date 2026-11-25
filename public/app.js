@@ -6,7 +6,7 @@ import {usFutures, assetFutures, stockFutures, sectorFutures, futuresProducts, f
 const app = document.querySelector('#app');
 const state = {
   user: null, demo: false, status: null, view: 'overview', horizon: 'day',
-  market: null, futuresQuotes: {}, futuresIssue: {}, marketFilter: '전체', marketSearch: '', fxRegion: '전체', fxSearch: '', users: [], activity: null,
+  market: null, koreaQuotes: [], futuresQuotes: {}, futuresIssue: {}, marketFilter: '전체', marketSearch: '', fxRegion: '전체', fxSearch: '', users: [], activity: null,
   instrumentMarket: 'KR', instrumentQuery: '', instrumentResult: null, instrumentLoading: false,
   online: [], onlineCount: 0, threshold: 2, messages: [], chatDraft: '',
   ws: null, connected: false, reconnect: null, lastActivity: Date.now(),
@@ -149,6 +149,18 @@ const rateLabels = [
   ['us2y', '미 국채 2년'], ['us10y', '미 국채 10년'],
   ['kr3y', '한국 국고채 3년'], ['kr10y', '한국 국고채 10년'],
 ];
+const domesticLabels = [
+  ['kospi','코스피','pt'], ['kosdaq','코스닥','pt'],
+  ['kr_foreign_kospi','외국인 수급 · 코스피','억원'], ['kr_foreign_kosdaq','외국인 수급 · 코스닥','억원'],
+  ['kr_pension_kospi','연기금 수급 · 코스피','억원'], ['kr_pension_kosdaq','연기금 수급 · 코스닥','억원'],
+];
+const isInvestorFlow = id => /^kr_(foreign|pension)_(kospi|kosdaq)$/.test(id);
+const koreaRefreshMs = 30_000;
+function koreaOpen(now = Date.now()) {
+  const kst = new Date(now + 9*3600000);
+  const day = kst.getUTCDay(), minute = kst.getUTCHours()*60 + kst.getUTCMinutes();
+  return day >= 1 && day <= 5 && minute >= 540 && minute < 930;
+}
 const futuresIssueLabels = {
   configuration: '거래소 호가 연결 설정을 확인하는 중입니다', network: '거래소 호가 재연결 중',
 };
@@ -168,12 +180,20 @@ function futuresRows(products = usFutures) {
 }
 function normalizedQuotes() {
   const quotes = state.market?.quotes?.length ? state.market.quotes : coreQuotes();
+  const now = Date.now();
+  const byId = new Map(quotes.map(quote=>[quote.id, quote]));
   const rates = rateLabels.map(([id, name]) => ({
-    id, unit:'%', value:null, change:null, status:'missing', ...quotes.find(quote => quote.id === id),
+    id, unit:'%', value:null, change:null, status:'missing', ...byId.get(id),
     group:'rates', name,
   }));
-  const domestic = quotes.filter(quote => ['kospi', 'kosdaq'].includes(quote.id)
-    || /^kr_(foreign|pension)_(kospi|kosdaq)$/.test(quote.id));
+  const current = new Map(state.koreaQuotes.filter(quote => {
+    const age = now - Date.parse(quote.retrievedAt);
+    return koreaOpen(now) && age >= -5000 && age <= 2 * koreaRefreshMs;
+  }).map(quote=>[quote.id, quote]));
+  const domestic = domesticLabels.map(([id,name,unit]) => ({
+    id, unit, value:null, change:null, status:'missing', ...byId.get(id), ...current.get(id),
+    name, group:'korea', ...(current.has(id) ? {savedFrom:null, deploymentBackup:false} : {}),
+  }));
   return [...domestic, ...futuresRows([...usFutures, ...assetFutures]), ...rates,
     ...quotes.filter(quote => fxById.has(quote.id))];
 }
@@ -388,11 +408,12 @@ async function navigate(view) {
   renderView();
   if (view === 'users' || view === 'activity') await loadAdmin(view);
   if (view === 'outlooks') await autoRefreshMarket();
+  if (view === 'overview' || view === 'markets') autoRefreshKorea();
 }
 function overviewSectionIntro(title,subtitle,iconName) {
   return E('div',{class:'overview-section-intro'},
     E('div',{class:'overview-section-mark'},icon(iconName)),
-    E('div',{},E('h2',{},title),E('p',{},subtitle)));
+    E('div',{},E('h2',{},title),subtitle ? E('p',{},subtitle) : null));
 }
 function renderView() {
   if (!state.user) return;
@@ -407,13 +428,11 @@ function renderView() {
   if (state.view === 'overview') main.replaceChildren(
     renderBrief(main.querySelector('#desk-brief')?.hasAttribute('open')),
     renderQuotes(),
-    overviewSectionIntro('미국 주식·업종 선물','대표 기업과 업종 ETF 선물','layers'),
+    overviewSectionIntro('미국 주식·업종 선물','','layers'),
     E('div', {class: 'section-pair'}, renderSectors(), renderLeaders()),
     overviewSectionIntro('앞으로 볼 변수','기간별 조건과 예정된 경제 이벤트를 분리해서 확인합니다.','calendar'),
     renderOutlook(), renderEvents(true));
-  if (state.view === 'markets') main.replaceChildren(renderMarketTable(),
-    renderFuturesPanel('us-sector-panel','미국 업종 ETF 선물',sectorFutures),
-    renderFuturesPanel('us-stock-panel','미국 대표주 선물',stockFutures));
+  if (state.view === 'markets') main.replaceChildren(renderMarketTable(), E('div', {class:'section-pair'}, renderSectors(), renderLeaders()));
   if (state.view === 'fx') main.replaceChildren(renderFxView());
   if (state.view === 'instrument') main.replaceChildren(renderInstrumentSearch());
   if (state.view === 'outlooks') main.replaceChildren(renderImpact(), renderOutlook(), methodologyPanel());
@@ -427,6 +446,50 @@ const searchSamples={
   US:[['엔비디아','NVDA'],['애플','AAPL'],['마이크로소프트','MSFT'],['테슬라','TSLA']],
   CRYPTO:[['비트코인','BTC'],['이더리움','ETH']],
 };
+function searchInstrument(market, symbol) {
+  return api('/api/instrument?' + new URLSearchParams({market, symbol}).toString());
+}
+function instrumentQuoteResult(result) {
+  const quote = result?.quote;
+  if (result?.status !== 'ok' || !quote) {
+    return E('p', {class:'instrument-search-feedback'}, result?.message || '시세를 확인하지 못했습니다.');
+  }
+  const book = quote.timestampPrecision === 'book';
+  return E('div', {class:'instrument-result'},
+    E('div', {class:'instrument-result-heading'}, E('div', {},
+      E('h3', {}, quote.name || quote.symbol), quote.symbol !== quote.name ? E('p', {class:'instrument-code'}, quote.symbol) : null),
+      badge(quote.market === 'KR' ? '현물' : '선물', quote.market === 'KR' ? 'blue' : 'green')),
+    E('div', {class:'instrument-result-quote'}, E('strong', {}, `${formatValue(quote)} ${quote.unit}`),
+      book ? null : E('span', {class:changeClass(quote.change)}, formatChange(quote))),
+    E('p', {class:'tiny muted'}, `${quoteStatus(quote)[0]} · ${quoteTimestamp(quote)}`),
+    hasIndexChart(quote) ? B('선물 차트', () => openIndexChart(quote), 'small', 'chart') : null);
+}
+function openCoinSearch() {
+  showModal('코인 선물 검색', '코인 이름이나 티커를 입력하세요.', body => {
+    const input = E('input', {id:'coin-search-query', type:'search', placeholder:'솔라나 또는 SOL', required:true, maxlength:42, autocomplete:'off'});
+    const result = E('div', {class:'coin-search-result', role:'status', 'aria-live':'polite'});
+    const submit = E('button', {type:'submit', class:'button primary'}, icon('search'), '검색');
+    const run = async value => {
+      const query = value.trim();
+      if (!query || submit.disabled) return;
+      input.value = query;
+      result.textContent = state.demo ? '로그인하면 실제 선물을 조회할 수 있습니다.' : '시세 확인 중';
+      if (state.demo) return;
+      submit.disabled = true;
+      try {
+        const data = await searchInstrument('CRYPTO', query);
+        if (body.isConnected) result.replaceChildren(instrumentQuoteResult(data));
+      } catch (error) {
+        if (body.isConnected) result.textContent = errorText(error);
+      } finally { submit.disabled = false; }
+    };
+    body.append(E('form', {class:'instrument-search-row', onSubmit:event=>{event.preventDefault(); run(input.value);}},
+      E('div', {}, E('label', {for:'coin-search-query'}, '코인 이름 또는 티커'), input), submit),
+    E('div', {class:'instrument-samples'}, ['SOL','XRP','DOGE','ADA'].map(ticker =>
+      E('button', {type:'button', class:'instrument-sample', onClick:()=>run(ticker)}, ticker))), result);
+    queueMicrotask(() => input.focus());
+  }, {className:'coin-search-modal'});
+}
 async function submitInstrumentSearch() {
   if(state.instrumentLoading)return;
   const generation=state.sessionGeneration,market=state.instrumentMarket;
@@ -437,8 +500,7 @@ async function submitInstrumentSearch() {
   state.instrumentResult=null;
   renderView();
   try{
-    const params=new URLSearchParams({market,symbol:query});
-    const result=await api('/api/instrument?'+params.toString());
+    const result=await searchInstrument(market,query);
     if(generation===state.sessionGeneration&&state.user&&market===state.instrumentMarket)
       state.instrumentResult=result;
   }catch(error){
@@ -490,20 +552,8 @@ function renderInstrumentSearch() {
   const result=state.instrumentResult;
   let resultNode;
   if(state.instrumentLoading)resultNode=E('div',{class:'instrument-search-feedback','aria-live':'polite'},'해당 거래소 시세를 확인하는 중입니다.');
-  else if(result?.status==='ok'&&result.quote){
-    const q=result.quote;
-    const valid=hasValue(q);
-    resultNode=E('div',{class:'instrument-result','aria-live':'polite'},
-      E('div',{class:'instrument-result-heading'},
-        E('div',{},E('p',{class:'eyebrow'},q.productType),
-          E('h3',{},q.name||q.symbol),
-          E('p',{class:'instrument-code'},q.symbol)),
-        badge(q.market==='KR'?'현물 시세':'조회 시점 호가',q.market==='KR'?'blue':'green')),
-      E('div',{class:'instrument-result-quote'},E('strong',{},valid?`${formatValue(q)} ${q.unit}`:'—'),
-        E('span',{class:changeClass(q.change)},q.timestampPrecision==='book'?'호가 중간값':formatChange(q))),
-      E('p',{class:'tiny muted'},`${quoteTimestamp(q)} · ${quoteStatus(q)[0]}`),
-      hasIndexChart(q)?B('선물 차트',()=>openIndexChart(q),'small','chart'):null);
-  }else resultNode=E('div',{class:'instrument-search-feedback','aria-live':'polite'},
+  else if(result) resultNode=instrumentQuoteResult(result);
+  else resultNode=E('div',{class:'instrument-search-feedback','aria-live':'polite'},
     result?.message||'종목을 선택하거나 검색어를 입력해 시세를 확인해 보세요.');
   return E('section',{class:'panel instrument-search-panel'},
     panelHead('개별 종목 검색','국내 현물 및 해외 선물 시세',null,'search'),
@@ -531,8 +581,8 @@ async function refreshCurrent() {
   if (state.demo) { renderView(); toast('체험용 예시 화면을 다시 표시했습니다. 실제 시세를 조회하지 않았습니다.'); return; }
   if (['users', 'activity'].includes(state.view)) { await loadAdmin(state.view); return; }
   if (state.view === 'calendar') await loadCalendar();
-  else if (state.view === 'overview') await Promise.all([loadMarket(), loadCalendar(), loadFutures()]);
-  else if (state.view === 'markets') await Promise.all([loadMarket(), loadFutures()]);
+  else if (state.view === 'overview') await Promise.all([loadMarket(), loadCalendar(), loadFutures(), autoRefreshKorea()]);
+  else if (state.view === 'markets') await Promise.all([loadMarket(), loadFutures(), autoRefreshKorea()]);
   else await loadMarket();
   renderView();
 }
@@ -618,18 +668,17 @@ function renderImpact() {
   section.append(E('div', {class: 'impact-index-grid'}, cards));
   const domestic = impact.domestic || {};
   const domesticItems = [
-    ['코스피 일별 종가', domestic.kospi],
-    ['코스닥 일별 종가', domestic.kosdaq],
+    ['코스피 지수', domestic.kospi],
+    ['코스닥 지수', domestic.kosdaq],
     ['코스피 외국인 순매수', domestic.foreignKospi],
     ['코스닥 외국인 순매수', domestic.foreignKosdaq],
   ];
-  section.append(E('div', {class: 'panel-foot'}, E('strong', {}, '국내 시장 관측 · 실제 종가와 수급'),
-    E('span', {}, ' · 일별 확정 자료이며 위 해외 환경 판단의 적중률이 아닙니다.')));
+  section.append(E('div', {class: 'panel-foot'}, E('strong', {}, '국내 지수와 수급')));
   section.append(E('div', {class: 'impact-domestic-grid'}, domesticItems.map(([name, quote]) =>
     E('div', {class: 'source-card'}, E('div', {class: 'source-body'},
       E('h3', {class: 'source-name'}, name),
       quote ? E('p', {class: 'source-description'},
-        `${Number(quote.value).toLocaleString('ko-KR', {maximumFractionDigits: 2})} ${quote.unit || ''} · ${String(quote.observedAt).slice(0, 10)} 기준`) :
+        `${Number(quote.value).toLocaleString('ko-KR', {maximumFractionDigits: 2})} ${quote.unit || ''} · ${quoteTimestamp(quote)}`) :
         E('p', {class: 'source-description'}, '데이터 미연결 또는 최신 관측값 부족'),
       quote?.change !== null && quote?.change !== undefined
         ? E('p', {class: 'tiny muted'}, `직전 관측 대비 ${quote.change > 0 ? '+' : ''}${quote.change}${quote.changeUnit || ''}`) : null)))));
@@ -711,29 +760,14 @@ function metricSection(number, id, title, subtitle, theme, quotes) {
         subtitle ? E('p', {class:'metric-section-description'},subtitle) : null),
       E('span', {class:'metric-section-coverage'},
         state.demo ? `예시 ${observed}개` : `수신 ${observed}/${quotes.length}`),
+      id === 'metrics-crypto' ? B('코인 검색', openCoinSearch, 'small coin-search-button', 'search', {'data-coin-search':''}) : null,
       id === 'metrics-fx' ? E('button', {type: 'button', class: 'text-button fx-all-button', onClick: () => navigate('fx')}, `전체 ${fxCurrencies.length}개`, icon('chevron')) : null),
     E('div', {class:'market-grid'},quotes.map(quoteCard)));
 }
 function renderQuotes() {
   const allQuotes=normalizedQuotes();
-  const seen=new Set();
-  // Present real KIS Korean indexes/net buying before overseas factors.
-  // If KIS is unavailable, keep the genuine missing-data placeholders.
-  const domestic=[
-    ['kospi','코스피','pt'],['kosdaq','코스닥','pt'],
-    ['kr_foreign_kospi','코스피 외국인 순매수','억원'],
-    ['kr_foreign_kosdaq','코스닥 외국인 순매수','억원'],
-    ['kr_pension_kospi','코스피 연기금 등 순매수','억원'],
-    ['kr_pension_kosdaq','코스닥 연기금 등 순매수','억원'],
-  ].map(([id,name,unit])=>{
-    seen.add(id);
-    return allQuotes.find(q=>q.id===id)||
-      {id,name,unit,group:'korea',value:null,change:null,status:'unconfigured'};
-  });
-  const take=predicate=>allQuotes.filter(q=>{
-    if(seen.has(q.id)||!predicate(q))return false;
-    seen.add(q.id);return true;
-  });
+  const take=predicate=>allQuotes.filter(predicate);
+  const domestic = take(q=>q.group==='korea');
   const futures = take(q => q.group === 'futures');
   const rates = take(q => groupName(q.group) === '금리');
   const currencyQuotes = new Map(take(q => groupName(q.group) === '외환').map(quote => [quote.id, quote]));
@@ -778,7 +812,7 @@ function chartLabel(quote) { return fxById.has(quote.id) ? '일별 원화 환율
 function quoteTimestamp(quote) {
   const value = quote.observedAt || quote.retrievedAt;
   if (!value) return '관측 시각 미제공';
-  if (quote.timestampPrecision === 'book') return `${dateText(value, {second:'2-digit'})} KST 호가`;
+  if (quote.timestampPrecision === 'book') return `${shortTime(value)} KST`;
   if (quote.timestampPrecision === 'provider_clock') return `${value} 기준`;
   if (quote.timestampPrecision === 'month') return `${String(value).slice(0, 7)} 기준`;
   if (quote.timestampPrecision === 'day') return `${String(value).slice(0, 10)} 기준`;
@@ -786,8 +820,13 @@ function quoteTimestamp(quote) {
   if (quote.timestampPrecision === 'window_end') return `${dateText(value)} KST 24시간 집계 종료`;
   return `${dateText(value)} KST 관측`;
 }
-function quoteStatus(quote) {
+function quoteStatus(quote, showFxDate = false) {
   if (quote.timestampPrecision === 'book') return ['실시간 호가', ''];
+  if (showFxDate && fxById.has(quote.id) && quote.observedAt) {
+    return [quote.observedAt.slice(0,10), quote.status === 'stale' ? 'saved' : ''];
+  }
+  const flow = isInvestorFlow(quote.id);
+  if (flow && (quote.savedFrom || quote.status === 'stale')) return ['이전 집계', 'saved'];
   if (quote.savedFrom === 'cache') return ['최근 저장값', 'saved'];
   if (quote.savedFrom === 'build' || quote.deploymentBackup) return ['배포 저장값', 'saved'];
   if (quote.status === 'stale') return ['오래된 관측', 'saved'];
@@ -795,27 +834,31 @@ function quoteStatus(quote) {
   if (quote.fallbackPeriod === 'D') return ['최근 일봉 종가', 'saved'];
   if (quote.status === 'monthly') return ['월간 평균', ''];
   if (quote.status === 'daily' && fxById.has(quote.id)) return ['일별 기준환율', ''];
-  if (quote.status === 'daily') return [quote.group === 'equity' || ['kospi', 'kosdaq'].includes(quote.id) ? '일별 종가' : '일별', ''];
+  if (quote.marketPhase === 'intraday' || (quote.group === 'korea' && quote.timestampPrecision === 'retrieval')) {
+    const age = Date.now() - Date.parse(quote.retrievedAt || quote.observedAt);
+    if (!koreaOpen() || age > 2 * koreaRefreshMs) return [flow ? '이전 집계' : '마지막 조회', 'saved'];
+    return [flow ? '장중 집계' : '장중 조회', ''];
+  }
+  if (quote.status === 'daily') return [flow ? '일별 집계' : quote.group === 'equity' || ['kospi', 'kosdaq'].includes(quote.id) ? '일별 종가' : '일별', ''];
   if (quote.status === 'delayed') return ['지연 시세', 'saved'];
   return ['거래소 스냅샷', ''];
 }
 function quoteCard(quote) {
   const available = hasValue(quote);
   const currency = fxById.get(quote.id);
-  const future = futuresById.get(quote.id);
   const chartable = hasIndexChart(quote);
   const foreign = quote.id === 'kr_foreign_kospi' || quote.id === 'kr_foreign_kosdaq';
   const pension = quote.id === 'kr_pension_kospi' || quote.id === 'kr_pension_kosdaq';
   const flow = foreign || pension;
   const observed = quoteTimestamp(quote);
-  const [statusLabel, statusTone] = quoteStatus(quote);
+  const [statusLabel, statusTone] = quoteStatus(quote, true);
   const investor = pension ? '연기금' : '외국인';
-  const changeText = quote.timestampPrecision === 'book' ? '호가 중간값'
+  const book = quote.timestampPrecision === 'book';
+  const changeText = book ? ''
     : flow ? Number(quote.value) < 0 ? `${investor} 순매도` : Number(quote.value) > 0 ? `${investor} 순매수` : `${investor} 순매수 0` : formatChange(quote);
   const tone = flow ? changeClass(quote.value) : changeClass(quote.change);
-  const shortName = quote.id === 'kospi' ? '코스피' : quote.id === 'kosdaq' ? '코스닥' : quote.id === 'kr_foreign_kospi' ? '외국인 수급 · 코스피' : quote.id === 'kr_foreign_kosdaq' ? '외국인 수급 · 코스닥' : quote.id === 'kr_pension_kospi' ? '연기금 수급 · 코스피' : quote.id === 'kr_pension_kosdaq' ? '연기금 수급 · 코스닥' : quote.name;
   return E('article', {class: `quote-card${chartable ? ' quote-card-clickable' : ''}${flow ? ' quote-card-flow' : ''}`,
-    'data-quote-id':future ? quote.id : null,
+    'data-quote-id':chartable ? quote.id : null,
     role: chartable ? 'button' : null,
     tabindex: chartable ? 0 : null,
     'aria-label': chartable ? `${quote.name} ${chartLabel(quote)} 차트 열기` : null,
@@ -824,13 +867,15 @@ function quoteCard(quote) {
       if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openIndexChart(quote); }
     } : null,
     title: `${quote.name} · ${state.demo ? '체험용 예시 데이터' : available ? observed : '시세 확인 중'}`},
-    E('div', {class: 'quote-top'}, E('h3', {class: 'quote-name'}, shortName),
+    E('div', {class: 'quote-top'}, E('h3', {class: 'quote-name'}, quote.name),
       chartable ? E('span', {class:'quote-drilldown','aria-hidden':'true'}, icon('chevron')) : null),
     currency ? E('span', {class: 'fx-unit-label'}, `${fxAmountLabel(currency)} 기준`) : null,
     E('div', {class: 'quote-value-row'}, E('span', {class: 'quote-value'}, formatValue(quote)), E('span', {class: 'quote-unit'}, quote.unit || '')),
-    E('div', {class: 'quote-bottom'}, available ? E('span', {class: `quote-change ${tone}`}, changeText) : E('span', {class: 'quote-missing'}, '데이터 연결 필요'),
-      available && !state.demo ? E('span', {class: `quote-status ${statusTone}`}, statusLabel) : null),
-    state.demo || !available ? null : E('div', {class: 'quote-provenance'}, E('span', {}, observed)));
+    E('div', {class: 'quote-bottom'}, !available ? E('span', {class: 'quote-missing'}, '시세 수신 대기')
+      : book ? null : E('span', {class: `quote-change ${tone}`}, changeText),
+      available && !state.demo ? E('span', {class: `quote-status ${statusTone}`}, statusLabel) : null,
+      book && available ? E('small', {class:'quote-time'}, observed) : null),
+    state.demo || !available || currency || book ? null : E('div', {class: 'quote-provenance'}, E('span', {}, observed)));
 }
 
 let refreshFuturesChart = null;
@@ -843,7 +888,7 @@ function openIndexChart(quote) {
     && quote.provider === 'kis' && !!quote.chartPeriods;
   const isIndexStale = quote.status === 'stale' || quote.deploymentBackup;
   showModal(`${quote.name} · ${future ? '캔들 차트' : currency ? '일별 원화 환율 차트' : '지수 차트'}`,
-    future ? '마크 가격 캔들 · 시세 카드는 호가 중간값' : currency ? `${fxAmountLabel(currency)}당 원화 · 일별 기준환율` : hasOfficialCandles ? '시가·고가·저가·종가' :
+    future ? '마크 가격 캔들' : currency ? `${fxAmountLabel(currency)}당 원화 · 일별 기준환율` : hasOfficialCandles ? '시가·고가·저가·종가' :
       '관측된 종가로 표시하는 추이 차트 · 실제 봉 시고저종 데이터 없음',
     body => {
       const domestic = ['kospi', 'kosdaq'].includes(quote.id);
@@ -1031,17 +1076,23 @@ function groupName(group) {
     korea: '한국시장', crypto: '코인', futures: '미국 선물'})[group] || group || '기타';
 }
 function renderSectors() {
-  return renderFuturesPanel('us-sector-panel','미국 업종 ETF 선물',sectorFutures,8);
+  return renderFuturesPanel('us-sector-panel','미국 업종 ETF 선물',sectorFutures);
 }
 function renderLeaders() {
-  return renderFuturesPanel('us-stock-panel','미국 대표주 선물',stockFutures,4);
+  return renderFuturesPanel('us-stock-panel','미국 대표주 선물',stockFutures);
 }
-function renderFuturesPanel(id, title, products, limit = products.length) {
-  const rows = futuresRows(products);
-  const available = rows.filter(hasValue);
-  const visible = [...available,...rows.filter(row=>!hasValue(row))].slice(0,limit);
-  return E('section',{class:'panel',id},panelHead(title,`실시간 호가 ${available.length}/${rows.length}`),
-    E('div',{class:'market-grid'},visible.map(quoteCard)));
+function renderFuturesPanel(id, title, products) {
+  const rows = futuresRows(products).filter(hasValue);
+  return E('section',{class:'panel futures-list-panel',id},
+    panelHead(title, rows.length ? '실시간 호가 · USDT' : ''),
+    rows.length ? E('ul',{class:'futures-list'}, rows.map(quote => {
+      const product = futuresById.get(quote.id);
+      return E('li',{}, E('button',{class:'futures-list-row',type:'button','data-quote-id':quote.id,
+        'aria-label':`${quote.name} 차트 열기`, onClick:()=>openIndexChart(quote)},
+      E('span',{class:'futures-list-name'},quote.name.replace(/ ETF$/,''),
+        E('small',{},product.symbol)),
+      E('strong',{class:'futures-list-price'},formatValue(quote)), icon('chevron')));
+    })) : E('p',{class:'futures-list-empty'}, state.demo ? '체험 모드' : '호가 수신 대기'));
 }
 const horizons = [{id: 'day', label: '오늘', aliases: ['day', 'today', 'daily']}, {id: 'short', label: '2~3일', aliases: ['short', '2-3d', '2-3days']}, {id: 'week', label: '이번 주', aliases: ['week', 'weekly']}, {id: 'month', label: '1개월', aliases: ['month', 'monthly']}, {id: 'quarter', label: '3~6개월', aliases: ['quarter', '3-6m', 'medium']}];
 function renderOutlook() {
@@ -1126,7 +1177,8 @@ function renderMarketRows() {
     E('td', {class: 'num mono'}, E('strong', {}, formatValue(q)), E('div', {class: 'tiny muted'}, q.unit || '')),
     E('td', {class: `num mono ${changeClass(q.change)}`}, hasValue(q) && Number.isFinite(q.change) ? formatChange(q) : '—'),
     E('td', {}, state.demo || !hasValue(q) ? '—' : quoteTimestamp(q)),
-    E('td', {}, state.demo ? '예시' : hasValue(q) ? quoteStatus(q)[0] : '수신 대기'))));
+    E('td', {}, state.demo ? '예시' : !hasValue(q) ? '수신 대기'
+      : fxById.has(q.id) ? q.status === 'stale' ? '이전 관측' : '—' : quoteStatus(q)[0]))));
   if (rows.length) {
     // Retain every existing row/quote link, but add strong category dividers.
     const byCategory=new Map();
@@ -1501,9 +1553,12 @@ async function loadFutures(scope) {
 function replaceFuturesSection(current, next) {
   if (!current || !next) return;
   const active = document.activeElement;
-  const quoteId = active && current.contains(active) ? active.closest('[data-quote-id]')?.dataset.quoteId : null;
+  const focused = active && current.contains(active);
+  const quoteId = focused ? active.closest('[data-quote-id]')?.dataset.quoteId : null;
+  const coinSearch = focused && active.hasAttribute('data-coin-search');
   current.replaceWith(next);
   if (quoteId) [...next.querySelectorAll('[data-quote-id]')].find(card=>card.dataset.quoteId===quoteId)?.focus({preventScroll:true});
+  if (coinSearch) next.querySelector('[data-coin-search]')?.focus({preventScroll:true});
 }
 async function autoRefreshFutures(scope = 'indices') {
   if (document.hidden || !state.user || state.demo || !['overview','markets'].includes(state.view)) return;
@@ -1513,15 +1568,37 @@ async function autoRefreshFutures(scope = 'indices') {
   if (state.view === 'overview') {
     const panel = renderQuotes();
     const sections = scope === 'indices' ? ['metrics-global'] : ['metrics-commodities','metrics-crypto'];
-    for (const id of sections) replaceFuturesSection(document.getElementById(id),panel.querySelector('#'+id));
+    for (const id of sections) {
+      if (id === 'metrics-crypto' && document.querySelector('.coin-search-modal')) continue;
+      replaceFuturesSection(document.getElementById(id),panel.querySelector('#'+id));
+    }
   } else if (state.view === 'markets' && !document.querySelector('[role="dialog"]')) renderMarketRows();
   if (scope === 'extended' && ['overview','markets'].includes(state.view)) {
-    const overview = state.view === 'overview';
-    replaceFuturesSection(document.getElementById('us-sector-panel'),overview ? renderSectors() : renderFuturesPanel('us-sector-panel','미국 업종 ETF 선물',sectorFutures));
-    replaceFuturesSection(document.getElementById('us-stock-panel'),overview ? renderLeaders() : renderFuturesPanel('us-stock-panel','미국 대표주 선물',stockFutures));
+    replaceFuturesSection(document.getElementById('us-sector-panel'),renderSectors());
+    replaceFuturesSection(document.getElementById('us-stock-panel'),renderLeaders());
   }
   const status = document.querySelector('.data-state-action');
   if (status !== document.activeElement) status?.replaceWith(dataState());
+}
+let koreaRequest = null;
+async function autoRefreshKorea() {
+  if (document.hidden || !state.user || state.demo || state.user.mustChangePassword
+    || !['overview','markets'].includes(state.view) || !koreaOpen()) return;
+  const generation = state.sessionGeneration;
+  if (koreaRequest === generation) return;
+  koreaRequest = generation;
+  try {
+    const data = await api('/api/korea');
+    if (generation !== state.sessionGeneration) return;
+    const current = new Map(state.koreaQuotes.map(quote=>[quote.id, quote]));
+    for (const quote of data.quotes || []) current.set(quote.id, quote);
+    state.koreaQuotes = [...current.values()];
+  } catch { /* Keep the preceding observations until their age limit. */ }
+  finally { if (koreaRequest === generation) koreaRequest = null; }
+  if (generation !== state.sessionGeneration) return;
+  if (state.view === 'overview') replaceFuturesSection(document.querySelector('#metrics-korea'),
+    renderQuotes().querySelector('#metrics-korea'));
+  if (state.view === 'markets' && !document.querySelector('[role="dialog"]')) renderMarketRows();
 }
 async function loadCalendar() {
   const generation = state.sessionGeneration;
@@ -1534,6 +1611,7 @@ async function loadDashboard() {
   if (!state.user?.pinLogin) requests.push(api('/api/chat/history'), api('/api/settings'));
   autoRefreshFutures();
   autoRefreshFutures('extended');
+  autoRefreshKorea();
   const results = await Promise.allSettled(requests);
   if (generation !== state.sessionGeneration || !state.user || state.demo) return;
   const [market, calendar, history, settings] = results;
@@ -1612,9 +1690,11 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden) {
     autoRefreshFutures();
     autoRefreshFutures('extended');
+    autoRefreshKorea();
   }
 });
 window.setInterval(autoRefreshMarket, 5*60*1000);
+window.setInterval(autoRefreshKorea, koreaRefreshMs);
 window.setInterval(autoRefreshFutures, FUTURES_REFRESH_MS);
 window.setInterval(() => autoRefreshFutures('extended'), EXTENDED_FUTURES_REFRESH_MS);
 window.setInterval(() => { if (!document.hidden) refreshFuturesChart?.(); },25000);

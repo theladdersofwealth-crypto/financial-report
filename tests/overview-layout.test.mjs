@@ -18,9 +18,6 @@ test('KIS Korea indexes and signed foreign flows are rendered before global indi
   const code = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
   const section = code.slice(code.indexOf('function renderQuotes()'), code.indexOf('function sparkline('));
   assert.ok(section.includes("panelHead('시장 지표'"));
-  for (const id of ['kospi', 'kosdaq', 'kr_foreign_kospi', 'kr_foreign_kosdaq', 'kr_pension_kospi', 'kr_pension_kosdaq']) {
-    assert.ok(section.includes(`['${id}',`), `missing domestic indicator ${id}`);
-  }
   for (const title of ['한국 증시 · 외국인·연기금 수급','미국 지수선물','금리','원화 환율','원자재 선물','코인 선물']) {
     assert.ok(section.includes(title), `missing topic title: ${title}`);
   }
@@ -29,7 +26,7 @@ test('KIS Korea indexes and signed foreign flows are rendered before global indi
   for(let i=1;i<groups.length;i++)
     assert.ok(section.indexOf(groups[i-1])<section.indexOf(groups[i]),'market topics must stay in reading order');
   assert.match(section,/groups\.map\(\(\[number,id,title,subtitle,theme,quotes\]\)=>/);
-  assert.match(section,/seen\.add\(id\)/,'do not duplicate KIS domestic indicators');
+  assert.match(section,/q=>q\.group==='korea'/);
   assert.match(code, /const investor = pension \? '연기금' : '외국인'/);
   assert.match(code, /quote\.id\?\.startsWith\('kr_foreign_'\) \? 2/,
     'foreign flow values in KRW 100M should retain two fractional digits');

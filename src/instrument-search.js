@@ -18,6 +18,9 @@ const ALIASES = new Map(Object.entries({
   '엔비디아 NVDA':['US','NVDA'],'버크셔해서웨이':['US','BRK.B'],
   '비트코인':['CRYPTO','BTC'],'이더리움':['CRYPTO','ETH'],'솔라나':['CRYPTO','SOL'],
   '도지코인':['CRYPTO','DOGE'],
+  '리플':['CRYPTO','XRP'],'엑스알피':['CRYPTO','XRP'],'바이낸스코인':['CRYPTO','BNB'],
+  '에이다':['CRYPTO','ADA'],'카르다노':['CRYPTO','ADA'],'체인링크':['CRYPTO','LINK'],
+  '아발란체':['CRYPTO','AVAX'],'수이':['CRYPTO','SUI'],
 }).map(([key,value])=>[key.replace(/\s/g,'').toUpperCase(),value]));
 
 const recent=new Map();
