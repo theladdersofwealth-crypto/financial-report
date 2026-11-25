@@ -5,10 +5,12 @@ const urls = {
   binance:'https://fapi.binance.com/fapi/v1/',
   mexc:'https://api.mexc.com/api/v1/contract/',
   bybit:'https://api.bybit.com/v5/market/',
+  okx:'https://www.okx.com/api/v5/market/',
 };
-const labels = {gate:'Gate', binance:'바이낸스', mexc:'MEXC', bybit:'Bybit'};
+const labels = {gate:'Gate', binance:'바이낸스', mexc:'MEXC', bybit:'Bybit', okx:'OKX'};
 const links = {gate:'https://www.gate.com/futures/USDT/', binance:'https://www.binance.com/en/futures/',
-  mexc:'https://www.mexc.com/futures/', bybit:'https://www.bybit.com/trade/usdt/'};
+  mexc:'https://www.mexc.com/futures/', bybit:'https://www.bybit.com/trade/usdt/',
+  okx:'https://www.okx.com/trade-swap/'};
 const MINUTE = 60000;
 const DAY = 1440 * MINUTE;
 
@@ -33,7 +35,7 @@ function contractFields(product, venue, symbol) {
   return {
     id:product.id, name:etfFallback ? `${etfName} ETF` : product.liveName,
     group:product.group || 'futures', venue, contract:symbol, exchange:labels[venue], unit:'USDT',
-    source:labels[venue], sourceUrl:links[venue] + symbol, productType,
+    source:labels[venue], sourceUrl:links[venue] + (venue === 'okx' ? symbol.toLowerCase() : symbol), productType,
   };
 }
 
@@ -59,6 +61,10 @@ function bookLevels(venue, data, symbol) {
     bid:positive(data.result.b?.[0]?.[0]), ask:positive(data.result.a?.[0]?.[0]),
     time:Number(data.result.cts || data.result.ts),
   };
+  if (venue === 'okx' && data.code === '0' && /-USDT-SWAP$/.test(symbol)) {
+    const book = data.data?.[0];
+    return {bid:positive(book?.bids?.[0]?.[0]), ask:positive(book?.asks?.[0]?.[0]), time:Number(book?.ts)};
+  }
   return {};
 }
 
@@ -66,6 +72,7 @@ async function quoteFor(product, venue, symbol, fetcher, clock, report) {
   const requests = {
     gate:['order_book',{contract:symbol,limit:1}], binance:['ticker/bookTicker',{symbol}],
     mexc:[`depth/${symbol}`,{limit:1}], bybit:['orderbook',{category:'linear',symbol,limit:1}],
+    okx:['books',{instId:symbol,sz:1}],
   };
   const [path,parameters] = requests[venue];
   const {http, data} = await providerJson(fetcher, venue, path, parameters);
@@ -134,6 +141,7 @@ function candleRows(venue, data) {
   if (venue === 'gate') return Array.isArray(data) ? data.map(row => [Number(row.t)*1000,row.o,row.h,row.l,row.c]) : [];
   if (venue === 'binance') return Array.isArray(data) ? data : [];
   if (venue === 'bybit') return data?.retCode === 0 && Array.isArray(data.result?.list) ? data.result.list : [];
+  if (venue === 'okx') return data?.code === '0' && Array.isArray(data.data) ? data.data : [];
   const raw = data?.data;
   if (data?.success !== true || !Array.isArray(raw?.time)) return [];
   return raw.time.map((t,i) => [Number(t)*1000,raw.open?.[i],raw.high?.[i],raw.low?.[i],raw.close?.[i]]);
@@ -146,12 +154,15 @@ async function previousFuturesClose(quote, fetcher, dayStart) {
     binance: ['klines', {symbol, interval:'1d', limit:8}],
     mexc: [`kline/${symbol}`, {interval:'Day1', start:(dayStart - 7 * DAY)/1000, end:dayStart/1000}],
     bybit: ['kline', {category:'linear', symbol, interval:'D', limit:8}],
+    okx: ['candles', {instId:symbol, bar:'1Dutc', limit:8}],
   };
   const [path, parameters] = requests[quote.venue];
   const {data} = await providerJson(fetcher, quote.venue, path, parameters);
   if (quote.venue === 'bybit' && data?.result?.symbol !== symbol) return null;
   let reference = null;
-  for (const [timestamp, , , , close] of candleRows(quote.venue, data)) {
+  for (const row of candleRows(quote.venue, data)) {
+    const [timestamp, , , , close] = row;
+    if (quote.venue === 'okx' && row[8] !== '1') continue;
     const time = Number(timestamp);
     const value = positive(close);
     if (!value || !Number.isInteger(time) || time % DAY !== 0 || time < dayStart - 7 * DAY
@@ -222,6 +233,10 @@ export async function loadLiveFuturesChart(env, id, period, venue, now = Date.no
   } else if (source === 'mexc') {
     path = `kline/fair_price/${symbol}`;
     parameters = {interval:mexcInterval};
+  } else if (source === 'okx') {
+    path = 'mark-price-candles';
+    const bar = {D:'1Dutc',W:'1Wutc',M:'1Mutc','60min':'1H','240min':'4H'}[period] || interval;
+    parameters = {instId:symbol,bar,limit:Math.min(limit,100)};
   } else {
     path = 'mark-price-kline';
     const bybitPeriod = {D:'D', W:'W', M:'M'}[period] || String(bucketMinutes ? parseInt(interval,10) : parseInt(period,10));

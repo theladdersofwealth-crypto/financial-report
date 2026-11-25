@@ -38,7 +38,8 @@ test('market status reports exact observed coverage, and opens source diagnostic
   const market = await readFile(new URL('../src/market.js', import.meta.url), 'utf8');
   const status = app.slice(app.indexOf('function dataState()'), app.indexOf('async function refreshCurrent()'));
   assert.match(status,/\`지표 \${good\.length}\/\${quotes\.length} 정상 수신\`/);
-  assert.match(status,/\['daily', 'delayed', 'live', 'monthly'\]/);
+  assert.match(status,/filter\(isHealthyObservation\)/);
+  assert.match(app,/\['daily', 'delayed', 'live', 'monthly'\]/);
   assert.match(status,/onClick: \(\) => navigate\('sources'\)/);
   assert.match(status,/type: 'button'/);
   assert.doesNotMatch(status,/일부 데이터 연결/);
