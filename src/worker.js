@@ -64,7 +64,7 @@ async function futuresSnapshot(env, scope = 'indices', reportSuccess = false) {
   const issues = snapshots.flatMap(snapshot => snapshot.issues);
   if (reportSuccess) {
     const now = Date.now();
-    console.info('Live futures snapshot', {scope,received:quotes.length, contracts:quotes.map(quote => ({
+    console.info('Live futures snapshot', {scope,received:quotes.length, compared:quotes.filter(q=>Number.isFinite(q.change)).length, contracts:quotes.map(quote => ({
       venue:quote.venue, symbol:quote.contract, ageMs:now-Date.parse(quote.observedAt),
     })), issues});
   }
@@ -75,7 +75,8 @@ async function koreaSnapshot(env, report = false) {
   if (!env.US_BRIEFING || !koreaSessionOpen()) return {quotes:[]};
   try {
     const {quotes, issues} = await env.US_BRIEFING.getByName('korea-intraday').latestKorea();
-    if (report) console.info('Korea intraday snapshot', {metrics:quotes.map(q=>q.id), issues});
+    if (report) console.info('Korea intraday snapshot', {metrics:quotes.map(q=>q.id),
+      compared:quotes.filter(q=>Number.isFinite(q.change)).map(q=>q.id), issues});
     return {quotes};
   } catch (error) {
     console.warn('Korea intraday snapshot unavailable', error?.name || 'Error');

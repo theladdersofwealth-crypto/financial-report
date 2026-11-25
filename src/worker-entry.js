@@ -1,7 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { collectKisIntraday, issueKisToken, kisConfigured, koreaSessionOpen } from './kis.js';
 import { briefingWindow, buildKoreaBriefing } from './briefing.js';
-import { collectLiveFutures } from './live-futures.js';
+import { collectLiveFutures, withFuturesChanges } from './live-futures.js';
 import { FUTURES_FRESHNESS_MS } from '../public/futures-config.js';
 
 export { default, DeskRoom } from './worker.js';
@@ -14,6 +14,8 @@ export class MarketBriefing extends DurableObject {
   #quoting = null;
   #koreaCache = null;
   #koreaPending = null;
+  #flowReferences = new Map();
+  #futuresReferences = new Map();
 
   async latestKorea() {
     const now = Date.now();
@@ -26,7 +28,7 @@ export class MarketBriefing extends DurableObject {
 
   async #loadKorea() {
     const issues = [];
-    const quotes = await collectKisIntraday(this.env, event => issues.push(event));
+    const quotes = await collectKisIntraday(this.env, event => issues.push(event), this.#flowReferences);
     const snapshot = {quotes, issues};
     this.#koreaCache = {snapshot, expiresAt:Date.now() + 20_000};
     return snapshot;
@@ -45,7 +47,9 @@ export class MarketBriefing extends DurableObject {
 
   async #readFutures(scope) {
     const issues = [];
-    const quotes = await collectLiveFutures(this.env, issue => issues.push(issue), Date.now, scope);
+    const books = await collectLiveFutures(this.env, issue => issues.push(issue), Date.now, scope);
+    const quotes = (await withFuturesChanges(books, this.env, this.#futuresReferences))
+      .filter(quote => Date.now() - Date.parse(quote.observedAt) <= FUTURES_FRESHNESS_MS);
     const snapshot = {quotes, issues, reason:quotes.length ? null : 'network'};
     this.#quoteCache = {scope, snapshot, expiresAt:Date.now()+(scope === 'indices' ? 4000 : 10000)};
     return snapshot;

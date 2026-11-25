@@ -136,7 +136,7 @@ function canonicalQuote(id, rows, field, div=1) {
     .map(r=>({date:r.date,value:r.value/div}))
     .sort((a,b)=>a.date.localeCompare(b.date));
   if (!history.length) return null;
-  const last=history.at(-1), prev=history.at(-2);
+  const last=history.at(-1), prev=history.findLast(row=>row.date<last.date);
   const flow=/^kr_(foreign|pension)_/.test(id);
   const age=Date.now()-Date.parse(last.date+'T23:59:59+09:00');
   return {
@@ -248,22 +248,25 @@ async function indexQuote(env,token,id,iscd) {
     minuteCandles,
   };
 }
-async function investorQuotes(env,token,iscd,market,suffix) {
+async function investorQuotes(env,token,iscd,market,suffix,sessionDate = null) {
   // KIS reference requires FID_INPUT_DATE_1 and _2 to be the SAME date.
   // Weekends use the previous business weekday; official holidays may yield
   // no rows, which must remain missing rather than inventing a flow.
   const ymd = todayKst();
   const weekday = new Date(`${ymd.slice(0,4)}-${ymd.slice(4,6)}-${ymd.slice(6,8)}T00:00:00Z`).getUTCDay();
-  const date = fromKstDaysAgo(weekday === 0 ? 2 : weekday === 6 ? 1 : 0);
+  const date = sessionDate || fromKstDaysAgo(weekday === 0 ? 2 : weekday === 6 ? 1 : 0);
   const data=await kisGet(env,token,'/uapi/domestic-stock/v1/quotations/inquire-investor-daily-by-market',
     'FHPTJ04040000',{
       FID_COND_MRKT_DIV_CODE:'U',FID_INPUT_ISCD:iscd,FID_INPUT_DATE_1:date,
       FID_INPUT_DATE_2:date,FID_INPUT_ISCD_1:market,FID_INPUT_ISCD_2:iscd,
     });
   // API may refuse a market/plan. Never replace actual flow with synthetic data.
+  const rows = sessionDate
+    ? (Array.isArray(data?.output) ? data.output.filter(row=>String(row?.stck_bsop_date) === sessionDate) : [])
+    : data?.output;
   const quotes = [
-    canonicalQuote(`kr_foreign_${suffix}`,data?.output,'frgn_ntby_tr_pbmn',100),
-    canonicalQuote(`kr_pension_${suffix}`,data?.output,'fund_ntby_tr_pbmn',100),
+    canonicalQuote(`kr_foreign_${suffix}`,rows,'frgn_ntby_tr_pbmn',100),
+    canonicalQuote(`kr_pension_${suffix}`,rows,'fund_ntby_tr_pbmn',100),
   ].filter(Boolean);
   const today = dateOf(ymd);
   return quotes.map(quote => koreaSessionOpen() && quote.observedAt === today
@@ -300,10 +303,46 @@ async function intradayKorea(env, token, report) {
   ]))).flat().filter(Boolean);
 }
 
-export async function collectKisIntraday(env, report) {
+async function previousInvestorSession(env, token, market, today) {
+  const weekday = new Date(dateOf(today) + 'T00:00:00Z').getUTCDay();
+  const expected = fromKstDaysAgo(weekday === 1 ? 3 : 1);
+  const read = date => investorQuotes(env, token, market.index, market.daily, market.id, date);
+  const regular = await read(expected);
+  if (regular.length) return regular;
+
+  // The most recent weekday can be an exchange holiday. Confirm any earlier session using index history.
+  const data = await kisGet(env, token, '/uapi/domestic-stock/v1/quotations/inquire-daily-indexchartprice',
+    'FHKUP03500100', {FID_COND_MRKT_DIV_CODE:'U', FID_INPUT_ISCD:market.index,
+      FID_INPUT_DATE_1:fromKstDaysAgo(12), FID_INPUT_DATE_2:expected, FID_PERIOD_DIV_CODE:'D'});
+  const previous = canonicalQuote(market.id, data?.output2, 'bstp_nmix_prpr')?.observedAt?.replaceAll('-','');
+  return previous && previous < expected ? read(previous) : [];
+}
+
+async function withInvestorChanges(quotes, env, token, cache) {
+  if (!quotes.some(quote=>quote.unit==='억원')) return quotes;
+  const now = Date.now(), today = todayKst();
+  const references = await Promise.all(domesticMarkets.map(async market=>{
+    if (!quotes.some(quote=>quote.unit==='억원' && quote.id.endsWith(market.id))) return [];
+    const entry = cache.get(market.id);
+    if (entry?.today === today && now < entry.expiresAt) return entry.rows;
+    const rows = await previousInvestorSession(env, token, market, today);
+    cache.set(market.id, {today, rows, expiresAt: rows.length === 2 ? Infinity : now + 120_000});
+    return rows;
+  }));
+  const byId = new Map(references.flat().map(row=>[row.id,row]));
+  return quotes.map(quote=>{
+    const previous = byId.get(quote.id);
+    return previous ? {...quote, change:Number((quote.value - previous.value).toFixed(2)),
+      comparisonAt:previous.observedAt, changeBasis:'직전 거래일 최종 순매수액 대비'} : quote;
+  });
+}
+
+export async function collectKisIntraday(env, report, flowCache) {
   if (!koreaSessionOpen() || !kisConfigured(env)) return [];
   const token = await tokenFor(env, report);
-  return token ? intradayKorea(env, token, report) : [];
+  if (!token) return [];
+  const quotes = await intradayKorea(env, token, report);
+  return flowCache ? withInvestorChanges(quotes, env, token, flowCache) : quotes;
 }
 
 async function currentKorea(env, token) {
@@ -466,13 +505,14 @@ function rateQuoteByName(rows,id,years) {
   }).filter(Boolean).sort((a,b)=>a.date.localeCompare(b.date));
   if(!matches.length)return null;
   const last=matches.at(-1);
+  const previous=matches.findLast(row=>row.date<last.date);
   const age=Date.now()-Date.parse(last.date+'T23:59:59+09:00');
   if(age>7*86400000 || age < -86400000)return null;
   return {
     id,provider:'kis',source:'한국투자증권 KIS Open API',sourceUrl:'https://apiportal.koreainvestment.com/',
     observedAt:last.date,retrievedAt:new Date().toISOString(),timestampPrecision:'day',
-    status:'daily',value:last.value,unit:'%',change:null,changeUnit:'bp',
-    changeBasis:'전일 기준금리와의 비교자료 미제공; 임의로 계산하지 않음',
+    status:'daily',value:last.value,unit:'%',change:previous ? Number(((last.value-previous.value)*100).toFixed(4)) : null,changeUnit:'bp',
+    comparisonAt:previous?.date || null, changeBasis:'직전 관측일 대비',
     history:matches.slice(-65),basis:`국고채 ${years}년 대표금리 명칭을 가진 한투 금리종합 관측값`,
     delay:'한투 금리종합 일별 관측 · 체결 시각 보증 없음',reason:null,
   };

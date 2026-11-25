@@ -90,6 +90,7 @@ test('standalone demo renders every destination without accessing member APIs',a
       const table = document.querySelector('#market-table-body').textContent;
       assert.doesNotMatch(table, /닛케이|구리|니켈|솔라나|달러 인덱스|무기한/);
       assert.match(table, /미 국채 2년.*한국 국고채 10년/);
+      assert.deepEqual([...document.querySelectorAll('.market-prices-table th')].map(node=>node.textContent),['지표','최근 관측값','전일 대비']);
     }
   }
   vm.runInContext('renderWelcome()',ctx);
@@ -174,5 +175,15 @@ test('standalone demo renders every destination without accessing member APIs',a
   assert.equal(requested.at(-1), '/api/instrument?market=CRYPTO&symbol=SOL');
   assert.match(document.querySelector('.coin-search-result').textContent, /SOL.*120.00.*실시간 호가/);
   assert.doesNotMatch(document.querySelector('.coin-search-result').textContent, /호가 중간값/);
+  vm.runInContext(`state.market.quotes = [
+    {id:'kospi',name:'코스피',value:4800,change:-1.4,observedAt:'2026-11-25T02:37:00Z',status:'delayed',timestampPrecision:'retrieval'},
+    {id:'kr_foreign_kospi',name:'외국인',value:-1382.35,change:-1500,changeUnit:'억원',observedAt:'2026-11-25T02:37:00Z',status:'delayed',timestampPrecision:'retrieval'},
+  ];
+  document.getElementById('app').replaceChildren(renderMarketTable());renderMarketRows();`,ctx);
+  assert.match(document.querySelector('.market-table-section-inner').textContent,/한국시장11:37 KST/);
+  const table = document.querySelector('#market-table-body').textContent;
+  assert.match(table,/-1.40%.*-1500.00억원/);
+  assert.doesNotMatch(table,/장중 조회|장중 집계/);
+  assert.equal((table.match(/11:37 KST/g)||[]).length,1);
   timers.forEach(nativeClearTimeout);
 });

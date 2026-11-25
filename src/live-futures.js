@@ -10,6 +10,7 @@ const labels = {gate:'Gate', binance:'바이낸스', mexc:'MEXC', bybit:'Bybit'}
 const links = {gate:'https://www.gate.com/futures/USDT/', binance:'https://www.binance.com/en/futures/',
   mexc:'https://www.mexc.com/futures/', bybit:'https://www.bybit.com/trade/usdt/'};
 const MINUTE = 60000;
+const DAY = 1440 * MINUTE;
 
 async function providerJson(fetcher, venue, path, parameters) {
   const url = urls[venue] + path + '?' + new URLSearchParams(parameters);
@@ -129,13 +130,53 @@ const periods = {
   '60min':['1h','Min60'], '240min':['4h','Hour4'], D:['1d','Day1'], W:['1w','Week1'], M:['30d','Month1'],
 };
 
-function markRows(venue, data) {
+function candleRows(venue, data) {
   if (venue === 'gate') return Array.isArray(data) ? data.map(row => [Number(row.t)*1000,row.o,row.h,row.l,row.c]) : [];
   if (venue === 'binance') return Array.isArray(data) ? data : [];
   if (venue === 'bybit') return data?.retCode === 0 && Array.isArray(data.result?.list) ? data.result.list : [];
   const raw = data?.data;
   if (data?.success !== true || !Array.isArray(raw?.time)) return [];
   return raw.time.map((t,i) => [Number(t)*1000,raw.open?.[i],raw.high?.[i],raw.low?.[i],raw.close?.[i]]);
+}
+
+async function previousFuturesClose(quote, fetcher, dayStart) {
+  const symbol = quote.contract;
+  const requests = {
+    gate: ['candlesticks', {contract:symbol, interval:'1d', limit:8}],
+    binance: ['klines', {symbol, interval:'1d', limit:8}],
+    mexc: [`kline/${symbol}`, {interval:'Day1', start:(dayStart - 7 * DAY)/1000, end:dayStart/1000}],
+    bybit: ['kline', {category:'linear', symbol, interval:'D', limit:8}],
+  };
+  const [path, parameters] = requests[quote.venue];
+  const {data} = await providerJson(fetcher, quote.venue, path, parameters);
+  if (quote.venue === 'bybit' && data?.result?.symbol !== symbol) return null;
+  let reference = null;
+  for (const [timestamp, , , , close] of candleRows(quote.venue, data)) {
+    const time = Number(timestamp);
+    const value = positive(close);
+    if (!value || !Number.isInteger(time) || time % DAY !== 0 || time < dayStart - 7 * DAY
+      || time >= dayStart || reference && time <= reference.time) continue;
+    reference = {time, value};
+  }
+  return reference;
+}
+
+export async function withFuturesChanges(quotes, env = {}, cache = new Map(), now = Date.now()) {
+  return Promise.all(quotes.map(async quote => {
+    const observed = Date.parse(quote.observedAt);
+    const dayStart = Math.floor((Number.isFinite(observed) ? observed : now) / DAY) * DAY;
+    const key = `${quote.venue}:${quote.contract}`;
+    let entry = cache.get(key);
+    if (entry?.dayStart !== dayStart || entry.expiresAt <= now) {
+      const reference = await previousFuturesClose(quote, env.fetchProvider || fetch, dayStart);
+      entry = {dayStart, reference, expiresAt:reference ? dayStart + DAY : now + MINUTE};
+      cache.set(key, entry);
+    }
+    if (!entry.reference) return quote;
+    const {time, value} = entry.reference;
+    return {...quote, change:Number(((quote.value / value - 1) * 100).toFixed(4)), changeUnit:'%',
+      comparisonAt:new Date(time).toISOString().slice(0,10), changeBasis:'동일 계약 직전 완료 UTC 일봉 체결 종가 대비'};
+  }));
 }
 
 function candles(rows, period, bucketMinutes, now) {
@@ -187,7 +228,7 @@ export async function loadLiveFuturesChart(env, id, period, venue, now = Date.no
     parameters = {category:'linear',symbol,interval:bybitPeriod,limit:Math.min(limit,200)};
   }
   const {data} = await providerJson(env.fetchProvider || fetch, source, path, parameters);
-  const bars = candles(markRows(source,data),period,bucketMinutes,now);
+  const bars = candles(candleRows(source,data),period,bucketMinutes,now);
   return {...contractFields(product,source,symbol), status:bars.length ? 'ready' : 'unavailable',
     basis:'거래소 마크 가격 캔들',bars};
 }

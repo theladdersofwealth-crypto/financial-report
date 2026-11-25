@@ -329,7 +329,8 @@ async function ecosQuote(instrument, env, readURL, publicAccess = false) {
 }
 
 async function publicEcosFallback(quotes, readURL) {
-  const received = new Set(quotes.filter(isFreshQuote).map(quote => quote.id));
+  const received = new Set(quotes.filter(quote => isFreshQuote(quote)
+    && (!['kr3y','kr10y'].includes(quote.id) || Number.isFinite(quote.change))).map(quote => quote.id));
   const needed = INSTRUMENTS.filter(instrument => instrument.ecos && !received.has(instrument.id));
   return Promise.all(needed.map(instrument => ecosQuote(instrument, {}, readURL, true)));
 }
@@ -703,11 +704,16 @@ export async function collectMarket(env, backup = [], lastGood = [], requestLimi
       && (!isFreshQuote(current) || quote.observedAt > current.observedAt
         || (quote.observedAt === current.observedAt && current.provider !== 'nasdaq'));
   });
-  const replacements = new Map([...fx, ...treasury, ...nasdaq, ...kis, ...verifiedUSIndices, ...macro]
+  const preferredMacro = macro.filter(quote => {
+    const official = base.get(quote.id);
+    return Number.isFinite(quote.change) || !Number.isFinite(official?.change) || official.observedAt < quote.observedAt;
+  });
+  const replacements = new Map([...fx, ...treasury, ...nasdaq, ...kis, ...verifiedUSIndices, ...preferredMacro]
     .filter(validQuote).map(quote => [quote.id, quote]));
   // Foreign net purchases can be negative. A valid ECOS fallback is still usable.
   for (const quote of publicKorea.filter(quote => isFreshQuote(quote) && (quote.id === 'kr_foreign_kospi' || quote.value > 0))) {
-    replacements.set(quote.id, quote);
+    const current = replacements.get(quote.id);
+    if (!current || quote.observedAt >= current.observedAt) replacements.set(quote.id, quote);
   }
   const obtained = initialQuotes.map(quote => {
     const replacement = replacements.get(quote.id);
@@ -782,7 +788,7 @@ async function loadOrRefresh(env, force) {
   if (pending.has(key)) return structuredClone(await pending.get(key));
   const task = (async () => {
     const cache = edgeCache();
-    const cacheRequest = new Request(`https://market-desk-cache.invalid/snapshot/v9/${key}`);
+    const cacheRequest = new Request(`https://market-desk-cache.invalid/snapshot/v10/${key}`);
     if (!force && cache) {
       try {
         const response = await cache.match(cacheRequest);

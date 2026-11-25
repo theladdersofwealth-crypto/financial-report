@@ -136,6 +136,34 @@ test('intraday KIS polls both markets, retains signed foreign and pension flow, 
   assert.equal(calls.length,5);
 });
 
+test('intraday net flow difference uses matching prior-session final amounts and reuses the baseline', async t => {
+  t.mock.timers.enable({apis:['Date'], now:new Date('2026-11-25T02:00:00Z')});
+  let dailyCalls=0;
+  withFetch(t, async (input, init) => {
+    const url=new URL(input);
+    if (url.pathname.endsWith('/tokenP')) return Response.json({access_token:'test-comparison',expires_in:86400});
+    if (init.headers.tr_id==='FHPUP02100000') return Response.json({rt_cd:'0',output:{bstp_nmix_prpr:'5000',bstp_nmix_prdy_ctrt:'1'}});
+    if (init.headers.tr_id==='FHPTJ04030000') return Response.json({rt_cd:'0',output:[{frgn_ntby_tr_pbmn:'-15000',fund_ntby_tr_pbmn:'0'}]});
+    assert.equal(init.headers.tr_id,'FHPTJ04040000');
+    assert.equal(url.searchParams.get('FID_INPUT_DATE_1'),'20261124');
+    assert.equal(url.searchParams.get('FID_INPUT_DATE_2'),'20261124');
+    dailyCalls++;
+    return Response.json({rt_cd:'0',output:[
+      {stck_bsop_date:'20261125',frgn_ntby_tr_pbmn:'-18000',fund_ntby_tr_pbmn:'20000'},
+      {stck_bsop_date:'20261124',frgn_ntby_tr_pbmn:'20000',fund_ntby_tr_pbmn:'-4000'},
+    ]});
+  });
+  const {collectKisIntraday}=await fresh();
+  const cache=new Map(),env={KIS_APP_KEY:'comparison-key',KIS_APP_SECRET:'comparison-secret'};
+  const rows=await collectKisIntraday(env,undefined,cache);
+  for (const quote of rows.filter(row=>row.unit==='억원')) {
+    assert.equal(quote.comparisonAt,'2026-11-24');
+    assert.equal(quote.change,quote.id.includes('_foreign_') ? -350 : 40);
+  }
+  await collectKisIntraday(env,undefined,cache);
+  assert.equal(dailyCalls,2);
+});
+
 test('KIS rejects failed authentication and never invents an index',async t=>{
   let calls=0;
   withFetch(t,async()=>{calls++;return new Response('forbidden',{status:403});});

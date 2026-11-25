@@ -751,12 +751,13 @@ function renderFxView() {
 function metricSection(number, id, title, subtitle, theme, quotes) {
   if (!quotes.length) return null;
   const observed=quotes.filter(quote=>hasValue(quote)).length;
+  const time = theme === 'korea' && !state.demo ? marketObservation(quotes) : '';
   return E('section', {class:`metric-section metric-${theme}`, id,
     'aria-label':title},
     E('div', {class:'metric-section-heading'},
       E('span', {class:'metric-section-number','aria-hidden':'true'},number),
       E('div', {class:'metric-section-copy'},
-        E('h3', {class:'metric-section-title'},title),
+        E('h3', {class:'metric-section-title'},title, time ? E('span',{class:'market-group-time'},time) : null),
         subtitle ? E('p', {class:'metric-section-description'},subtitle) : null),
       E('span', {class:'metric-section-coverage'},
         state.demo ? `예시 ${observed}개` : `수신 ${observed}/${quotes.length}`),
@@ -820,6 +821,15 @@ function quoteTimestamp(quote) {
   if (quote.timestampPrecision === 'window_end') return `${dateText(value)} KST 24시간 집계 종료`;
   return `${dateText(value)} KST 관측`;
 }
+function marketObservation(quotes) {
+  const available = quotes.filter(q=>hasValue(q) && q.observedAt);
+  const recent = available.filter(q=>q.status !== 'stale' && !q.savedFrom && !q.deploymentBackup);
+  const visible = recent.length ? recent : available;
+  const timed = visible.map(q=>q.observedAt).filter(date=>date.includes('T') && Number.isFinite(Date.parse(date)));
+  if (timed.length) return `${shortTime(Math.max(...timed.map(Date.parse)))} KST`;
+  const days = visible.map(q=>q.observedAt.slice(0,10)).sort();
+  return days[0] === days.at(-1) ? days[0] || '' : `${days[0]}–${days.at(-1)}`;
+}
 function quoteStatus(quote, showFxDate = false) {
   if (quote.timestampPrecision === 'book') return ['실시간 호가', ''];
   if (showFxDate && fxById.has(quote.id) && quote.observedAt) {
@@ -853,10 +863,10 @@ function quoteCard(quote) {
   const observed = quoteTimestamp(quote);
   const [statusLabel, statusTone] = quoteStatus(quote, true);
   const investor = pension ? '연기금' : '외국인';
-  const book = quote.timestampPrecision === 'book';
-  const changeText = book ? ''
-    : flow ? Number(quote.value) < 0 ? `${investor} 순매도` : Number(quote.value) > 0 ? `${investor} 순매수` : `${investor} 순매수 0` : formatChange(quote);
-  const tone = flow ? changeClass(quote.value) : changeClass(quote.change);
+  const changeText = Number.isFinite(quote.change) ? formatChange(quote)
+    : flow ? Number(quote.value) < 0 ? `${investor} 순매도` : Number(quote.value) > 0 ? `${investor} 순매수` : `${investor} 순매수 0` : '—';
+  const tone = changeClass(Number.isFinite(quote.change) || !flow ? quote.change : quote.value);
+  const sharedKoreaTime = quote.group === 'korea' && statusTone !== 'saved';
   return E('article', {class: `quote-card${chartable ? ' quote-card-clickable' : ''}${flow ? ' quote-card-flow' : ''}`,
     'data-quote-id':chartable ? quote.id : null,
     role: chartable ? 'button' : null,
@@ -872,10 +882,9 @@ function quoteCard(quote) {
     currency ? E('span', {class: 'fx-unit-label'}, `${fxAmountLabel(currency)} 기준`) : null,
     E('div', {class: 'quote-value-row'}, E('span', {class: 'quote-value'}, formatValue(quote)), E('span', {class: 'quote-unit'}, quote.unit || '')),
     E('div', {class: 'quote-bottom'}, !available ? E('span', {class: 'quote-missing'}, '시세 수신 대기')
-      : book ? null : E('span', {class: `quote-change ${tone}`}, changeText),
-      available && !state.demo ? E('span', {class: `quote-status ${statusTone}`}, statusLabel) : null,
-      book && available ? E('small', {class:'quote-time'}, observed) : null),
-    state.demo || !available || currency || book ? null : E('div', {class: 'quote-provenance'}, E('span', {}, observed)));
+      : E('span', {class: `quote-change ${tone}`, title:Number.isFinite(quote.change) ? '전일 대비' : null}, changeText),
+      available && !state.demo && !sharedKoreaTime ? E('span', {class: `quote-status ${statusTone}`}, statusLabel) : null),
+    state.demo || !available || currency || sharedKoreaTime ? null : E('div', {class: 'quote-provenance'}, E('span', {}, observed)));
 }
 
 let refreshFuturesChart = null;
@@ -1091,7 +1100,9 @@ function renderFuturesPanel(id, title, products) {
         'aria-label':`${quote.name} 차트 열기`, onClick:()=>openIndexChart(quote)},
       E('span',{class:'futures-list-name'},quote.name.replace(/ ETF$/,''),
         E('small',{},product.symbol)),
-      E('strong',{class:'futures-list-price'},formatValue(quote)), icon('chevron')));
+      E('span',{class:'futures-list-values'},E('strong',{class:'futures-list-price'},formatValue(quote)),
+        Number.isFinite(quote.change) ? E('small',{class:changeClass(quote.change),title:'전일 대비'},formatChange(quote)) : null),
+      icon('chevron')));
     })) : E('p',{class:'futures-list-empty'}, state.demo ? '체험 모드' : '호가 수신 대기'));
 }
 const horizons = [{id: 'day', label: '오늘', aliases: ['day', 'today', 'daily']}, {id: 'short', label: '2~3일', aliases: ['short', '2-3d', '2-3days']}, {id: 'week', label: '이번 주', aliases: ['week', 'weekly']}, {id: 'month', label: '1개월', aliases: ['month', 'monthly']}, {id: 'quarter', label: '3~6개월', aliases: ['quarter', '3-6m', 'medium']}];
@@ -1157,11 +1168,11 @@ function renderMarketTable() {
   groups.forEach(group => filters.append(E('button', {type: 'button', class: `filter-chip ${state.marketFilter === group ? 'active' : ''}`, onClick: () => { state.marketFilter = group; filters.querySelectorAll('button').forEach(node => node.classList.toggle('active', node.textContent === group)); renderMarketRows(); }}, group)));
   const panel = E('section', {class: 'panel'}, panelHead('자산별 전체 시세'),
     E('div', {class: 'toolbar'}, filters, E('div', {class: 'search-field'}, icon('search'), search)),
-    E('div', {class: 'table-wrap'}, E('table', {}, E('caption', {class: 'sr-only'}, '자산별 시세와 관측 시점'),
+    E('div', {class: 'table-wrap'}, E('table', {class:'market-prices-table'}, E('caption', {class: 'sr-only'}, '자산별 시세와 전일 대비'),
       E('thead', {}, E('tr', {}, E('th', {}, '지표'), E('th', {class: 'num'}, '최근 관측값'),
-        E('th', {class: 'num'}, '변동'), E('th', {}, '관측 시점'), E('th', {}, '상태'))),
+        E('th', {class: 'num'}, '전일 대비'))),
       E('tbody', {id: 'market-table-body'}))),
-    E('div', {class: 'panel-foot'}, '금리 변동 1bp = 0.01%p'));
+    E('div', {class: 'panel-foot'}, '수급은 순매수액 차이 · 선물은 직전 UTC 일봉 종가 대비 · 금리 1bp = 0.01%p'));
   queueMicrotask(renderMarketRows);
   return panel;
 }
@@ -1169,38 +1180,39 @@ function renderMarketRows() {
   const tbody = document.querySelector('#market-table-body');
   if (!tbody) return;
   const rows = normalizedQuotes().filter(q => (state.marketFilter === '전체' || groupName(q.group) === state.marketFilter) && `${q.name || ''} ${q.fxCurrency || ''} ${fxById.get(q.id)?.destinations || ''}`.toLowerCase().includes(state.marketSearch.toLowerCase()));
-  tbody.replaceChildren(...rows.map(q => E('tr', {},
-    E('td', {}, E('strong', {class: 'data-table-name'}, hasIndexChart(q)
-      ? E('button', {type:'button',class:'market-table-chart-link',
-        'aria-label':`${q.name} ${chartLabel(q)} 차트 열기`, onClick:()=>openIndexChart(q)}, q.name, icon('chart'))
-      : q.name), fxById.has(q.id) ? E('small', {}, `${fxAmountLabel(fxById.get(q.id))} 기준`) : null),
-    E('td', {class: 'num mono'}, E('strong', {}, formatValue(q)), E('div', {class: 'tiny muted'}, q.unit || '')),
-    E('td', {class: `num mono ${changeClass(q.change)}`}, hasValue(q) && Number.isFinite(q.change) ? formatChange(q) : '—'),
-    E('td', {}, state.demo || !hasValue(q) ? '—' : quoteTimestamp(q)),
-    E('td', {}, state.demo ? '예시' : !hasValue(q) ? '수신 대기'
-      : fxById.has(q.id) ? q.status === 'stale' ? '이전 관측' : '—' : quoteStatus(q)[0]))));
-  if (rows.length) {
-    // Retain every existing row/quote link, but add strong category dividers.
-    const byCategory=new Map();
-    [...tbody.children].forEach((row,index)=>{
-      const category=groupName(rows[index].group);
-      if(!byCategory.has(category))byCategory.set(category,[]);
-      byCategory.get(category).push(row);
-    });
-    const order=['한국시장','미국 선물','금리','외환','원자재','코인'];
-    const ordered=[...byCategory.keys()].sort((a,b)=>
-      (order.indexOf(a)<0?99:order.indexOf(a))-(order.indexOf(b)<0?99:order.indexOf(b)));
-    const content=ordered.flatMap(name=>[
+  const order=['한국시장','미국 선물','금리','외환','원자재','코인'];
+  const content=order.flatMap(name=>{
+    const group=rows.filter(q=>groupName(q.group)===name);
+    if (!group.length) return [];
+    const time=state.demo ? '' : marketObservation(group);
+    return [
       E('tr',{class:'market-table-section'},
-        E('td',{colspan:5},
+        E('td',{colspan:3},
           E('div',{class:'market-table-section-inner'},
             E('strong',{},name),
-            E('small',{},`${byCategory.get(name).length}개 지표`)))),
-      ...byCategory.get(name),
-    ]);
-    tbody.replaceChildren(...content);
-  }
-  if (!rows.length) tbody.append(E('tr', {}, E('td', {colspan: 5}, E('div', {class: 'empty-state'}, '검색 조건에 맞는 지표가 없습니다.'))));
+            time ? E('span',{class:'market-group-time'},time) : null))),
+      ...group.map(q=>{
+        const available = hasValue(q);
+        const currency = fxById.get(q.id);
+        const previous = available && (q.status==='stale' || q.savedFrom || q.deploymentBackup);
+        const comparable = available && Number.isFinite(q.change);
+        return E('tr', {},
+          E('td', {title:available && !state.demo ? quoteTimestamp(q) : null},
+            E('strong', {class:'data-table-name'}, hasIndexChart(q)
+              ? E('button', {type:'button',class:'market-table-chart-link',
+                'aria-label':`${q.name} ${chartLabel(q)} 차트 열기`,onClick:()=>openIndexChart(q)},q.name,icon('chart'))
+              : q.name),
+            currency ? E('small', {}, `${fxAmountLabel(currency)} 기준`) : null,
+            previous ? E('small',{class:'market-prior-value'},'이전 관측') : null),
+          E('td',{class:'num mono'},E('strong',{},formatValue(q)),E('div',{class:'tiny muted'},q.unit||'')),
+          E('td',{class:`num mono ${changeClass(q.change)}`,title:q.comparisonAt ? `${q.comparisonAt} 대비` : null},
+            comparable ? formatChange(q) : '—'));
+      }),
+    ];
+  });
+  tbody.replaceChildren(...(content.length ? content : [
+    E('tr', {}, E('td', {colspan:3}, E('div', {class:'empty-state'}, '검색 조건에 맞는 지표가 없습니다.'))),
+  ]));
 }
 function failureLabel(code) {
   if (/^HTTP_429$/.test(code)) return '호출 제한(429)';
